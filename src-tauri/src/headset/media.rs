@@ -72,7 +72,7 @@ fn load_gif_frames(path: &Path) -> Result<Vec<OledFrame>, String> {
     let mut out = Vec::with_capacity(frames.len());
     for frame in frames {
         let (num, denom) = frame.delay().numer_denom_ms();
-        let delay_ms = if denom == 0 { 100 } else { (num / denom) as u16 };
+        let delay_ms = num.checked_div(denom).map_or(100u16, |ms| ms as u16);
         let dynimg = DynamicImage::ImageRgba8(frame.into_buffer());
         let mut fb = Framebuffer::new();
         fb.blit_gray_dithered(&fit_gray(&dynimg));

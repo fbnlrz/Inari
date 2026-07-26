@@ -227,6 +227,7 @@ pub fn render_chatmix(game: Option<u8>, chat: Option<u8>) -> Framebuffer {
 }
 
 /// Transient volume popup: speaker glyph, big percentage and a progress bar.
+#[allow(dead_code)] // kept for a volume-overlay OLED mode not yet wired up
 pub fn render_volume_overlay(volume: u8, muted: bool) -> Framebuffer {
     let mut fb = Framebuffer::new();
     let volume = volume.min(100);
@@ -262,6 +263,7 @@ pub fn render_volume_overlay(volume: u8, muted: bool) -> Framebuffer {
 
 /// A speaker built from rectangles, centred vertically on `cy`. The number of
 /// wave bars tracks the level; muted swaps them for a cross.
+#[allow(dead_code)] // helper for render_volume_overlay (also not yet wired up)
 fn speaker_glyph(fb: &mut Framebuffer, x: isize, cy: isize, volume: u8, muted: bool) {
     // Driver box plus a cone that widens away from it.
     fb.fill_rect(x, cy - 4, 5, 8, true);

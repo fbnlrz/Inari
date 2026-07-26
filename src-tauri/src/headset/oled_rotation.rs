@@ -234,6 +234,7 @@ impl Rotator {
     }
 
     /// Skip to the next screen immediately.
+    #[allow(dead_code)] // manual "next screen" control, not yet bound to a UI action
     pub fn advance(&mut self) {
         if !self.modes.is_empty() {
             self.idx = (self.idx + 1) % self.modes.len();

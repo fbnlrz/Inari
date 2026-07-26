@@ -206,6 +206,7 @@ impl MediaMode {
     }
 
     /// The cover alone, scaled to fill the panel height and centred.
+    #[allow(dead_code)] // kept for an art-only OLED mode not yet wired into the rotation
     pub fn render_art_only(&mut self) -> Framebuffer {
         let mut fb = Framebuffer::new();
         let state = self.state();

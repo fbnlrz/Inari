@@ -47,6 +47,7 @@ impl CpuSampler {
 }
 
 /// RAM usage: (used_percent, used_gib, total_gib).
+#[allow(dead_code)] // available for an OLED memory readout not yet in the rotation
 pub fn mem() -> (u8, f32, f32) {
     let Ok(info) = fs::read_to_string("/proc/meminfo") else {
         return (0, 0.0, 0.0);
@@ -69,6 +70,7 @@ pub fn mem() -> (u8, f32, f32) {
     (pct, gib(used), gib(total))
 }
 
+#[allow(dead_code)] // helper for mem()
 fn parse_kb(s: &str) -> u64 {
     s.split_whitespace()
         .next()
@@ -109,6 +111,7 @@ fn read_temp_input(base: &std::path::Path) -> Option<u8> {
 
 /// Current media metadata via `playerctl`: (title, artist, playing?).
 /// Returns None when playerctl is missing or nothing is playing.
+#[allow(dead_code)] // playerctl-based now-playing source, superseded by the media module
 pub fn now_playing() -> Option<(String, String, bool)> {
     let out = Command::new("playerctl")
         .args(["metadata", "--format", "{{title}}\t{{artist}}\t{{status}}"])
@@ -135,6 +138,7 @@ pub fn now_playing() -> Option<(String, String, bool)> {
 /// A GPU reading (best effort). Any field may be absent depending on vendor.
 pub struct GpuStat {
     pub util: u8,
+    #[allow(dead_code)] // parsed from nvidia-smi/sysfs but not shown on the OLED yet
     pub mem_pct: Option<u8>,
     pub temp: Option<u8>,
 }

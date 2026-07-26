@@ -865,9 +865,9 @@ fn snow(frames: usize) -> Vec<OledFrame> {
     let mut rng = Rng(0x50_1F_A1_17);
     let mut flakes: Vec<(f32, f32, f32, f32)> = (0..N)
         .map(|_| (rng.frac() * WIDTH as f32, rng.frac() * HEIGHT as f32,
-                  0.3 + rng.frac() * 0.6, rng.frac() * 6.28))
+                  0.3 + rng.frac() * 0.6, rng.frac() * std::f32::consts::TAU))
         .collect();
-    let mut bank = vec![0u8; WIDTH];
+    let mut bank = [0u8; WIDTH];
     let mut out = Vec::with_capacity(frames);
     for f in 0..frames {
         let mut fb = Framebuffer::new();
@@ -1091,11 +1091,10 @@ fn oscilloscope(frames: usize) -> Vec<OledFrame> {
 fn ekg(frames: usize) -> Vec<OledFrame> {
     let mut trace: Vec<isize> = vec![44; WIDTH];
     let mut out = Vec::with_capacity(frames);
-    let mut beat = 0usize;
     for f in 0..frames {
         // Shift left and append the next sample of the PQRST complex.
         trace.remove(0);
-        let phase = beat % 30;
+        let phase = f % 30;
         let v: isize = match phase {
             2 => 40,           // P
             6 => 48,           // Q
@@ -1106,7 +1105,6 @@ fn ekg(frames: usize) -> Vec<OledFrame> {
             _ => 44,
         };
         trace.push(v);
-        beat += 1;
 
         let mut fb = Framebuffer::new();
         for x in 1..WIDTH {
