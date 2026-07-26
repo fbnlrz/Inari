@@ -1,10 +1,15 @@
 # Sink
 
-<!-- social-badges:start -->
-[![Discord](https://img.shields.io/badge/Discord-5865F2?logo=discord&logoColor=white)](https://discord.gg/jUMuSxGf6q)
-[![GitHub](https://img.shields.io/badge/GitHub-181717?logo=github&logoColor=white)](https://github.com/NC1107)
-[![Patreon](https://img.shields.io/badge/Patreon-F96854?logo=patreon&logoColor=white)](https://patreon.com/NPC1107)
-<!-- social-badges:end -->
+[![GitHub](https://img.shields.io/badge/GitHub-181717?logo=github&logoColor=white)](https://github.com/fbnlrz/sink)
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/fbnlrz)
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-FFDD00?logo=buymeacoffee&logoColor=black)](https://www.buymeacoffee.com/fbnlrz)
+
+> **This is a fork of [NC1107/sink](https://github.com/NC1107/sink)** that adds
+> control for SteelSeries headsets, the base-station OLED, and the Aerox mouse,
+> plus a Tokyo Night theme. All the original Sink audio-mixing work is by
+> [@NC1107](https://github.com/NC1107) — please support the upstream project
+> (see [Credits](#credits)). Hardware support here is Linux-only and specific to
+> the author's devices; upstream deliberately keeps it out of the main app.
 
 SteelSeries Sonar for Linux. Built on PipeWire.
 
@@ -59,7 +64,7 @@ processed virtual microphone for voice chat.
 **Build and install from source (any distro)**
 
 ```bash
-git clone <your-fork-url> sink && cd sink
+git clone https://github.com/fbnlrz/sink && cd sink
 ./install.sh
 ```
 
@@ -87,6 +92,9 @@ sudo install -Dm755 target/release/sink /usr/bin/sink
 
 ### Prebuilt packages
 
+> These prebuilt packages are the **upstream** project's and do **not** include
+> the SteelSeries device control or Tokyo Night theme added in this fork.
+> To get the fork's features, build from source (above).
 
 **Arch / Manjaro / EndeavourOS** - from the [AUR](https://aur.archlinux.org/packages/sink-bin):
 
@@ -151,6 +159,32 @@ npm run tauri build    # package
 ```
 
 Config lives in `~/.config/sink` as plain JSON.
+
+## Credits
+
+This is a fork. The original **Sink** — all the PipeWire audio mixing, the
+channels/mixes/EQ/mic work, and the app itself — is by
+**[@NC1107](https://github.com/NC1107)**:
+[NC1107/sink](https://github.com/NC1107/sink). If you find Sink useful, please
+support the upstream project.
+
+The SteelSeries hardware protocols used by this fork were learned from these
+projects, whose reverse-engineering made the headset, OLED and mouse support
+possible:
+
+- [Sapd/HeadsetControl](https://github.com/Sapd/HeadsetControl)
+- [elegos/Linux-Arctis-Manager](https://github.com/elegos/Linux-Arctis-Manager)
+- [loteran/Arctis-Sound-Manager](https://github.com/loteran/Arctis-Sound-Manager)
+
+Not affiliated with or endorsed by SteelSeries.
+
+### Support this fork
+
+If the SteelSeries additions are useful to you:
+
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/fbnlrz)
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-FFDD00?logo=buymeacoffee&logoColor=black)](https://www.buymeacoffee.com/fbnlrz)
+[![GitHub Sponsors](https://img.shields.io/badge/Sponsor-fbnlrz-EA4AAA?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/fbnlrz)
 
 ## License
 
