@@ -10,7 +10,7 @@ use crate::error::SinkError;
 fn marker_path() -> Result<PathBuf, SinkError> {
     let dir = dirs::config_dir()
         .ok_or_else(|| SinkError::Config("cannot resolve the user config directory".into()))?;
-    Ok(dir.join("sink").join("active_profile"))
+    Ok(dir.join("inari").join("active_profile"))
 }
 
 pub fn load() -> Option<String> {

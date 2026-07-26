@@ -66,7 +66,7 @@ impl BusDef {
     }
 }
 
-/// The user's mixes, stored at `$XDG_CONFIG_HOME/sink/buses.json`.
+/// The user's mixes, stored at `$XDG_CONFIG_HOME/inari/buses.json`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Buses {
     pub buses: Vec<BusDef>,
@@ -108,7 +108,7 @@ impl Buses {
     pub fn config_path() -> Result<PathBuf, SinkError> {
         let dir = dirs::config_dir()
             .ok_or_else(|| SinkError::Config("cannot resolve the user config directory".into()))?;
-        Ok(dir.join("sink").join("buses.json"))
+        Ok(dir.join("inari").join("buses.json"))
     }
 
     /// Load from disk. On first run (no file), the default Stream Mix bus

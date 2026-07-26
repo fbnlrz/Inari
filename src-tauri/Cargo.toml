@@ -1,7 +1,7 @@
 [package]
 name = "sink"
-version = "0.1.0"
-description = "Linux-native audio routing and mixing for PipeWire"
+version = "1.0.0"
+description = "Linux-native audio routing and mixing for PipeWire, with SteelSeries device control"
 edition = "2021"
 rust-version = "1.77"
 license = "GPL-3.0-only"

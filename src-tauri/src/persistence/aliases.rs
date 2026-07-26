@@ -15,7 +15,7 @@ pub struct AliasEntry {
     pub alias: String,
 }
 
-/// All saved aliases, stored as JSON at `$XDG_CONFIG_HOME/sink/aliases.json`.
+/// All saved aliases, stored as JSON at `$XDG_CONFIG_HOME/inari/aliases.json`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Aliases {
     pub aliases: Vec<AliasEntry>,
@@ -25,7 +25,7 @@ impl Aliases {
     pub fn config_path() -> Result<PathBuf, SinkError> {
         let dir = dirs::config_dir()
             .ok_or_else(|| SinkError::Config("cannot resolve the user config directory".into()))?;
-        Ok(dir.join("sink").join("aliases.json"))
+        Ok(dir.join("inari").join("aliases.json"))
     }
 
     pub fn load() -> Self {

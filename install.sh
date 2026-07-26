@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
-# Sink installer — builds from source and installs system-wide.
+# Inari installer — builds from source and installs system-wide.
 #
 #   ./install.sh              build + install (asks for sudo once)
 #   ./install.sh --deps-only  only install build/runtime dependencies
 #   ./install.sh --no-deps    skip dependency installation
-#   ./install.sh --uninstall  remove Sink (keeps your ~/.config/sink)
+#   ./install.sh --uninstall  remove Inari (keeps your ~/.config/inari)
 #
 # Supports Debian/Ubuntu (and derivatives: Mint, Pop!_OS, PikaOS, …),
-# Fedora, and Arch. Your configuration in ~/.config/sink is never touched.
+# Fedora, and Arch. Your configuration in ~/.config/inari is never touched.
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PREFIX="${PREFIX:-/usr}"
-APP_ID="sink"
+APP_ID="inari"          # installed command / desktop entry / icon / WM class
+BUILD_BIN="sink"        # Cargo crate output name under target/release/
 
 bold() { printf '\033[1m%s\033[0m\n' "$*"; }
 info() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
@@ -38,7 +39,7 @@ install_deps() {
     debian)
       info "Installing dependencies (Debian/Ubuntu)"
       # webkit2gtk-4.1 is Tauri v2's webview; libayatana-appindicator provides
-      # the tray icon; libpipewire is what Sink's audio engine links against.
+      # the tray icon; libpipewire is what Inari's audio engine links against.
       sudo apt-get update
       sudo apt-get install -y \
         build-essential curl wget file pkg-config \
@@ -92,14 +93,14 @@ need_node() {
 
 # ---------------------------------------------------------------- actions
 do_uninstall() {
-  info "Removing Sink (your ~/.config/sink is kept)"
+  info "Removing Inari (your ~/.config/inari is kept)"
   sudo rm -f "$PREFIX/bin/$APP_ID"
   sudo rm -f "$PREFIX/share/applications/$APP_ID.desktop"
   sudo rm -f "$PREFIX/share/icons/hicolor/512x512/apps/$APP_ID.png"
   sudo rm -f /etc/udev/rules.d/50-sink-steelseries.rules
   sudo udevadm control --reload-rules 2>/dev/null || true
-  systemctl --user disable --now sink.service 2>/dev/null || true
-  bold "Uninstalled. Config left at ~/.config/sink (delete it manually if you want a clean slate)."
+  systemctl --user disable --now inari.service 2>/dev/null || true
+  bold "Uninstalled. Config left at ~/.config/inari (delete it manually if you want a clean slate)."
 }
 
 do_build() {
@@ -112,7 +113,7 @@ do_build() {
 }
 
 do_install() {
-  local bin="$REPO_DIR/target/release/$APP_ID"
+  local bin="$REPO_DIR/target/release/$BUILD_BIN"
   [[ -x "$bin" ]] || die "build output missing: $bin"
 
   info "Installing binary to $PREFIX/bin/$APP_ID"
@@ -122,7 +123,7 @@ do_install() {
   sudo install -Dm644 /dev/stdin "$PREFIX/share/applications/$APP_ID.desktop" <<EOF
 [Desktop Entry]
 Type=Application
-Name=Sink
+Name=Inari
 Comment=Audio routing, mixing and SteelSeries headset control for PipeWire
 Exec=$APP_ID
 Icon=$APP_ID
@@ -134,7 +135,7 @@ EOF
   [[ -f "$icon" ]] && sudo install -Dm644 "$icon" \
     "$PREFIX/share/icons/hicolor/512x512/apps/$APP_ID.png"
 
-  # Lets Sink talk to SteelSeries HID devices without root.
+  # Lets Inari talk to SteelSeries HID devices without root.
   if [[ -f "$REPO_DIR/packaging/udev/50-sink-steelseries.rules" ]]; then
     info "Installing udev rule for SteelSeries devices"
     sudo install -Dm644 "$REPO_DIR/packaging/udev/50-sink-steelseries.rules" \
@@ -144,9 +145,9 @@ EOF
   fi
 
   bold ""
-  bold "Sink installed."
+  bold "Inari installed."
   echo "  Launch:      $APP_ID   (or from your application menu)"
-  echo "  Config:      ~/.config/sink"
+  echo "  Config:      ~/.config/inari"
   echo "  Autostart:   enable it in Settings, or your desktop restores the session"
   echo
   echo "If a SteelSeries base station is plugged in, re-plug it once so the new"
@@ -163,7 +164,7 @@ case "${1:-}" in
   *)           die "unknown option: $1" ;;
 esac
 
-bold "Sink installer"
+bold "Inari installer"
 [[ "$DEPS" -eq 1 ]] && install_deps "$(detect_distro)"
 do_build
 do_install

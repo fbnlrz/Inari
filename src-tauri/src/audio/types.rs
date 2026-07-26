@@ -258,7 +258,7 @@ pub struct OutputDevice {
 }
 
 fn default_mic_label() -> String {
-    "Sink Mic".to_string()
+    "Inari Mic".to_string()
 }
 fn default_gate_threshold() -> f32 {
     -40.0

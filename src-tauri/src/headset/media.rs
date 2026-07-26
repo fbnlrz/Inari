@@ -4,7 +4,7 @@
 //! - Still images and GIFs are decoded in-process via the `image` crate.
 //! - Video containers are decoded by shelling out to the system `ffmpeg`
 //!   (optional; only used when the file looks like a video and ffmpeg exists),
-//!   matching Sink's existing "call the system tool" approach (pactl).
+//!   matching Inari's existing "call the system tool" approach (pactl).
 //!
 //! Every frame is scaled to fit 128x64 (aspect-preserving, centred, black
 //! padding) and Floyd–Steinberg dithered to monochrome.

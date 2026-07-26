@@ -28,7 +28,7 @@ pub struct MixerState {
     pub seen: crate::persistence::seen::SeenApps,
     /// Unix seconds of the last `seen` write. The poll only saves on
     /// structural changes, so this drives a slow flush that bounds how stale
-    /// on-disk `last_seen` timestamps can get if Sink dies without a clean
+    /// on-disk `last_seen` timestamps can get if Inari dies without a clean
     /// quit - the age-based prune trusts them.
     pub seen_saved_at: u64,
     /// Profile changes autosave into this profile (live-bound, not a

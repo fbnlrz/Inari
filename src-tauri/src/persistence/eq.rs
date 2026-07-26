@@ -8,7 +8,7 @@ use crate::audio::types::EqConfig;
 use crate::error::SinkError;
 
 /// Per-channel parametric EQ configs, stored as JSON at
-/// `$XDG_CONFIG_HOME/sink/eq.json`. A missing entry means "never touched" -
+/// `$XDG_CONFIG_HOME/inari/eq.json`. A missing entry means "never touched" -
 /// the default (disabled, flat) config.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct ChannelEq {
@@ -21,7 +21,7 @@ impl ChannelEq {
     pub fn config_path() -> Result<PathBuf, SinkError> {
         let dir = dirs::config_dir()
             .ok_or_else(|| SinkError::Config("cannot resolve the user config directory".into()))?;
-        Ok(dir.join("sink").join("eq.json"))
+        Ok(dir.join("inari").join("eq.json"))
     }
 
     pub fn load() -> Self {

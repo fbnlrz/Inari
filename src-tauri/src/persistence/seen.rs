@@ -26,7 +26,7 @@ pub struct SeenEntry {
 }
 
 /// Registry of every app identity ever seen, stored as JSON at
-/// `$XDG_CONFIG_HOME/sink/seen_apps.json`. Powers the inactive-apps list
+/// `$XDG_CONFIG_HOME/inari/seen_apps.json`. Powers the inactive-apps list
 /// and the ignore feature.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SeenApps {
@@ -37,7 +37,7 @@ impl SeenApps {
     pub fn config_path() -> Result<PathBuf, SinkError> {
         let dir = dirs::config_dir()
             .ok_or_else(|| SinkError::Config("cannot resolve the user config directory".into()))?;
-        Ok(dir.join("sink").join("seen_apps.json"))
+        Ok(dir.join("inari").join("seen_apps.json"))
     }
 
     pub fn load() -> Self {

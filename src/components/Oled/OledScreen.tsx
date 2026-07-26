@@ -34,7 +34,7 @@ function Preview({ lines }: Readonly<{ lines: string[] }>) {
 
 export function OledScreen() {
   const h = useHeadset();
-  const [text, setText] = useState("SINK");
+  const [text, setText] = useState("INARI");
   const [brightness, setBrightness] = useState(8);
   const [loop, setLoop] = useState(true);
   const [notifyMs, setNotifyMs] = useState(4000);
@@ -80,7 +80,7 @@ export function OledScreen() {
           <Ms name="tv_off" style={{ fontSize: 46, opacity: 0.5 }} />
           <p>Display not supported on this device.</p>
           <span className="hs-empty-sub">
-            {h.model ?? "The connected device"} doesn't expose a display Sink can
+            {h.model ?? "The connected device"} doesn't expose a display Inari can
             drive. Screen control currently works on the Arctis Nova Pro Wireless
             base station.
           </span>

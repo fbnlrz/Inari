@@ -1,6 +1,6 @@
 # Headset & OLED — Arctis Nova Pro Wireless
 
-Sink can drive a **SteelSeries Arctis Nova Pro Wireless** base station directly
+Inari can drive a **SteelSeries Arctis Nova Pro Wireless** base station directly
 over USB — no SteelSeries GG, no root. It speaks the vendor HID protocol on
 `/dev/hidraw` and exposes everything in the **Headset** and **OLED** tabs.
 
@@ -16,7 +16,7 @@ Supported base stations (USB product ids): `0x12e0`, `0x12e5`, `0x225d`
   audio gain (low/high), and an optional WirePlumber anti-crackle headroom fix.
 - **Microphone** — mic volume, sidetone (off/low/med/high), mute-LED brightness.
 - **Hardware equalizer** — the device's 10-band EQ (±10 dB) plus its built-in
-  presets. This is the EQ baked into the headset, separate from Sink's
+  presets. This is the EQ baked into the headset, separate from Inari's
   per-channel software EQ.
 - **Line out** — speaker vs. stream mode and the stream main-L/R + aux volumes.
 - **Power & wireless** — auto shut-off timer and 2.4 GHz speed/range mode.
@@ -40,12 +40,12 @@ The base station's 128×64 monochrome panel:
   downloaded automatically.
 - **SteelSeries UI** — hand the panel back to the firmware at any time.
 
-The firmware keeps repainting the panel, so Sink holds custom content with a
+The firmware keeps repainting the panel, so Inari holds custom content with a
 continuous ~24 fps draw loop (which also drives animation).
 
 ## Access without root (udev)
 
-Sink needs read/write on the base station's `hidraw` node. The bundled rule
+Inari needs read/write on the base station's `hidraw` node. The bundled rule
 grants this to the logged-in desktop user:
 
 ```bash

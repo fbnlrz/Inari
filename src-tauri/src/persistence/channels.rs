@@ -30,7 +30,7 @@ fn default_true() -> bool {
 }
 
 /// The user's channel set, stored as JSON at
-/// `$XDG_CONFIG_HOME/sink/channels.json`. Defaults to the classic four.
+/// `$XDG_CONFIG_HOME/inari/channels.json`. Defaults to the classic four.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Channels {
     pub channels: Vec<ChannelDef>,
@@ -76,7 +76,7 @@ impl Channels {
     pub fn config_path() -> Result<PathBuf, SinkError> {
         let dir = dirs::config_dir()
             .ok_or_else(|| SinkError::Config("cannot resolve the user config directory".into()))?;
-        Ok(dir.join("sink").join("channels.json"))
+        Ok(dir.join("inari").join("channels.json"))
     }
 
     pub fn load() -> Self {

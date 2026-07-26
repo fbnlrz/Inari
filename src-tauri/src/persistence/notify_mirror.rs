@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use crate::error::SinkError;
 
 fn marker_path() -> Option<PathBuf> {
-    dirs::config_dir().map(|d| d.join("sink").join("notify_mirror"))
+    dirs::config_dir().map(|d| d.join("inari").join("notify_mirror"))
 }
 
 pub fn is_enabled() -> bool {

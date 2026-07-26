@@ -10,7 +10,7 @@ pub(crate) const MAX_VOLUME: u8 = 150;
 /// stream (returns it to the system default sink).
 ///
 /// The choice is also recorded as a persistent assignment (Phase 2): saved
-/// to `$XDG_CONFIG_HOME/sink/assignments.json`, mirrored to a WirePlumber
+/// to `$XDG_CONFIG_HOME/inari/assignments.json`, mirrored to a WirePlumber
 /// conf fragment, and re-applied by the stream poll when the app restarts.
 #[tauri::command]
 pub fn route_app_to_channel(

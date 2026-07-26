@@ -261,7 +261,7 @@ export function MicScreen() {
                 >
                   NoiseTorch
                 </a>{" "}
-                in front of Sink removes background noise before this chain -
+                in front of Inari removes background noise before this chain -
                 pick its virtual mic as the Input above and the gate gets a
                 much cleaner signal to work with.
               </span>

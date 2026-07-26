@@ -1,6 +1,6 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useMixerStore } from "../../store/mixer";
-import { Ms, SinkMark } from "../Icons";
+import { Ms, InariMark } from "../Icons";
 import { BalanceBar } from "../MixerBoard/BalanceBar";
 import { ProfileMenu } from "./ProfileMenu";
 
@@ -22,10 +22,10 @@ export function TitleBar({ screen }: Readonly<{ screen: string }>) {
     <header data-tauri-drag-region className="headerbar">
       <div data-tauri-drag-region className="hb-brand">
         <div className="hb-logo">
-          <SinkMark />
+          <InariMark />
         </div>
         <div data-tauri-drag-region className="hb-title">
-          Sink
+          Inari
         </div>
       </div>
       <div data-tauri-drag-region className="hb-sub">

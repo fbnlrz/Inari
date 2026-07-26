@@ -19,8 +19,8 @@ type LabelStyle = "plain" | "suffix" | "prefix";
 
 const LABEL_STYLES: { value: LabelStyle; label: string; example: string }[] = [
   { value: "plain", label: "Plain", example: "Game" },
-  { value: "suffix", label: "Suffix", example: "Game (Sink)" },
-  { value: "prefix", label: "Prefix", example: "Sink · Game" },
+  { value: "suffix", label: "Suffix", example: "Game (Inari)" },
+  { value: "prefix", label: "Prefix", example: "Inari · Game" },
 ];
 
 /** Card row with a device dropdown for picking a system default. */
@@ -205,7 +205,7 @@ export function SettingsScreen() {
             </div>
             <div className="rmain">
               <div className="rtitle">Device naming</div>
-              <div className="rsub">Naming scheme for Sink-managed devices</div>
+              <div className="rsub">Naming scheme for Inari-managed devices</div>
             </div>
             <div style={{ position: "relative" }}>
               <button type="button" className="select" onClick={() => setLabelStyleOpen((o) => !o)}>
@@ -240,7 +240,7 @@ export function SettingsScreen() {
           <DeviceRow
             icon="mic"
             title="Default input"
-            sub="The microphone the Sink mic chain captures"
+            sub="The microphone the Inari mic chain captures"
             devices={inputDevices}
             current={defaults.input}
             onPick={(name) => void pickDefault("input", name)}
@@ -305,8 +305,8 @@ export function SettingsScreen() {
               <Ms name="info" />
             </div>
             <div className="rmain">
-              <div className="rtitle">Sink {version}</div>
-              <div className="rsub">GPL-3.0 · config in ~/.config/sink</div>
+              <div className="rtitle">Inari {version}</div>
+              <div className="rsub">GPL-3.0 · config in ~/.config/inari</div>
             </div>
           </div>
           <div className="row">
@@ -326,7 +326,7 @@ export function SettingsScreen() {
               <Ms name="restart_alt" />
             </div>
             <div className="rmain">
-              <div className="rtitle">Reset Sink</div>
+              <div className="rtitle">Reset Inari</div>
               <div className="rsub">
                 Erase all channels, mixes, profiles, app history and preferences
               </div>
@@ -341,12 +341,12 @@ export function SettingsScreen() {
       <ConfirmModal
         open={confirmingReset}
         onClose={() => setConfirmingReset(false)}
-        title="Reset Sink?"
+        title="Reset Inari?"
         confirmLabel="Reset everything"
         onConfirm={() => void invoke("reset_app").catch((e) => setError(String(e)))}
       >
         Everything you've set up - channels, mixes, profiles, app assignments,
-        history and preferences - is permanently deleted, and Sink relaunches
+        history and preferences - is permanently deleted, and Inari relaunches
         as if freshly installed.
       </ConfirmModal>
     </div>

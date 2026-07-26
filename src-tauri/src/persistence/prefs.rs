@@ -12,9 +12,9 @@ pub enum DeviceLabelStyle {
     /// "Game"
     #[default]
     Plain,
-    /// "Game (Sink)"
+    /// "Game (Inari)"
     Suffix,
-    /// "Sink · Game"
+    /// "Inari · Game"
     Prefix,
 }
 
@@ -33,7 +33,7 @@ fn default_notify_secs() -> u64 {
     5
 }
 
-/// App preferences, stored at `$XDG_CONFIG_HOME/sink/prefs.json`.
+/// App preferences, stored at `$XDG_CONFIG_HOME/inari/prefs.json`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Prefs {
     #[serde(default)]
@@ -86,7 +86,7 @@ impl Prefs {
     pub fn config_path() -> Result<PathBuf, SinkError> {
         let dir = dirs::config_dir()
             .ok_or_else(|| SinkError::Config("cannot resolve the user config directory".into()))?;
-        Ok(dir.join("sink").join("prefs.json"))
+        Ok(dir.join("inari").join("prefs.json"))
     }
 
     pub fn load() -> Self {
@@ -123,8 +123,8 @@ impl Prefs {
     pub fn decorate(&self, label: &str) -> String {
         match self.device_label_style {
             DeviceLabelStyle::Plain => label.to_string(),
-            DeviceLabelStyle::Suffix => format!("{label} (Sink)"),
-            DeviceLabelStyle::Prefix => format!("Sink · {label}"),
+            DeviceLabelStyle::Suffix => format!("{label} (Inari)"),
+            DeviceLabelStyle::Prefix => format!("Inari · {label}"),
         }
     }
 }
@@ -138,9 +138,9 @@ mod tests {
         let mut p = Prefs::default();
         assert_eq!(p.decorate("Game"), "Game");
         p.device_label_style = DeviceLabelStyle::Suffix;
-        assert_eq!(p.decorate("Game"), "Game (Sink)");
+        assert_eq!(p.decorate("Game"), "Game (Inari)");
         p.device_label_style = DeviceLabelStyle::Prefix;
-        assert_eq!(p.decorate("Game"), "Sink · Game");
+        assert_eq!(p.decorate("Game"), "Inari · Game");
     }
 
     #[test]

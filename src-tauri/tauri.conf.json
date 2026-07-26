@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "sink",
-  "version": "0.1.0",
-  "identifier": "us.echo.Sink",
+  "productName": "Inari",
+  "version": "1.0.0",
+  "identifier": "com.fbnlrz.inari",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "sink",
+        "title": "Inari",
         "width": 1280,
         "height": 800,
         "minWidth": 960,

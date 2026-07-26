@@ -18,7 +18,7 @@ pub struct Assignment {
 }
 
 /// The set of saved app→channel assignments, stored as JSON at
-/// `$XDG_CONFIG_HOME/sink/assignments.json`.
+/// `$XDG_CONFIG_HOME/inari/assignments.json`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Assignments {
     pub assignments: Vec<Assignment>,
@@ -28,7 +28,7 @@ impl Assignments {
     pub fn config_path() -> Result<PathBuf, SinkError> {
         let dir = dirs::config_dir()
             .ok_or_else(|| SinkError::Config("cannot resolve the user config directory".into()))?;
-        Ok(dir.join("sink").join("assignments.json"))
+        Ok(dir.join("inari").join("assignments.json"))
     }
 
     /// Load from disk; a missing or unreadable file yields the empty set

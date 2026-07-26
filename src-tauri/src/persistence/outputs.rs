@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::SinkError;
 
 /// Per-channel output device choices (Phase 4), stored as JSON at
-/// `$XDG_CONFIG_HOME/sink/outputs.json`. `None` = follow the system default
+/// `$XDG_CONFIG_HOME/inari/outputs.json`. `None` = follow the system default
 /// output (with automatic failover, Sonar-style).
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct ChannelOutputs {
@@ -26,7 +26,7 @@ impl ChannelOutputs {
     pub fn config_path() -> Result<PathBuf, SinkError> {
         let dir = dirs::config_dir()
             .ok_or_else(|| SinkError::Config("cannot resolve the user config directory".into()))?;
-        Ok(dir.join("sink").join("outputs.json"))
+        Ok(dir.join("inari").join("outputs.json"))
     }
 
     pub fn load() -> Self {

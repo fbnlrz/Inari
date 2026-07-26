@@ -1,6 +1,6 @@
 //! SteelSeries Arctis Nova Pro Wireless base-station support.
 //!
-//! Sink is otherwise a pure PipeWire audio router; this module is the only
+//! Inari is otherwise a pure PipeWire audio router; this module is the only
 //! part that talks to the headset hardware. It speaks the vendor HID protocol
 //! directly over `/dev/hidraw` (no libhidapi) to expose device settings (ANC,
 //! sidetone, mic, EQ, …), live status (battery, ChatMix, connection) and the

@@ -25,7 +25,7 @@ pub fn unix_now() -> u64 {
 
 /// Create Sink's config directory (and parents) with owner-only access -
 /// routing rules and app history are nobody else's business. Used by every
-/// save path that writes under `$XDG_CONFIG_HOME/sink`.
+/// save path that writes under `$XDG_CONFIG_HOME/inari`.
 pub fn ensure_private_dir(path: &std::path::Path) -> std::io::Result<()> {
     std::fs::create_dir_all(path)?;
     #[cfg(unix)]
@@ -69,7 +69,7 @@ pub fn write_atomic(path: &std::path::Path, contents: impl AsRef<[u8]>) -> std::
 /// and the WirePlumber routing rules.
 pub fn wipe_all() -> Result<(), crate::error::SinkError> {
     if let Some(dir) = dirs::config_dir() {
-        let sink_dir = dir.join("sink");
+        let sink_dir = dir.join("inari");
         if sink_dir.exists() {
             std::fs::remove_dir_all(&sink_dir)?;
         }

@@ -335,7 +335,7 @@ fn build_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
     TrayIconBuilder::with_id("sink-tray")
         .icon(icon)
-        .tooltip("sink")
+        .tooltip("Inari")
         .menu(&menu)
         .show_menu_on_left_click(true)
         .on_menu_event(move |app, event| {

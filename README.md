@@ -1,6 +1,6 @@
-# Sink
+# Inari
 
-[![GitHub](https://img.shields.io/badge/GitHub-181717?logo=github&logoColor=white)](https://github.com/fbnlrz/sink)
+[![GitHub](https://img.shields.io/badge/GitHub-181717?logo=github&logoColor=white)](https://github.com/fbnlrz/inari)
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/fbnlrz)
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-FFDD00?logo=buymeacoffee&logoColor=black)](https://www.buymeacoffee.com/fbnlrz)
 
@@ -11,7 +11,7 @@
 > (see [Credits](#credits)). Hardware support here is Linux-only and specific to
 > the author's devices; upstream deliberately keeps it out of the main app.
 
-SteelSeries Sonar for Linux. Built on PipeWire.
+**Inari** — SteelSeries Sonar for Linux. Built on PipeWire.
 
 Route each app to its own channel - Game, Chat, Music - and control
 volume, mute, and output device per channel. Build mixes for OBS and a
@@ -64,15 +64,15 @@ processed virtual microphone for voice chat.
 **Build and install from source (any distro)**
 
 ```bash
-git clone https://github.com/fbnlrz/sink && cd sink
+git clone https://github.com/fbnlrz/inari && cd inari
 ./install.sh
 ```
 
 `install.sh` installs the build/runtime dependencies for Debian/Ubuntu (and
 derivatives like Mint, Pop!_OS), Fedora and Arch, builds the release binary,
-and installs the app, its desktop entry and the udev rule that lets Sink talk
+and installs the app, its desktop entry and the udev rule that lets Inari talk
 to SteelSeries devices without root. Useful flags: `--deps-only`, `--no-deps`,
-`--uninstall` (uninstall keeps your `~/.config/sink`).
+`--uninstall` (uninstall keeps your `~/.config/inari`).
 
 **Debian / Ubuntu — manual dependencies**
 
@@ -85,7 +85,7 @@ sudo apt install -y build-essential curl wget file pkg-config \
   libssl-dev libxdo-dev libpipewire-0.3-dev clang ffmpeg
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh   # if you have no Rust
 npm install && ./node_modules/.bin/tauri build --no-bundle
-sudo install -Dm755 target/release/sink /usr/bin/sink
+sudo install -Dm755 target/release/sink /usr/bin/inari
 ```
 
 `ffmpeg` is optional and only needed to play videos on the headset OLED.
@@ -158,7 +158,9 @@ npm run tauri dev      # run
 npm run tauri build    # package
 ```
 
-Config lives in `~/.config/sink` as plain JSON.
+Config lives in `~/.config/inari` as plain JSON. Upgrading from the upstream
+Sink? Run `./migrate-to-inari.sh` once to move your existing `~/.config/sink`
+over (see the script for details).
 
 ## Credits
 
