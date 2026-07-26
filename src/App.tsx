@@ -13,6 +13,7 @@ import { Ms } from "./components/Icons";
 import { Tooltip } from "./components/Tooltip";
 import { useAudio } from "./hooks/useAudio";
 import { useMixerStore } from "./store/mixer";
+import { useUpdate } from "./store/update";
 
 const NAV = [
   { id: "mixer", icon: "graphic_eq", label: "Mixer" },
@@ -32,8 +33,12 @@ export default function App() {
   const error = useMixerStore((s) => s.error);
   const clearError = useMixerStore((s) => s.clearError);
 
+  const update = useUpdate();
+
   useEffect(() => {
     void getVersion().then(setVersion);
+    // Non-blocking check on launch; failures stay silent (surfaced in Settings).
+    void useUpdate.getState().check();
   }, []);
 
   const current =
@@ -69,6 +74,56 @@ export default function App() {
             <Ms name="close" style={{ fontSize: 16 }} />
           </button>
         </div>
+      )}
+
+      {update.installed ? (
+        <div className="update-banner" role="status">
+          <Ms name="check_circle" className="update-banner-icon" />
+          <span className="update-banner-msg">
+            <strong>Update installed.</strong> Restarting Inari…
+          </span>
+          <button type="button" className="update-banner-btn" onClick={() => void update.restart()}>
+            Restart now
+          </button>
+        </div>
+      ) : (
+        update.info?.available &&
+        !update.dismissed && (
+          <div className="update-banner" role="status">
+            <Ms name="download" className="update-banner-icon" />
+            <span className="update-banner-msg">
+              <strong>Update available:</strong> Inari {update.info.latest}
+              <span className="update-banner-sub"> (you have {update.info.current})</span>
+            </span>
+            {update.error && <span className="update-banner-err">{update.error}</span>}
+            {update.info.can_self_install && (
+              <button
+                type="button"
+                className="update-banner-btn"
+                disabled={update.applying}
+                onClick={() => void update.apply()}
+              >
+                {update.applying ? "Installing…" : "Update now"}
+              </button>
+            )}
+            <button
+              type="button"
+              className="update-banner-link"
+              onClick={() => update.info && void update.openNotes()}
+            >
+              Release notes
+            </button>
+            <button
+              type="button"
+              className="update-banner-x"
+              aria-label="Dismiss update notice"
+              title="Dismiss"
+              onClick={() => update.dismiss()}
+            >
+              <Ms name="close" style={{ fontSize: 16 }} />
+            </button>
+          </div>
+        )
       )}
 
       <div className="body">

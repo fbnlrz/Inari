@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { useMixerStore } from "../../store/mixer";
 import { useTheme, THEMES } from "../../store/theme";
+import { useUpdate } from "../../store/update";
 import type { OutputDevice } from "../../types";
 import { Ms } from "../Icons";
 import { ConfirmModal } from "../ConfirmModal";
@@ -87,6 +88,7 @@ function engineDesc(native: boolean | null): string {
 
 export function SettingsScreen() {
   const { theme, setTheme } = useTheme();
+  const update = useUpdate();
   const [autostart, setAutostart] = useState<boolean | null>(null);
   const [startMinimized, setStartMinimized] = useState(false);
   const [backendNative, setBackendNative] = useState<boolean | null>(null);
@@ -157,6 +159,12 @@ export function SettingsScreen() {
       setError(String(e));
     }
   };
+
+  let updateSub = "Check for a new release";
+  if (update.checking) updateSub = "Checking…";
+  else if (update.info?.available) updateSub = `Inari ${update.info.latest} is available`;
+  else if (update.error) updateSub = update.error;
+  else if (update.info) updateSub = `You're on the latest (v${update.info.current})`;
 
   return (
     <div className="content narrow">
@@ -308,6 +316,34 @@ export function SettingsScreen() {
               <div className="rtitle">Inari {version}</div>
               <div className="rsub">GPL-3.0 · config in ~/.config/inari</div>
             </div>
+          </div>
+          <div className="row">
+            <div className="ricon">
+              <Ms name="system_update" />
+            </div>
+            <div className="rmain">
+              <div className="rtitle">Updates</div>
+              <div className="rsub">{updateSub}</div>
+            </div>
+            {update.info?.available && update.info.can_self_install ? (
+              <button
+                type="button"
+                className="select"
+                disabled={update.applying}
+                onClick={() => void update.apply()}
+              >
+                <span>{update.applying ? "Installing…" : "Update"}</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="select"
+                disabled={update.checking}
+                onClick={() => void update.check()}
+              >
+                <span>{update.checking ? "Checking…" : "Check now"}</span>
+              </button>
+            )}
           </div>
           <div className="row">
             <div className="ricon">

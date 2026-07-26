@@ -74,8 +74,12 @@ fi
 # ---- download + install ----------------------------------------------------
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
+# World-readable so apt's sandbox user (_apt) can read the local .deb without
+# the "Download is performed unsandboxed" notice.
+chmod 755 "$tmp"
 deb="$tmp/${PKG}_${latest}_amd64.deb"
 download "$url" "$deb"
+chmod 644 "$deb"
 
 msg "Installing (needs ${SUDO:-root})"
 # apt resolves runtime deps and upgrades over any existing install; the dpkg
