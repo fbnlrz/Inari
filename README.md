@@ -55,9 +55,22 @@ processed virtual microphone for voice chat.
 - **Themes** - ships the original look plus a **Tokyo Night** palette,
   switchable in Settings.
 
-![Equalizer](docs/eq.png)
-![Mic](docs/mic.png)
-![Apps](docs/apps.png)
+## Screenshots
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/eq.png" alt="Equalizer"><br><sub><b>Equalizer</b> — per-channel parametric EQ with a draggable curve</sub></td>
+    <td width="50%"><img src="docs/mic.png" alt="Microphone"><br><sub><b>Microphone</b> — gate, compressor and limiter into a virtual mic</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/apps.png" alt="Apps"><br><sub><b>Apps</b> — running apps, assigned once and remembered</sub></td>
+    <td width="50%"><img src="docs/headset.png" alt="Headset"><br><sub><b>Headset</b> — Arctis Nova Pro Wireless control over USB</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/oled.png" alt="OLED"><br><sub><b>OLED</b> — drive the base station's 128×64 display</sub></td>
+    <td width="50%"><img src="docs/mouse.png" alt="Mouse"><br><sub><b>Mouse</b> — Aerox 9 Wireless: DPI, polling, RGB, battery</sub></td>
+  </tr>
+</table>
 
 ## Install
 
