@@ -156,6 +156,10 @@ pub fn run() {
             commands::mouse::mouse_set_sleep,
             commands::mouse::mouse_set_dim,
             commands::mouse::mouse_set_startup_lighting,
+            commands::update::check_update,
+            commands::update::apply_update,
+            commands::update::restart_app,
+            commands::update::open_url,
         ])
         .setup(move |app| {
             build_tray(app)?;

@@ -1594,6 +1594,81 @@ body,
   outline-offset: 1px;
 }
 
+/* Update-available / update-installed banner (see App.tsx, store/update.ts). */
+.update-banner {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-7);
+  background: var(--accent-light);
+  border-bottom: 1px solid var(--accent);
+  color: var(--fg-primary);
+  font-size: var(--fs-meta);
+}
+.update-banner-icon {
+  flex: 0 0 auto;
+  color: var(--accent);
+  font-size: 18px;
+}
+.update-banner-msg {
+  flex: 1;
+  min-width: 0;
+}
+.update-banner-sub {
+  color: var(--fg-muted);
+}
+.update-banner-err {
+  flex: 0 0 auto;
+  color: var(--danger);
+}
+.update-banner-btn {
+  flex: 0 0 auto;
+  padding: 4px 12px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: var(--fs-meta);
+  font-weight: 600;
+  cursor: pointer;
+}
+.update-banner-btn:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+.update-banner-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.update-banner-link {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-size: var(--fs-meta);
+  cursor: pointer;
+  text-decoration: underline;
+}
+.update-banner-x {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.update-banner-x:hover {
+  background: var(--bg-surface-hover);
+}
+.update-banner-x:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 /* Global hover tooltip (see components/Tooltip.tsx): replaces the native
    `title` popups so timing and on-screen clamping are ours to control.
    Positioned imperatively; sits above modals and menus. */
