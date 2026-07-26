@@ -13,7 +13,7 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PREFIX="${PREFIX:-/usr}"
 APP_ID="inari"          # installed command / desktop entry / icon / WM class
-BUILD_BIN="sink"        # Cargo crate output name under target/release/
+BUILD_BIN="inari"        # Cargo crate output name under target/release/
 
 bold() { printf '\033[1m%s\033[0m\n' "$*"; }
 info() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }

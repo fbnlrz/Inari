@@ -1,13 +1,13 @@
 [package]
-name = "sink"
-version = "1.0.1"
+name = "inari"
+version = "1.0.2"
 description = "Linux-native audio routing and mixing for PipeWire, with SteelSeries device control"
 edition = "2021"
 rust-version = "1.77"
 license = "GPL-3.0-only"
 
 [lib]
-name = "sink_lib"
+name = "inari_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
