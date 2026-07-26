@@ -105,55 +105,30 @@ sudo install -Dm755 target/release/sink /usr/bin/inari
 
 ### Prebuilt packages
 
-> These prebuilt packages are the **upstream** project's and do **not** include
-> the SteelSeries device control or Tokyo Night theme added in this fork.
-> To get the fork's features, build from source (above).
-
-**Arch / Manjaro / EndeavourOS** - from the [AUR](https://aur.archlinux.org/packages/sink-bin):
-
-```bash
-yay -S sink-bin      # or: paru -S sink-bin
-```
-
-**Fedora** - from [COPR](https://copr.fedorainfracloud.org/coprs/nc1107/sink/):
-
-```bash
-sudo dnf copr enable nc1107/sink
-sudo dnf install sink
-```
-
-Both track new releases, so you update through your package manager like any
-other package.
-
-Otherwise, grab the latest from [Releases](https://github.com/NC1107/sink/releases)
-and install the file directly:
-
-**Fedora / openSUSE**
-
-```bash
-sudo dnf install ./sink-*.x86_64.rpm
-```
+Every release ships prebuilt Linux bundles on the
+[Releases page](https://github.com/fbnlrz/inari/releases). Grab the one for your
+distro and install it directly:
 
 **Debian / Ubuntu / Mint**
 
 ```bash
-sudo apt install ./sink_*_amd64.deb
+sudo apt install ./Inari_*_amd64.deb
 ```
 
-**Arch / Manjaro / EndeavourOS**
+**Fedora / openSUSE**
 
 ```bash
-sudo pacman -U ./sink-bin-*-x86_64.pkg.tar.zst
+sudo dnf install ./Inari-*.x86_64.rpm
 ```
 
-These install the app properly - launcher entry, icon, uninstall
-through your package manager.
+These install the app properly - launcher entry, icon, uninstall through your
+package manager.
 
 **Any other distro - AppImage (portable, no root)**
 
 ```bash
-chmod +x sink_*_amd64.AppImage
-./sink_*_amd64.AppImage
+chmod +x Inari_*_amd64.AppImage
+./Inari_*_amd64.AppImage
 ```
 
 To get a launcher entry for an AppImage, use

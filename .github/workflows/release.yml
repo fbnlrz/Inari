@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Stable version to publish, e.g. 0.1.20. Leave blank to publish a dev prerelease."
+        description: "Version to (re)publish, e.g. 1.0.0. Leave blank to use the version in src-tauri/tauri.conf.json."
         required: false
         default: ""
 
@@ -23,10 +23,6 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
-    outputs:
-      version: ${{ steps.ver.outputs.version }}
-      tag: ${{ steps.ver.outputs.tag }}
-      prerelease: ${{ steps.ver.outputs.prerelease }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -66,45 +62,39 @@ jobs:
             jq
 
       - name: Determine release
-        # A version input (manual dispatch) cuts a stable vX.Y.Z; anything
-        # else (every push to main) refreshes the rolling `dev` prerelease,
-        # versioned as the next patch so it previews the upcoming release.
+        # The release version is whatever is in the manifest
+        # (src-tauri/tauri.conf.json). A push to main auto-publishes it as a
+        # stable vX.Y.Z the first time that version is seen (its tag doesn't
+        # exist yet); pushes that don't bump the version are a no-op. A manual
+        # dispatch re-publishes the current version (or an explicit override),
+        # replacing an existing release of the same tag.
         id: ver
         env:
           INPUT_VERSION: ${{ github.event.inputs.version }}
         run: |
           set -euo pipefail
-          input="$INPUT_VERSION"
-          if [ -n "$input" ]; then
-            # Stable release: validate the input rather than trusting it. An
-            # unchecked value yields tags like `vv0.1.20` and unfindable
-            # artifacts, and a dispatch from a feature branch would tag
-            # unreviewed code.
-            if [ "$GITHUB_REF" != "refs/heads/main" ]; then
-              echo "::error::stable releases must be dispatched from main (got $GITHUB_REF)"
-              exit 1
-            fi
-            if [[ ! "$input" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-              echo "::error::version must be X.Y.Z (got '$input')"
-              exit 1
-            fi
-            if git rev-parse "v$input" >/dev/null 2>&1; then
-              echo "::error::tag v$input already exists"
-              exit 1
-            fi
-            ver="$input"; tag="v$ver"; pre=false
+          manifest=$(jq -r .version src-tauri/tauri.conf.json)
+          ver="${INPUT_VERSION:-$manifest}"
+          if [[ ! "$ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version must be X.Y.Z (got '$ver')"; exit 1
+          fi
+          tag="v$ver"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            release=true; force=true      # manual run: (re)publish this version
+          elif git rev-parse "$tag" >/dev/null 2>&1; then
+            echo "::notice::$tag already released - nothing to do"
+            release=false; force=false    # version unchanged since last release
           else
-            latest=$(git tag -l 'v*' --sort=-v:refname | head -1)
-            latest=${latest#v}; latest=${latest:-0.0.0}
-            IFS=. read -r ma mi pa <<< "$latest"
-            ver="$ma.$mi.$((pa + 1))"; tag="dev"; pre=true
+            release=true; force=false     # new version on main -> auto-release
           fi
           echo "version=$ver" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "prerelease=$pre" >> "$GITHUB_OUTPUT"
-          echo "Publishing $tag (version $ver, prerelease=$pre)"
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+          echo "force=$force" >> "$GITHUB_OUTPUT"
+          echo "Release decision: tag=$tag release=$release force=$force"
 
       - name: Stamp version into the build
+        if: steps.ver.outputs.release == 'true'
         run: |
           set -euo pipefail
           ver="${{ steps.ver.outputs.version }}"
@@ -116,8 +106,10 @@ jobs:
           sed -i '0,/^version = /{s/^version = .*/version = "'"$ver"'"/}' src-tauri/Cargo.toml
 
       - run: npm ci
+        if: steps.ver.outputs.release == 'true'
 
       - name: Verify (never publish untested code)
+        if: steps.ver.outputs.release == 'true'
         run: |
           npx tsc --noEmit
           npm test
@@ -125,9 +117,11 @@ jobs:
           cargo test --manifest-path src-tauri/Cargo.toml
 
       - name: Build bundles
+        if: steps.ver.outputs.release == 'true'
         run: npm run tauri build
 
       - name: Repack AppImage against system PipeWire
+        if: steps.ver.outputs.release == 'true'
         # Strip the bundled libpipewire so the loader uses the system one.
         run: |
           set -euo pipefail
@@ -142,24 +136,23 @@ jobs:
           chmod +x "$app"
 
       - name: Publish
+        if: steps.ver.outputs.release == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           tag="${{ steps.ver.outputs.tag }}"
-          if [ "${{ steps.ver.outputs.prerelease }}" = "true" ]; then
+          # A manual re-run replaces an existing release of the same version.
+          if [ "${{ steps.ver.outputs.force }}" = "true" ]; then
             gh release delete "$tag" --yes --cleanup-tag 2>/dev/null || true
-            gh release create "$tag" --target "$GITHUB_SHA" --title "Dev build" --prerelease \
-              --notes "Rolling development build from the latest commit on main. Not a stable release - expect rough edges."
-          else
-            gh release create "$tag" --target "$GITHUB_SHA" --title "Inari $tag" \
-              --generate-notes --notes "Linux builds:
+          fi
+          gh release create "$tag" --target "$GITHUB_SHA" --title "Inari $tag" \
+            --generate-notes --notes "Linux builds:
           - **AppImage** - portable, run anywhere (\`chmod +x\` and go)
           - **.deb** - Debian / Ubuntu and derivatives
           - **.rpm** - Fedora / openSUSE and derivatives
 
           Requires PipeWire with \`pipewire-pulse\` and WirePlumber 0.5+."
-          fi
           # Checksums over everything this job builds, by basename, so users
           # can verify their downloads.
           ( cd target/release/bundle
@@ -171,3 +164,19 @@ jobs:
             target/release/bundle/appimage/*.AppImage \
             target/release/bundle/deb/*.deb \
             target/release/bundle/rpm/*.rpm
+
+      - name: Open the next dev branch
+        # After releasing vX.Y.Z, branch dev/X.Y.(Z+1) off the release commit so
+        # the next cycle's work has a home. Never touches an existing branch.
+        if: steps.ver.outputs.release == 'true'
+        run: |
+          set -euo pipefail
+          ver="${{ steps.ver.outputs.version }}"
+          IFS=. read -r ma mi pa <<< "$ver"
+          next="dev/${ma}.${mi}.$((pa + 1))"
+          if git ls-remote --exit-code --heads origin "$next" >/dev/null 2>&1; then
+            echo "::notice::$next already exists - leaving it untouched"
+          else
+            git push origin "HEAD:refs/heads/$next"
+            echo "::notice::opened $next for the next development cycle"
+          fi
