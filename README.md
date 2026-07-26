@@ -74,6 +74,23 @@ processed virtual microphone for voice chat.
 
 ## Install
 
+**Quick start (Debian / Ubuntu)** — install or update to the latest release in one line:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fbnlrz/Inari/main/get-inari.sh | bash
+```
+
+Or with wget:
+
+```bash
+wget -qO- https://raw.githubusercontent.com/fbnlrz/Inari/main/get-inari.sh | bash
+```
+
+This grabs the latest `.deb` from the [releases](https://github.com/fbnlrz/inari/releases)
+and installs it with apt (pulling in any runtime dependencies). Re-run it any
+time to update. Prefer to read it first? See [get-inari.sh](get-inari.sh).
+Uninstall with `curl -fsSL https://raw.githubusercontent.com/fbnlrz/Inari/main/get-inari.sh | bash -s -- --uninstall`.
+
 **Build and install from source (any distro)**
 
 ```bash
