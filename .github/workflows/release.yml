@@ -166,17 +166,32 @@ jobs:
             target/release/bundle/rpm/*.rpm
 
       - name: Open the next dev branch
-        # After releasing vX.Y.Z, branch dev/X.Y.(Z+1) off the release commit so
-        # the next cycle's work has a home. Never touches an existing branch.
+        # After releasing vX.Y.Z, open dev/X.Y.(Z+1) off the release commit with
+        # the manifest already bumped to that next version, so simply merging the
+        # branch back to main auto-releases it (no manual version bump needed).
+        # Never touches an existing branch.
         if: steps.ver.outputs.release == 'true'
         run: |
           set -euo pipefail
           ver="${{ steps.ver.outputs.version }}"
           IFS=. read -r ma mi pa <<< "$ver"
-          next="dev/${ma}.${mi}.$((pa + 1))"
-          if git ls-remote --exit-code --heads origin "$next" >/dev/null 2>&1; then
-            echo "::notice::$next already exists - leaving it untouched"
-          else
-            git push origin "HEAD:refs/heads/$next"
-            echo "::notice::opened $next for the next development cycle"
+          next="${ma}.${mi}.$((pa + 1))"
+          branch="dev/${next}"
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            echo "::notice::$branch already exists - leaving it untouched"
+            exit 0
           fi
+          git checkout -b "$branch"
+          # Bump the version everywhere it is declared.
+          jq --arg v "$next" '.version = $v' src-tauri/tauri.conf.json > /tmp/conf.json
+          mv /tmp/conf.json src-tauri/tauri.conf.json
+          npm pkg set version="$next"
+          sed -i '0,/^version = /{s/^version = .*/version = "'"$next"'"/}' src-tauri/Cargo.toml
+          # Keep Cargo.lock's own package entry in sync so the branch builds clean.
+          sed -i '/^name = "inari"$/{n;s/^version = .*/version = "'"$next"'"/}' Cargo.lock || true
+          git config user.name "fbnlrz"
+          git config user.email "137117973+fbnlrz@users.noreply.github.com"
+          git add src-tauri/tauri.conf.json package.json src-tauri/Cargo.toml Cargo.lock
+          git commit -m "chore: begin $next development"
+          git push origin "$branch"
+          echo "::notice::opened $branch at version $next"
