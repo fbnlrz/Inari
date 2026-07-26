@@ -182,9 +182,31 @@ pub async fn apply_update(deb_url: String) -> Result<(), String> {
 }
 
 /// Relaunch the app so the freshly installed version takes over.
+///
+/// Tauri's own `restart()` re-execs `current_exe()`, but after an in-place
+/// package upgrade the running binary's inode has been replaced, so on Linux
+/// that path resolves to a stale `"…/inari (deleted)"` which cannot be exec'd
+/// and the app would just quit. Instead: resolve the real path, hand a detached
+/// helper the job of relaunching it after we've fully exited (so our virtual
+/// sinks are torn down before the fresh instance recreates them), then exit.
 #[tauri::command]
 pub fn restart_app(app: tauri::AppHandle) {
-    app.restart();
+    if let Ok(exe) = std::env::current_exe() {
+        let p = exe.to_string_lossy();
+        let real = p.strip_suffix(" (deleted)").unwrap_or(&p);
+        let quoted = format!("'{}'", real.replace('\'', r"'\''"));
+        let script = format!("sleep 2; exec {quoted}");
+        // setsid detaches the relauncher into its own session so it survives our
+        // exit; fall back to a plain detached shell if setsid is unavailable.
+        let spawned = Command::new("setsid")
+            .args(["sh", "-c", &script])
+            .spawn()
+            .is_ok();
+        if !spawned {
+            let _ = Command::new("sh").args(["-c", &script]).spawn();
+        }
+    }
+    app.exit(0);
 }
 
 /// Open a release page in the user's browser.
