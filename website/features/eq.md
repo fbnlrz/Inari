@@ -8,7 +8,8 @@ description: A parametric EQ on every channel — up to 10 bands with a draggabl
 Every channel has its own parametric equalizer, applied in software by Inari's
 PipeWire engine. Open it with the `tune` button on a channel strip.
 
-![Equalizer](/eq.png)
+![The Chat channel's equalizer: a high-pass at 80 Hz and a lift through the
+speech range, from the Dialogue Clarity preset](/eq.png)
 
 ::: warning Not the same as the headset EQ
 This is Inari's **software** EQ, one instance per channel — so your game can
