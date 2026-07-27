@@ -68,6 +68,47 @@ pub fn is_enabled() -> bool {
         .unwrap_or(false)
 }
 
+/// Does this cgroup path put us inside `unit`?
+///
+/// Split out from [`running_as_unit`] so the interesting part - telling our own
+/// unit apart from the transient `app-*.service` a desktop launcher wraps
+/// manual starts in - is testable without a systemd session.
+fn cgroup_names_unit(cgroup: &str, unit: &str) -> bool {
+    cgroup.lines().any(|line| {
+        // Format is `hierarchy:controllers:path`; only the path matters, and on
+        // cgroup v2 the first two fields are empty.
+        line.rsplit(':')
+            .next()
+            .map(|path| path.trim_end_matches('/').ends_with(&format!("/{unit}")))
+            .unwrap_or(false)
+    })
+}
+
+/// Are we running *as* the autostart unit?
+///
+/// `INVOCATION_ID` is the obvious test and the wrong one: systemd sets it for
+/// every unit, and KDE wraps a manual launch in a transient
+/// `app-<name>@<hash>.service` of its own. Restarting `inari.service` from
+/// inside one of those would start a unit the user never asked to run - and
+/// leave the launched instance behind. The cgroup path names the unit we are
+/// actually in, so ask that instead.
+pub fn running_as_unit() -> bool {
+    fs::read_to_string("/proc/self/cgroup")
+        .map(|c| cgroup_names_unit(&c, UNIT_NAME))
+        .unwrap_or(false)
+}
+
+/// Ask systemd to restart our own unit; `true` if the job was queued.
+///
+/// `--no-block` is not optional here. The restart job's first half is stopping
+/// this very process, so waiting for it to finish would wait on our own death.
+/// Queue it and let systemd - which outlives us by definition - carry it out.
+pub fn request_restart() -> bool {
+    systemctl(&["--no-block", "restart", UNIT_NAME])
+        .map(|out| out.status.success())
+        .unwrap_or(false)
+}
+
 pub fn enable() -> Result<(), SinkError> {
     let path = unit_path()?;
     if let Some(parent) = path.parent() {
@@ -120,5 +161,43 @@ mod tests {
         assert!(unit.contains("ExecStart=\"/"));
         assert!(unit.contains("WantedBy=graphical-session.target"));
         assert!(unit.contains("After=graphical-session.target pipewire.service"));
+    }
+
+    /// The cgroup of an instance actually started by the autostart unit.
+    const UNDER_UNIT: &str =
+        "0::/user.slice/user-1000.slice/user@1000.service/app.slice/inari.service";
+
+    /// What KDE's launcher produces for a manual start - captured from a real
+    /// session. It is a systemd unit too, which is exactly why `INVOCATION_ID`
+    /// cannot be used to tell the two apart.
+    const UNDER_KDE_LAUNCHER: &str = "0::/user.slice/user-1000.slice/user@1000.service/\
+         app.slice/app-net.local.smart\\x2dlauncher@7fd00cd58eaa49578ad6a3cc871e6d24.service";
+
+    #[test]
+    fn cgroup_detection_finds_our_own_unit() {
+        assert!(cgroup_names_unit(UNDER_UNIT, UNIT_NAME));
+        assert!(cgroup_names_unit(&format!("{UNDER_UNIT}/"), UNIT_NAME));
+    }
+
+    #[test]
+    fn cgroup_detection_rejects_a_launcher_scope() {
+        assert!(!cgroup_names_unit(UNDER_KDE_LAUNCHER, UNIT_NAME));
+    }
+
+    #[test]
+    fn cgroup_detection_rejects_a_merely_similar_name() {
+        // Suffix matching without the separator would accept these.
+        assert!(!cgroup_names_unit("0::/app.slice/not-inari.service", UNIT_NAME));
+        assert!(!cgroup_names_unit("0::/app.slice/inari.service.d", UNIT_NAME));
+        assert!(!cgroup_names_unit("", UNIT_NAME));
+    }
+
+    #[test]
+    fn cgroup_detection_reads_v1_style_lines() {
+        // A hybrid hierarchy lists one line per controller; the unit is named
+        // in the path field, not the first.
+        let v1 = "12:pids:/user.slice/user-1000.slice/user@1000.service/inari.service\n\
+                  0::/user.slice/user-1000.slice/user@1000.service/inari.service";
+        assert!(cgroup_names_unit(v1, UNIT_NAME));
     }
 }
