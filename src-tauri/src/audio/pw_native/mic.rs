@@ -205,22 +205,29 @@ impl MicStreams {
                 let Some(bytes) = data.data() else { return };
 
                 let n = (valid.min(bytes.len())) / 4;
-                ctx.scratch.clear();
-                ctx.scratch.extend(
-                    bytes[..n * 4]
-                        .chunks_exact(4)
-                        .map(|b| f32::from_ne_bytes([b[0], b[1], b[2], b[3]])),
-                );
-
                 let settings = ctx.params.settings();
-                ctx.chain.process(&mut ctx.scratch, &settings);
+                // Never grow `scratch` here: this is the RT thread and a
+                // quantum larger than the preallocated window (high rate +
+                // big quantum) would allocate mid-callback. Process it in
+                // slices that fit instead - the DSP is sample-serial, so
+                // slicing changes nothing but the call count.
+                let window = ctx.scratch.capacity().max(1) * 4;
+                let mut peak = 0.0f32;
+                for slice in bytes[..n * 4].chunks(window) {
+                    ctx.scratch.clear();
+                    ctx.scratch.extend(
+                        slice
+                            .chunks_exact(4)
+                            .map(|b| f32::from_ne_bytes([b[0], b[1], b[2], b[3]])),
+                    );
+                    ctx.chain.process(&mut ctx.scratch, &settings);
+                    peak = ctx.scratch.iter().fold(peak, |a, s| a.max(s.abs()));
+                    ctx.ring.push(&ctx.scratch);
+                }
 
                 // Post-DSP level for the UI (mono → both meter channels).
-                let peak = ctx.scratch.iter().fold(0.0f32, |a, s| a.max(s.abs()));
                 ctx.levels.raise(ctx.level_slot, 0, peak);
                 ctx.levels.raise(ctx.level_slot, 1, peak);
-
-                ctx.ring.push(&ctx.scratch);
             })
             .register()
             .map_err(|e| err("capture listener", e))?;
@@ -282,7 +289,9 @@ impl MicStreams {
                     return;
                 }
                 {
-                    let bytes = data.data().expect("checked above");
+                    // Unreachable given the guard above, but an unwrap on a
+                    // data thread aborts the whole process - just bail.
+                    let Some(bytes) = data.data() else { return };
                     // Pop straight into the buffer as f32 ne bytes.
                     let mut frame = [0.0f32; 1024];
                     let mut written = 0;

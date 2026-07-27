@@ -8,6 +8,7 @@ use std::rc::Rc;
 use std::sync::mpsc;
 use std::sync::Arc;
 
+use log::{error, warn};
 use pipewire as pw;
 use pw::core::CoreRc;
 use pw::metadata::{Metadata, MetadataListener};
@@ -327,7 +328,7 @@ fn setup_and_run(
                 };
                 match heal {
                     Heal::Recreate(name, label, kind) => {
-                        eprintln!("sink: {name} vanished externally - recreating");
+                        warn!("{name} vanished externally - recreating");
                         if let Some(core) = CORE.with(|c| c.borrow().clone()) {
                             match create_node_object(&core, &name, &label, kind) {
                                 Ok(proxy) => {
@@ -342,7 +343,7 @@ fn setup_and_run(
                                         _ => s.mic_source = Some(proxy),
                                     }
                                 }
-                                Err(e) => eprintln!("sink: recreate {name} failed: {e}"),
+                                Err(e) => error!("recreate {name} failed: {e}"),
                             }
                         }
                         ensure_all_links(&state);
@@ -606,7 +607,7 @@ fn on_node(
                 Ok(meter) => {
                     s.meters.insert(node_name.clone(), meter);
                 }
-                Err(e) => eprintln!("sink: meter for {node_name} failed: {e}"),
+                Err(e) => warn!("meter for {node_name} failed: {e}"),
             }
         }
         // An enabled EQ config with no live insert: build it against the
@@ -619,7 +620,7 @@ fn on_node(
                     Ok(handle) => {
                         s.eq_streams.insert(node_name.clone(), handle);
                     }
-                    Err(e) => eprintln!("sink: eq chain for {node_name} failed: {e}"),
+                    Err(e) => error!("eq chain for {node_name} failed: {e}"),
                 }
             }
         }
@@ -642,7 +643,7 @@ fn on_node(
                 Ok(meter) => {
                     s.meters.insert(node_name.clone(), meter);
                 }
-                Err(e) => eprintln!("sink: bus meter for {node_name} failed: {e}"),
+                Err(e) => warn!("bus meter for {node_name} failed: {e}"),
             }
         }
         drop(s);
@@ -681,7 +682,7 @@ fn build_mic_streams(state: &Rc<RefCell<State>>) {
             s.mic_links.clear();
             s.mic_streams = Some(streams);
         }
-        Err(e) => eprintln!("sink: mic chain failed: {e}"),
+        Err(e) => error!("mic chain failed: {e}"),
     }
     drop(s);
     ensure_mic_links(state);
@@ -827,7 +828,7 @@ fn create_links(
             },
         ) {
             Ok(link) => created.push((*monitor_port, *input_port, link)),
-            Err(e) => eprintln!("sink: link {sink_name} failed: {e}"),
+            Err(e) => error!("link {sink_name} failed: {e}"),
         }
     }
     created

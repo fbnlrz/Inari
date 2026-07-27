@@ -12,9 +12,27 @@
 //! Coefficient design (a few sin/cos) off the hot path per *change*, not
 //! per buffer, and never a lock on the RT thread.
 
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 
 use crate::audio::types::{EqBand, EqBandKind, EqConfig, MAX_EQ_BANDS};
+
+/// Absolute dB bound the DSP itself enforces on band gain and preamp.
+/// Deliberately wider than the config policy (`EqConfig::clamp_ranges`,
+/// ±24 dB): this layer is not the policy, it only guarantees the cascade
+/// can never be handed an inf/NaN that poisons every later sample.
+const MAX_DSP_GAIN_DB: f32 = 60.0;
+
+/// Non-finite values (a corrupted config, a torn read) must never reach the
+/// math - `powf(inf)` is inf, and one inf sample sticks forever in the
+/// filter memory.
+#[inline]
+fn finite_or(v: f32, fallback: f32) -> f32 {
+    if v.is_finite() {
+        v
+    } else {
+        fallback
+    }
+}
 
 /// Biquad transfer-function coefficients, normalized so a0 == 1.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -42,11 +60,20 @@ impl BiquadCoeffs {
     /// (not a resonance Q) - the schema shares one field for both, see
     /// `EqBand::q`. LowPass/HighPass ignore `gain_db`.
     pub fn design(kind: EqBandKind, freq_hz: f32, gain_db: f32, q: f32, sample_rate: f32) -> Self {
-        // Guard the math: freq must sit below Nyquist and q must be
-        // positive. Config-level clamps enforce this for real input; this
-        // is the last line of defense against a divide-by-zero.
-        let freq = freq_hz.clamp(1.0, sample_rate * 0.49);
-        let q = q.max(0.01);
+        // Guard the math: freq must sit below Nyquist, q must be positive
+        // and the gain must be finite. Config-level clamps enforce this for
+        // real input; this is the last line of defense against a
+        // divide-by-zero or an inf leaking into the cascade.
+        let sample_rate = if sample_rate.is_finite() && sample_rate > 0.0 {
+            sample_rate
+        } else {
+            48000.0
+        };
+        // .max(1.0) keeps the clamp bounds ordered at absurd sample rates
+        // (clamp panics when min > max).
+        let freq = finite_or(freq_hz, 1000.0).clamp(1.0, (sample_rate * 0.49).max(1.0));
+        let q = finite_or(q, 1.0).max(0.01);
+        let gain_db = finite_or(gain_db, 0.0).clamp(-MAX_DSP_GAIN_DB, MAX_DSP_GAIN_DB);
         let w0 = 2.0 * std::f32::consts::PI * freq / sample_rate;
         let (sin_w0, cos_w0) = w0.sin_cos();
         let a = 10.0f32.powf(gain_db / 40.0);
@@ -207,19 +234,29 @@ impl AtomicBand {
     }
 }
 
+/// Low bits of `published` carry the band count (MAX_EQ_BANDS fits in 8),
+/// the rest is the generation counter.
+const COUNT_BITS: u32 = 8;
+const COUNT_MASK: u64 = (1 << COUNT_BITS) - 1;
+
 /// Live-tunable EQ parameters shared with the RT capture callback.
 ///
 /// Single writer (the loop thread handling commands), single reader (the RT
-/// callback). Field writes are Relaxed; the trailing Release bump of
-/// `generation` publishes them all to the reader's Acquire load - no locks,
-/// no retries, and torn *intermediate* states are impossible because the
-/// reader only redesigns after seeing a new generation.
+/// callback). The individual fields are written Relaxed and published by one
+/// Release store of `published`, which carries the band count with the
+/// generation - so a reader that sees a new generation always sees the
+/// matching count, never a stale one, and never walks a band slot the new
+/// config does not define.
+///
+/// What this does *not* guarantee: each band is its own atomic, so two
+/// apply() calls racing one buffer can leave the reader with fields from
+/// both. That costs at most one buffer of wrong curve - the next generation
+/// converges - and it buys a reader with no locks and no retries.
 pub struct EqParams {
     enabled: AtomicBool,
     preamp_bits: AtomicU32,
-    band_count: AtomicUsize,
     bands: [AtomicBand; MAX_EQ_BANDS],
-    generation: AtomicU64,
+    published: AtomicU64,
 }
 
 impl EqParams {
@@ -227,9 +264,8 @@ impl EqParams {
         let p = Self {
             enabled: AtomicBool::new(false),
             preamp_bits: AtomicU32::new(0.0f32.to_bits()),
-            band_count: AtomicUsize::new(0),
             bands: std::array::from_fn(|_| AtomicBand::flat()),
-            generation: AtomicU64::new(0),
+            published: AtomicU64::new(0),
         };
         p.apply(config);
         p
@@ -237,19 +273,21 @@ impl EqParams {
 
     /// Publish a new config to the RT reader (command thread only).
     pub fn apply(&self, config: &EqConfig) {
-        let count = config.bands.len().min(MAX_EQ_BANDS);
+        let count = config.bands.len().min(MAX_EQ_BANDS) as u64;
         for (slot, band) in self.bands.iter().zip(config.bands.iter()) {
             slot.store(band);
         }
-        self.band_count.store(count, Ordering::Relaxed);
         self.enabled.store(config.enabled, Ordering::Relaxed);
         self.preamp_bits
             .store(config.preamp_db.to_bits(), Ordering::Relaxed);
-        self.generation.fetch_add(1, Ordering::Release);
+        // Single Release store publishes count *and* generation together.
+        let generation = (self.published.load(Ordering::Relaxed) >> COUNT_BITS).wrapping_add(1);
+        self.published
+            .store((generation << COUNT_BITS) | count, Ordering::Release);
     }
 
-    fn generation(&self) -> u64 {
-        self.generation.load(Ordering::Acquire)
+    fn published(&self) -> u64 {
+        self.published.load(Ordering::Acquire)
     }
 }
 
@@ -257,8 +295,10 @@ impl EqParams {
 /// `EqParams` when the generation changes or the sample rate renegotiates.
 pub struct EqEngine {
     sample_rate: f32,
-    /// u64::MAX = "must refresh" sentinel (set on rate change / creation).
-    seen_generation: u64,
+    /// Last `EqParams::published` word acted on. u64::MAX = "must refresh"
+    /// sentinel (set on rate change / creation); apply() never produces it,
+    /// its low bits would mean a band count of 255.
+    seen_published: u64,
     enabled: bool,
     preamp_linear: f32,
     coeffs: [BiquadCoeffs; MAX_EQ_BANDS],
@@ -272,7 +312,7 @@ impl EqEngine {
     pub fn new(sample_rate: f32) -> Self {
         Self {
             sample_rate: sample_rate.max(1.0),
-            seen_generation: u64::MAX,
+            seen_published: u64::MAX,
             enabled: false,
             preamp_linear: 1.0,
             coeffs: [BiquadCoeffs::identity(); MAX_EQ_BANDS],
@@ -286,21 +326,24 @@ impl EqEngine {
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         if sample_rate > 0.0 && sample_rate != self.sample_rate {
             self.sample_rate = sample_rate;
-            self.seen_generation = u64::MAX;
+            self.seen_published = u64::MAX;
             self.state = [[BiquadState::default(); 2]; MAX_EQ_BANDS];
         }
     }
 
     fn refresh(&mut self, params: &EqParams) {
-        let generation = params.generation();
-        if generation == self.seen_generation {
+        let published = params.published();
+        if published == self.seen_published {
             return;
         }
-        self.seen_generation = generation;
+        self.seen_published = published;
         self.enabled = params.enabled.load(Ordering::Relaxed);
+        // Same defence as the band gains: an unclamped preamp turns into an
+        // inf multiplier and NaNs the whole cascade.
         let preamp_db = f32::from_bits(params.preamp_bits.load(Ordering::Relaxed));
+        let preamp_db = finite_or(preamp_db, 0.0).clamp(-MAX_DSP_GAIN_DB, MAX_DSP_GAIN_DB);
         self.preamp_linear = 10.0f32.powf(preamp_db / 20.0);
-        self.count = params.band_count.load(Ordering::Relaxed).min(MAX_EQ_BANDS);
+        self.count = ((published & COUNT_MASK) as usize).min(MAX_EQ_BANDS);
         for i in 0..self.count {
             let band = params.bands[i].load();
             self.coeffs[i] =
@@ -510,6 +553,43 @@ mod tests {
             (peak_out - peak_in).abs() < 0.01,
             "flat cascade drifted: in {peak_in}, out {peak_out}"
         );
+    }
+
+    #[test]
+    fn non_finite_band_input_yields_finite_coefficients() {
+        let c = BiquadCoeffs::design(EqBandKind::Peaking, f32::NAN, f32::INFINITY, f32::NAN, SR);
+        for v in [c.b0, c.b1, c.b2, c.a1, c.a2] {
+            assert!(v.is_finite(), "design leaked a non-finite coefficient: {v}");
+        }
+    }
+
+    #[test]
+    fn absurd_preamp_never_reaches_the_cascade() {
+        let params = EqParams::from_config(&config(
+            vec![band(EqBandKind::Peaking, 1000.0, f32::INFINITY, 1.0)],
+            f32::INFINITY,
+        ));
+        let mut engine = EqEngine::new(SR);
+        let mut buf = vec![0.5f32, -0.5, 0.25, -0.25];
+        engine.process_interleaved(&mut buf, &params);
+        assert!(buf.iter().all(|s| s.is_finite()), "NaN/inf leaked: {buf:?}");
+    }
+
+    #[test]
+    fn published_word_pairs_count_with_generation() {
+        let params = EqParams::from_config(&config(vec![], 0.0));
+        let first = params.published();
+        params.apply(&config(
+            vec![
+                band(EqBandKind::Peaking, 1000.0, 1.0, 1.0),
+                band(EqBandKind::Peaking, 2000.0, 1.0, 1.0),
+            ],
+            0.0,
+        ));
+        let second = params.published();
+        assert_eq!(first & COUNT_MASK, 0);
+        assert_eq!(second & COUNT_MASK, 2);
+        assert_eq!(second >> COUNT_BITS, (first >> COUNT_BITS) + 1);
     }
 
     #[test]
