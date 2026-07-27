@@ -17,9 +17,10 @@ pub fn get_virtual_devices(state: State<'_, AppState>) -> Result<Vec<VirtualSink
 /// All running app audio streams.
 ///
 /// Doubles as the auto-routing enforcement point (Phase 2): the frontend
-/// polls this every 2s, and any stream seen for the first time whose app has
-/// a saved assignment is moved onto its channel. Each stream is enforced
-/// once, so manual re-routing (here or in pavucontrol) isn't fought.
+/// calls this whenever the graph changes (plus a slow backstop poll), and any
+/// stream seen for the first time whose app has a saved assignment is moved
+/// onto its channel. Each stream is enforced once, so manual re-routing (here
+/// or in pavucontrol) isn't fought.
 #[tauri::command]
 pub fn get_app_streams(state: State<'_, AppState>) -> Result<Vec<AppStream>, String> {
     let mut streams = state.backend.list_app_streams().map_err(|e| e.to_string())?;
@@ -47,7 +48,7 @@ pub fn get_app_streams(state: State<'_, AppState>) -> Result<Vec<AppStream>, Str
     // no blocking work. Holding the mixer mutex across the disk save or the
     // backend move calls (each up to the native backend's 3s request timeout)
     // would stall every other command - including tray-menu building - behind
-    // this 2s poll, and slow-loop polls would stack up (TD-004). So we snapshot
+    // this refresh, and slow-loop calls would stack up (TD-004). So we snapshot
     // the decisions here and release the guard before touching disk or PipeWire.
     let (seen_to_save, planned) = {
         let mut mixer = state.lock_mixer()?;
