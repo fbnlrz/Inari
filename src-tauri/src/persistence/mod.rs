@@ -44,13 +44,25 @@ pub fn ensure_private_dir(path: &std::path::Path) -> std::io::Result<()> {
 /// [`ensure_private_dir`] first, which this preserves.
 pub fn write_atomic(path: &std::path::Path, contents: impl AsRef<[u8]>) -> std::io::Result<()> {
     use std::io::Write;
-    if let Some(parent) = path.parent() {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    /// Distinguishes concurrent writes to the same path within one process.
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+
+    let parent = path.parent();
+    if let Some(parent) = parent {
         std::fs::create_dir_all(parent)?;
     }
     // Temp file in the same directory so the rename stays on one filesystem
-    // (a cross-device rename is not atomic).
+    // (a cross-device rename is not atomic). Its name is unique per writer:
+    // with a shared "<path>.tmp" two concurrent saves interleave into the same
+    // file and the loser renames a half-written body over the target.
     let mut tmp = path.as_os_str().to_owned();
-    tmp.push(".tmp");
+    tmp.push(format!(
+        ".{}.{}.tmp",
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
     let tmp = std::path::PathBuf::from(tmp);
     let result = (|| {
         let mut file = std::fs::File::create(&tmp)?;
@@ -60,6 +72,16 @@ pub fn write_atomic(path: &std::path::Path, contents: impl AsRef<[u8]>) -> std::
     })();
     if result.is_err() {
         let _ = std::fs::remove_file(&tmp);
+        return result;
+    }
+    // Fsyncing the file only makes its *contents* durable; the rename lives in
+    // the parent directory, so a crash right after it can lose the directory
+    // entry and leave no file at all - worse than the stale one we replaced.
+    // Best effort: some filesystems refuse to open or sync a directory.
+    if let Some(parent) = parent {
+        if let Ok(dir) = std::fs::File::open(parent) {
+            let _ = dir.sync_all();
+        }
     }
     result
 }
@@ -105,9 +127,14 @@ mod tests {
         write_atomic(&path, b"second, longer contents").expect("overwrite");
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "second, longer contents");
 
-        let mut tmp = path.as_os_str().to_owned();
-        tmp.push(".tmp");
-        assert!(!std::path::Path::new(&tmp).exists(), "temp file must not linger");
+        // The temp name is unique per write, so check the whole directory.
+        let leftovers: Vec<_> = std::fs::read_dir(&dir)
+            .expect("dir")
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name())
+            .filter(|n| n.to_string_lossy().ends_with(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "temp files must not linger: {leftovers:?}");
 
         let _ = std::fs::remove_dir_all(&dir);
     }

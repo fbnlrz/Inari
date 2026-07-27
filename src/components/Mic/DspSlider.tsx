@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useId, useRef } from "react";
+import { useSliderKeys } from "../../hooks/useSliderKeys";
 
 interface DspSliderProps {
   label: string;
@@ -49,15 +50,30 @@ export function DspSlider({ label, min, max, step, value, defaultValue, unit, on
     };
   }, []);
 
+  const onKeyDown = useSliderKeys({ value, min, max, step, onChange });
+
   const pct = ((value - min) / (max - min)) * 100;
   const defaultPct = ((defaultValue - min) / (max - min)) * 100;
 
+  // Point the slider at the label already on screen instead of duplicating it.
+  const labelId = useId();
+
   return (
     <div className="dsp-row">
-      <span className="dsp-label">{label}</span>
+      <span className="dsp-label" id={labelId}>
+        {label}
+      </span>
       <div
         className="hs-track"
         ref={trackRef}
+        role="slider"
+        tabIndex={0}
+        aria-labelledby={labelId}
+        aria-valuemin={min}
+        aria-valuemax={max}
+        aria-valuenow={value}
+        aria-valuetext={`${value}${unit}`}
+        onKeyDown={onKeyDown}
         title={`Default: ${defaultValue}${unit} (double-click to reset)`}
         onPointerDown={(e) => {
           dragging.current = true;

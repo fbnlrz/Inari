@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { createDebouncer } from "../lib/debounce";
 import { useMixerStore } from "./mixer";
 
 // Mirrors the Rust `HeadsetStatus` (src-tauri/src/headset/protocol.rs).
@@ -82,21 +83,6 @@ const emptyStatus: HeadsetStatus = {
 // Auto-off timer: index -> minutes (matches the device's discrete steps).
 export const AUTO_OFF_STEPS = [0, 1, 5, 10, 15, 30, 60] as const;
 
-// Debounce device writes so a fader drag doesn't spam HID packets, mirroring
-// how the audio store debounces pactl calls.
-const pending = new Map<string, ReturnType<typeof setTimeout>>();
-function debounced(key: string, fn: () => Promise<unknown>, ms = 120) {
-  const existing = pending.get(key);
-  if (existing) clearTimeout(existing);
-  pending.set(
-    key,
-    setTimeout(() => {
-      pending.delete(key);
-      void fn().catch((e) => console.error(`headset ${key}:`, e));
-    }, ms),
-  );
-}
-
 interface HeadsetState {
   connected: boolean;
   videoSupported: boolean;
@@ -123,8 +109,12 @@ interface HeadsetState {
   hasOled: boolean;
   /** Bundled hardware-EQ curves. */
   eqPresets: EqPreset[];
-  /** Apply a bundled preset; resolves to the applied band gains. */
-  applyEqPreset: (name: string) => Promise<number[]>;
+  /** Apply a bundled preset; resolves to the applied band gains, null on failure. */
+  applyEqPreset: (name: string) => Promise<number[] | null>;
+  /** Device error surfaced in the app-wide banner (null = none). */
+  error: string | null;
+  /** Dismiss the error banner. */
+  clearError: () => void;
   /** Guards one-time snapshot fetch + event subscription. */
   _initialized: boolean;
   /** Save-to-device is debounced after the last change settles. */
@@ -170,181 +160,242 @@ function patch(status: HeadsetStatus, p: Partial<HeadsetStatus>): HeadsetStatus 
   return { ...status, ...p };
 }
 
-export const useHeadset = create<HeadsetState>((set, get) => ({
-  connected: false,
-  videoSupported: false,
-  status: emptyStatus,
-  clips: [],
-  modes: [],
-  alsaHeadroom: false,
-  model: null,
-  hasOled: false,
-  eqPresets: [],
-  _initialized: false,
+export const useHeadset = create<HeadsetState>((set, get) => {
+  // Debounce device writes so a fader drag doesn't spam HID packets, mirroring
+  // how the audio store debounces pactl calls.
+  const debounced = createDebouncer(120, (_key, e) => set({ error: String(e) }));
 
-  applyEqPreset: async (name) => {
-    const bands = await invoke<number[]>("headset_apply_eq_preset", { name });
-    get().scheduleSave();
-    return bands;
-  },
+  /**
+   * Undo an optimistic status change the device rejected and say why. Without
+   * the rollback the toggle keeps showing a state the headset is not in.
+   */
+  const fail = (e: unknown, rollback?: () => void) => {
+    rollback?.();
+    set({ error: String(e) });
+  };
 
-  scheduleSave: () => debounced("save", () => invoke("headset_save"), 800),
+  /**
+   * Fire-and-forget device command. Callers `void` these, and `void` does not
+   * suppress a rejection - a disconnected headset would otherwise produce an
+   * unhandled rejection and no feedback at all.
+   */
+  const cmd = (name: string, args?: Record<string, unknown>): Promise<void> =>
+    invoke<void>(name, args).catch((e: unknown) => {
+      set({ error: String(e) });
+    });
 
-  init: async () => {
-    if (get()._initialized) return;
-    set({ _initialized: true });
-    try {
-      const snap = await invoke<HeadsetSnapshot>("get_headset_status");
-      set({
-        connected: snap.connected,
-        status: snap.status,
-        videoSupported: snap.video_supported,
-        model: snap.model,
-        hasOled: snap.has_oled,
-      });
-      const clips = await invoke<ClipEntry[]>("headset_oled_clips");
-      const alsaHeadroom = await invoke<boolean>("headset_get_alsa_headroom");
-      const notifyMirror = await invoke<boolean>("headset_get_notify_mirror");
-      const notifyDisplay = await invoke<{ duration_secs: number; scroll: NotifyScroll }>(
-        "headset_get_notify_display",
-      );
-      const eqPresets = await invoke<EqPreset[]>("headset_eq_presets");
-      const modes = await invoke<ModeEntry[]>("headset_oled_modes");
-      set({
-        clips,
-        modes,
-        alsaHeadroom,
-        notifyMirror,
-        notifyDurationSecs: notifyDisplay.duration_secs,
-        notifyScroll: notifyDisplay.scroll,
-        eqPresets,
-      });
-    } catch (e) {
-      console.error("headset init:", e);
-    }
-    void listen<HeadsetStatus>("headset-status", (e) =>
-      set({ status: e.payload }),
-    );
-    void listen<boolean>("headset-presence", (e) => {
-      set((s) => ({
-        connected: e.payload,
-        status: e.payload ? s.status : emptyStatus,
-        model: e.payload ? s.model : null,
-      }));
-      // A different model may have been plugged in; re-read its capabilities.
-      if (e.payload) {
-        void invoke<HeadsetSnapshot>("get_headset_status").then((snap) =>
-          set({ model: snap.model, hasOled: snap.has_oled }),
-        );
+  return {
+    connected: false,
+    videoSupported: false,
+    status: emptyStatus,
+    clips: [],
+    modes: [],
+    alsaHeadroom: false,
+    model: null,
+    hasOled: false,
+    eqPresets: [],
+    error: null,
+    clearError: () => set({ error: null }),
+    _initialized: false,
+
+    applyEqPreset: async (name) => {
+      try {
+        const bands = await invoke<number[]>("headset_apply_eq_preset", { name });
+        get().scheduleSave();
+        return bands;
+      } catch (e) {
+        set({ error: String(e) });
+        return null;
       }
-    });
-    // Hardware ChatMix wheel -> software mix (moves the balance channels,
-    // which in turn moves the BalanceBar since it derives from their volumes).
-    void listen<[number, number]>("headset-chatmix", (e) => {
-      const [game, chat] = e.payload;
-      useMixerStore.getState().applyChatMix(game, chat);
-    });
-  },
+    },
 
-  setSidetone: (level) => {
-    debounced("sidetone", () => invoke("headset_set_sidetone", { level }));
-    get().scheduleSave();
-  },
-  setMicVolume: (level) => {
-    set((s) => ({ status: patch(s.status, {}) }));
-    debounced("micvol", () => invoke("headset_set_mic_volume", { level }));
-    get().scheduleSave();
-  },
-  setMicLed: (level) => {
-    debounced("micled", () => invoke("headset_set_mic_led", { level }));
-    get().scheduleSave();
-  },
-  setAnc: (mode) => {
-    set((s) => ({ status: patch(s.status, { anc: mode }) }));
-    void invoke("headset_set_anc", { mode }).then(() => get().scheduleSave());
-  },
-  setTransparency: (level) => {
-    set((s) => ({ status: patch(s.status, { transparency_level: level }) }));
-    debounced("transp", () => invoke("headset_set_transparency", { level }));
-    get().scheduleSave();
-  },
-  setAutoOff: (idx) => {
-    set((s) => ({ status: patch(s.status, { auto_off_minutes: AUTO_OFF_STEPS[idx] }) }));
-    void invoke("headset_set_auto_off", { idx }).then(() => get().scheduleSave());
-  },
-  setGainHigh: (high) => {
-    void invoke("headset_set_gain_high", { high }).then(() => get().scheduleSave());
-  },
-  setWirelessRange: (range) => {
-    set((s) => ({ status: patch(s.status, { wireless_range_mode: range }) }));
-    void invoke("headset_set_wireless_range", { range }).then(() => get().scheduleSave());
-  },
-  setLineOut: (mode) => {
-    set((s) => ({ status: patch(s.status, { line_out: mode }) }));
-    void invoke("headset_set_line_out", { mode }).then(() => get().scheduleSave());
-  },
-  setLineOutVolumes: (left, right, aux) => {
-    debounced("lineoutvol", () =>
-      invoke("headset_set_line_out_volumes", { left, right, aux }),
-    );
-    get().scheduleSave();
-  },
-  setEqBands: (bands) => {
-    debounced("eqbands", () => invoke("headset_set_eq_bands", { bands }));
-    get().scheduleSave();
-  },
-  setEqPreset: (preset) => {
-    void invoke("headset_set_eq_preset", { preset }).then(() => get().scheduleSave());
-  },
+    scheduleSave: () => debounced("save", () => invoke("headset_save"), { ms: 800 }),
 
-  oledText: (lines) => invoke("headset_oled_text", { lines }),
-  oledStatus: () => invoke("headset_oled_status"),
-  oledSystem: () => invoke("headset_oled_system"),
-  oledNowPlaying: () => invoke("headset_oled_now_playing"),
-  notifyMirror: false,
-  setNotifyMirror: async (enabled) => {
-    set({ notifyMirror: enabled });
-    try {
-      await invoke("headset_set_notify_mirror", { enabled });
-    } catch (e) {
-      set({ notifyMirror: !enabled });
-      console.error("headset notify mirror:", e);
-    }
-  },
-  notifyDurationSecs: 5,
-  notifyScroll: "vertical",
-  setNotifyDisplay: async (durationSecs, scroll) => {
-    const prev = { secs: get().notifyDurationSecs, scroll: get().notifyScroll };
-    set({ notifyDurationSecs: durationSecs, notifyScroll: scroll });
-    try {
-      await invoke("headset_set_notify_display", { durationSecs, scroll });
-    } catch (e) {
-      set({ notifyDurationSecs: prev.secs, notifyScroll: prev.scroll });
-      console.error("headset notify display:", e);
-    }
-  },
-  oledNotify: (lines, durationMs) =>
-    invoke("headset_oled_notify", { lines, durationMs }),
-  oledMedia: (path, looping) => invoke("headset_oled_media", { path, looping }),
-  oledClip: (name) => invoke("headset_oled_clip", { name }),
-  oledMode: (id) => invoke("headset_oled_mode", { id }),
-  oledRotate: (ids, secs) => invoke("headset_oled_rotate", { ids, secs }),
-  oledAuto: () => invoke("headset_oled_auto"),
-  timerCountdown: (secs) => invoke("headset_timer_countdown", { secs }),
-  timerStopwatch: () => invoke("headset_timer_stopwatch"),
-  timerToggle: () => invoke("headset_timer_toggle"),
-  timerReset: () => invoke("headset_timer_reset"),
-  oledBrightness: (level) =>
-    debounced("brightness", () => invoke("headset_oled_brightness", { level })),
-  oledReturnUi: () => invoke("headset_oled_return_ui"),
+    init: async () => {
+      if (get()._initialized) return;
+      set({ _initialized: true });
+      try {
+        const snap = await invoke<HeadsetSnapshot>("get_headset_status");
+        set({
+          connected: snap.connected,
+          status: snap.status,
+          videoSupported: snap.video_supported,
+          model: snap.model,
+          hasOled: snap.has_oled,
+        });
+        // Six independent reads: one round trip instead of six in series.
+        const [clips, alsaHeadroom, notifyMirror, notifyDisplay, eqPresets, modes] =
+          await Promise.all([
+            invoke<ClipEntry[]>("headset_oled_clips"),
+            invoke<boolean>("headset_get_alsa_headroom"),
+            invoke<boolean>("headset_get_notify_mirror"),
+            invoke<{ duration_secs: number; scroll: NotifyScroll }>(
+              "headset_get_notify_display",
+            ),
+            invoke<EqPreset[]>("headset_eq_presets"),
+            invoke<ModeEntry[]>("headset_oled_modes"),
+          ]);
+        set({
+          clips,
+          modes,
+          alsaHeadroom,
+          notifyMirror,
+          notifyDurationSecs: notifyDisplay.duration_secs,
+          notifyScroll: notifyDisplay.scroll,
+          eqPresets,
+        });
+      } catch (e) {
+        set({ error: String(e) });
+      }
+      void listen<HeadsetStatus>("headset-status", (e) =>
+        set({ status: e.payload }),
+      );
+      void listen<boolean>("headset-presence", (e) => {
+        set((s) => ({
+          connected: e.payload,
+          status: e.payload ? s.status : emptyStatus,
+          model: e.payload ? s.model : null,
+        }));
+        // A different model may have been plugged in; re-read its capabilities.
+        if (e.payload) {
+          void invoke<HeadsetSnapshot>("get_headset_status")
+            .then((snap) => set({ model: snap.model, hasOled: snap.has_oled }))
+            .catch((err: unknown) => set({ error: String(err) }));
+        }
+      });
+      // Hardware ChatMix wheel -> software mix (moves the balance channels,
+      // which in turn moves the BalanceBar since it derives from their volumes).
+      void listen<[number, number]>("headset-chatmix", (e) => {
+        const [game, chat] = e.payload;
+        useMixerStore.getState().applyChatMix(game, chat);
+      });
+    },
 
-  setAlsaHeadroom: async (enabled) => {
-    set({ alsaHeadroom: enabled });
-    try {
-      await invoke("headset_set_alsa_headroom", { enabled });
-    } catch (e) {
-      set({ alsaHeadroom: !enabled });
-      console.error("headset alsa headroom:", e);
-    }
-  },
-}));
+    setSidetone: (level) => {
+      debounced("sidetone", () => invoke("headset_set_sidetone", { level }));
+      get().scheduleSave();
+    },
+    setMicVolume: (level) => {
+      debounced("micvol", () => invoke("headset_set_mic_volume", { level }));
+      get().scheduleSave();
+    },
+    setMicLed: (level) => {
+      debounced("micled", () => invoke("headset_set_mic_led", { level }));
+      get().scheduleSave();
+    },
+    setAnc: (mode) => {
+      const prev = get().status.anc;
+      set((s) => ({ status: patch(s.status, { anc: mode }) }));
+      void invoke("headset_set_anc", { mode })
+        .then(() => get().scheduleSave())
+        .catch((e: unknown) =>
+          fail(e, () => set((s) => ({ status: patch(s.status, { anc: prev }) }))),
+        );
+    },
+    setTransparency: (level) => {
+      set((s) => ({ status: patch(s.status, { transparency_level: level }) }));
+      debounced("transp", () => invoke("headset_set_transparency", { level }));
+      get().scheduleSave();
+    },
+    setAutoOff: (idx) => {
+      const prev = get().status.auto_off_minutes;
+      set((s) => ({ status: patch(s.status, { auto_off_minutes: AUTO_OFF_STEPS[idx] }) }));
+      void invoke("headset_set_auto_off", { idx })
+        .then(() => get().scheduleSave())
+        .catch((e: unknown) =>
+          fail(e, () =>
+            set((s) => ({ status: patch(s.status, { auto_off_minutes: prev }) })),
+          ),
+        );
+    },
+    setGainHigh: (high) => {
+      // No status field mirrors gain, so there is nothing to roll back.
+      void invoke("headset_set_gain_high", { high })
+        .then(() => get().scheduleSave())
+        .catch((e: unknown) => fail(e));
+    },
+    setWirelessRange: (range) => {
+      const prev = get().status.wireless_range_mode;
+      set((s) => ({ status: patch(s.status, { wireless_range_mode: range }) }));
+      void invoke("headset_set_wireless_range", { range })
+        .then(() => get().scheduleSave())
+        .catch((e: unknown) =>
+          fail(e, () =>
+            set((s) => ({ status: patch(s.status, { wireless_range_mode: prev }) })),
+          ),
+        );
+    },
+    setLineOut: (mode) => {
+      const prev = get().status.line_out;
+      set((s) => ({ status: patch(s.status, { line_out: mode }) }));
+      void invoke("headset_set_line_out", { mode })
+        .then(() => get().scheduleSave())
+        .catch((e: unknown) =>
+          fail(e, () => set((s) => ({ status: patch(s.status, { line_out: prev }) }))),
+        );
+    },
+    setLineOutVolumes: (left, right, aux) => {
+      debounced("lineoutvol", () =>
+        invoke("headset_set_line_out_volumes", { left, right, aux }),
+      );
+      get().scheduleSave();
+    },
+    setEqBands: (bands) => {
+      debounced("eqbands", () => invoke("headset_set_eq_bands", { bands }));
+      get().scheduleSave();
+    },
+    setEqPreset: (preset) => {
+      void invoke("headset_set_eq_preset", { preset })
+        .then(() => get().scheduleSave())
+        .catch((e: unknown) => fail(e));
+    },
+
+    oledText: (lines) => cmd("headset_oled_text", { lines }),
+    oledStatus: () => cmd("headset_oled_status"),
+    oledSystem: () => cmd("headset_oled_system"),
+    oledNowPlaying: () => cmd("headset_oled_now_playing"),
+    notifyMirror: false,
+    setNotifyMirror: async (enabled) => {
+      set({ notifyMirror: enabled });
+      try {
+        await invoke("headset_set_notify_mirror", { enabled });
+      } catch (e) {
+        fail(e, () => set({ notifyMirror: !enabled }));
+      }
+    },
+    notifyDurationSecs: 5,
+    notifyScroll: "vertical",
+    setNotifyDisplay: async (durationSecs, scroll) => {
+      const prev = { secs: get().notifyDurationSecs, scroll: get().notifyScroll };
+      set({ notifyDurationSecs: durationSecs, notifyScroll: scroll });
+      try {
+        await invoke("headset_set_notify_display", { durationSecs, scroll });
+      } catch (e) {
+        fail(e, () => set({ notifyDurationSecs: prev.secs, notifyScroll: prev.scroll }));
+      }
+    },
+    oledNotify: (lines, durationMs) =>
+      cmd("headset_oled_notify", { lines, durationMs }),
+    oledMedia: (path, looping) => cmd("headset_oled_media", { path, looping }),
+    oledClip: (name) => cmd("headset_oled_clip", { name }),
+    oledMode: (id) => cmd("headset_oled_mode", { id }),
+    oledRotate: (ids, secs) => cmd("headset_oled_rotate", { ids, secs }),
+    oledAuto: () => cmd("headset_oled_auto"),
+    timerCountdown: (secs) => cmd("headset_timer_countdown", { secs }),
+    timerStopwatch: () => cmd("headset_timer_stopwatch"),
+    timerToggle: () => cmd("headset_timer_toggle"),
+    timerReset: () => cmd("headset_timer_reset"),
+    oledBrightness: (level) =>
+      debounced("brightness", () => invoke("headset_oled_brightness", { level })),
+    oledReturnUi: () => cmd("headset_oled_return_ui"),
+
+    setAlsaHeadroom: async (enabled) => {
+      set({ alsaHeadroom: enabled });
+      try {
+        await invoke("headset_set_alsa_headroom", { enabled });
+      } catch (e) {
+        fail(e, () => set({ alsaHeadroom: !enabled }));
+      }
+    },
+  };
+});

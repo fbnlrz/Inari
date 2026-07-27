@@ -1,3 +1,8 @@
+---
+title: Mouse
+description: Control a SteelSeries Aerox 9 Wireless from Linux — DPI presets, polling rate, per-zone RGB, sleep and dim timeouts, and battery level.
+---
+
 # Mouse — Aerox 9 Wireless
 
 Control the SteelSeries Aerox 9 Wireless over USB (wired or 2.4 GHz dongle). The

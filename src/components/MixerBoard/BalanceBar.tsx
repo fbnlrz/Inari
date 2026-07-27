@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useSliderKeys } from "../../hooks/useSliderKeys";
 import { useMixerStore } from "../../store/mixer";
 import type { VirtualSink } from "../../types";
 import { Ms } from "../Icons";
@@ -73,6 +74,18 @@ export function BalanceBar() {
     };
   }, []);
 
+  // Keyboard drives the same [-100, +100] scale the cap sits on. The step
+  // has to clear `apply`'s ±4 center snap, otherwise the first press away
+  // from center is swallowed and the control traps the keyboard.
+  const onKeyDown = useSliderKeys({
+    value: Math.round(pos * 100),
+    min: -100,
+    max: 100,
+    step: 5,
+    pageStep: 20,
+    onChange: (v) => apply(v / 100),
+  });
+
   if (!showBalance || !a || !b || channels.length < 2) return null;
 
   const side = (
@@ -117,6 +130,14 @@ export function BalanceBar() {
       <div
         className="bal-track"
         ref={trackRef}
+        role="slider"
+        tabIndex={0}
+        aria-label="Balance"
+        aria-valuemin={-100}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(pos * 100)}
+        aria-valuetext={`${a.label} ${a.volume_percent}%, ${b.label} ${b.volume_percent}%`}
+        onKeyDown={onKeyDown}
         title={`${a.label} ${a.volume_percent}% / ${b.label} ${b.volume_percent}% - slide toward a side to duck the other`}
         onPointerDown={(e) => {
           dragging.current = true;

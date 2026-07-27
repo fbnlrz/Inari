@@ -1,3 +1,4 @@
+use log::{error, info, warn};
 use tauri::State;
 
 use crate::persistence::channels::ChannelDef;
@@ -6,15 +7,19 @@ use crate::persistence::wireplumber;
 use crate::state::AppState;
 
 
-/// Persist the current mixer state into the active profile, if any.
-/// Profiles are live-bound: every profile-relevant mutation calls this so
+/// Snapshot the current mixer state as the active profile, if any.
+/// Profiles are live-bound: every profile-relevant mutation snapshots here so
 /// switching away and back never loses changes.
-pub fn autosave_active(mixer: &crate::mixer::state::MixerState) {
-    let Some(name) = &mixer.active_profile else {
-        return;
-    };
-    let profile = Profile {
-        name: name.clone(),
+///
+/// Pairs with [`write_autosave`]. The split exists because the write fsyncs:
+/// doing that under the mixer guard stalled every other command - including
+/// the 2s stream poll and the tray rebuild - behind each volume-slider tick
+/// (TD-004). Snapshotting is only clones, so it is cheap enough to run under
+/// the guard; the write must not.
+pub fn build_autosave(mixer: &crate::mixer::state::MixerState) -> Option<Profile> {
+    let name = mixer.active_profile.clone()?;
+    Some(Profile {
+        name,
         channels: mixer.channels.clone(),
         assignments: mixer.assignments.clone(),
         outputs: mixer.outputs.clone(),
@@ -22,9 +27,17 @@ pub fn autosave_active(mixer: &crate::mixer::state::MixerState) {
         // Preserved from the cache rather than re-read from disk each mutation.
         trigger_device: mixer.active_trigger.clone(),
         buses: mixer.buses.clone(),
+    })
+}
+
+/// Persist a snapshot from [`build_autosave`]. Blocks on an fsync, so it must
+/// only ever run with the mixer guard released.
+pub fn write_autosave(profile: Option<Profile>) {
+    let Some(profile) = profile else {
+        return;
     };
     if let Err(e) = profiles::save(&profile) {
-        eprintln!("sink: autosave of profile {name} failed: {e}");
+        error!("autosave of profile {} failed: {e}", profile.name);
     }
 }
 
@@ -112,7 +125,7 @@ pub fn load_profile(
                 }
             }
             if let Err(e) = state.backend.destroy_virtual_sink(&old.name) {
-                eprintln!("sink: removing {} for profile failed: {e}", old.name);
+                warn!("removing {} for profile failed: {e}", old.name);
             }
         }
     }
@@ -132,13 +145,13 @@ pub fn load_profile(
             .backend
             .set_channel_output(&channel.name, profile.outputs.get(&channel.name))
         {
-            eprintln!("sink: profile output for {} failed: {e}", channel.name);
+            error!("profile output for {} failed: {e}", channel.name);
         }
         if let Err(e) = state
             .backend
             .set_channel_failover(&channel.name, profile.outputs.failover(&channel.name))
         {
-            eprintln!("sink: profile failover for {} failed: {e}", channel.name);
+            error!("profile failover for {} failed: {e}", channel.name);
         }
         // EQ: non-fatal like output/failover - one channel's insert failing
         // must not abort the whole profile load.
@@ -146,7 +159,7 @@ pub fn load_profile(
             .backend
             .set_channel_eq(&channel.name, &profile.eq.get(&channel.name))
         {
-            eprintln!("sink: profile eq for {} failed: {e}", channel.name);
+            error!("profile eq for {} failed: {e}", channel.name);
         }
     }
 
@@ -168,7 +181,7 @@ pub fn load_profile(
     for bus in &target_buses.buses {
         if current_buses.get(&bus.name).is_none() {
             if let Err(e) = state.backend.create_bus(&bus.name, &prefs.decorate(&bus.label)) {
-                eprintln!("sink: profile mix {} failed: {e}", bus.name);
+                error!("profile mix {} failed: {e}", bus.name);
                 continue;
             }
         }
@@ -176,7 +189,7 @@ pub fn load_profile(
             .backend
             .set_bus_members(&bus.name, &bus.effective_members(&names))
         {
-            eprintln!("sink: profile members for mix {} failed: {e}", bus.name);
+            error!("profile members for mix {} failed: {e}", bus.name);
         }
         crate::commands::buses::apply_bus_level(state.backend.as_ref(), bus);
     }
@@ -216,6 +229,7 @@ pub fn load_profile(
     target_buses.save().map_err(|e| e.to_string())?;
     wireplumber::write(&assignments).map_err(|e| e.to_string())?;
     // The loaded profile becomes the live-bound (autosaving) one.
+    info!("profile switched to {name}");
     set_active(&state, Some(name))?;
     crate::refresh_tray(&app);
     Ok(())

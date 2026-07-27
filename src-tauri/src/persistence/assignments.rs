@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
+use log::warn;
 use serde::{Deserialize, Serialize};
 
 use crate::error::SinkError;
@@ -39,7 +40,7 @@ impl Assignments {
         };
         match fs::read_to_string(&path) {
             Ok(raw) => serde_json::from_str(&raw).unwrap_or_else(|e| {
-                eprintln!("sink: ignoring malformed {}: {e}", path.display());
+                warn!("ignoring malformed {}: {e}", path.display());
                 Self::default()
             }),
             Err(_) => Self::default(),

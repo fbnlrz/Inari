@@ -17,6 +17,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+use log::{error, warn};
+
 use super::oled::{Framebuffer, HEIGHT, WIDTH};
 
 /// FFT window length in samples. Power of two (radix-2) and ~23 ms at 44.1 kHz,
@@ -115,7 +117,7 @@ impl Spectrum {
             .name("sink-spectrum".into())
             .spawn(move || capture_loop(generation, bands, running, child, gen_flag));
         if let Err(e) = spawned {
-            eprintln!("sink: could not spawn spectrum thread: {e}");
+            error!("could not spawn spectrum thread: {e}");
             self.running.store(false, Ordering::SeqCst);
         }
     }
@@ -230,7 +232,7 @@ fn capture_loop(
     let mut child = match spawned {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("sink: spectrum capture unavailable (parec: {e})");
+            warn!("spectrum capture unavailable (parec: {e})");
             retire(generation, &running, &current_gen);
             return;
         }

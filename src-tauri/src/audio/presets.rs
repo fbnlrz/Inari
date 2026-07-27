@@ -2,6 +2,7 @@
 //! approved" set living in the repo's `presets/eq/` directory and embedded
 //! into the binary at build time (see build.rs).
 
+use log::warn;
 use serde::{Deserialize, Serialize};
 
 use crate::audio::types::{EqBand, EqConfig};
@@ -63,7 +64,7 @@ pub fn bundled_presets() -> Vec<EqPreset> {
         .filter_map(|(stem, raw)| match parse_bundled(stem, raw) {
             Ok(preset) => Some(preset),
             Err(e) => {
-                eprintln!("sink: skipping bundled eq {e}");
+                warn!("skipping bundled eq {e}");
                 None
             }
         })

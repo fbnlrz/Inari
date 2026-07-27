@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 use serde_json::Value;
 
 use super::oled::{Framebuffer, HEIGHT, WIDTH};
+use super::oled_draw::{ascii, disc, ellipsize, line, ring};
 
 /// Normal spacing between successful wttr.in polls.
 const WEATHER_REFRESH: Duration = Duration::from_secs(15 * 60);
@@ -23,75 +24,7 @@ const WEATHER_RETRY: Duration = Duration::from_secs(2 * 60);
 /// sign, which is the closest thing we have to `°`.
 const DEG: char = '\u{7f}';
 
-// ===================== shared drawing helpers =====================
-
-/// Bresenham line (same routine as `clips.rs`, kept local so the two screens
-/// stay independent of the animation module).
-fn line(fb: &mut Framebuffer, x0: isize, y0: isize, x1: isize, y1: isize) {
-    let (dx, dy) = ((x1 - x0).abs(), -(y1 - y0).abs());
-    let (sx, sy) = (if x0 < x1 { 1 } else { -1 }, if y0 < y1 { 1 } else { -1 });
-    let (mut x, mut y, mut err) = (x0, y0, dx + dy);
-    loop {
-        fb.set(x, y, true);
-        if x == x1 && y == y1 {
-            break;
-        }
-        let e2 = 2 * err;
-        if e2 >= dy {
-            err += dy;
-            x += sx;
-        }
-        if e2 <= dx {
-            err += dx;
-            y += sy;
-        }
-    }
-}
-
-/// Filled circle.
-fn disc(fb: &mut Framebuffer, cx: isize, cy: isize, r: isize) {
-    for dy in -r..=r {
-        for dx in -r..=r {
-            if dx * dx + dy * dy <= r * r {
-                fb.set(cx + dx, cy + dy, true);
-            }
-        }
-    }
-}
-
-/// 1px circle outline.
-fn ring(fb: &mut Framebuffer, cx: isize, cy: isize, r: isize) {
-    for dy in -r..=r {
-        for dx in -r..=r {
-            if (dx * dx + dy * dy - r * r).abs() <= r {
-                fb.set(cx + dx, cy + dy, true);
-            }
-        }
-    }
-}
-
-/// Strip anything the 5x7 font can't draw. External strings (weather
-/// descriptions, app names, device models) routinely carry UTF-8 that would
-/// otherwise render as holes in the text.
-fn ascii(s: &str) -> String {
-    s.chars()
-        .map(|c| if (' '..='~').contains(&c) { c } else { '?' })
-        .collect()
-}
-
-/// Clamp a string to `max` characters, marking the cut with an ASCII ellipsis.
-fn ellipsize(s: &str, max: usize) -> String {
-    let chars: Vec<char> = s.chars().collect();
-    if chars.len() <= max {
-        return chars.into_iter().collect();
-    }
-    if max <= 3 {
-        return chars.into_iter().take(max).collect();
-    }
-    let mut out: String = chars.into_iter().take(max - 3).collect();
-    out.push_str("...");
-    out
-}
+// ===================== local drawing helpers =====================
 
 /// Draw `text` so its right edge sits at `right`.
 fn draw_text_right(fb: &mut Framebuffer, right: isize, y: isize, text: &str, scale: usize) {
@@ -441,18 +374,6 @@ pub fn render_active_apps(apps: &[(String, bool)]) -> Framebuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn ellipsize_marks_the_cut() {
-        assert_eq!(ellipsize("short", 10), "short");
-        assert_eq!(ellipsize("abcdefghij", 6), "abc...");
-        assert_eq!(ellipsize("abcdef", 6), "abcdef");
-    }
-
-    #[test]
-    fn ascii_replaces_unrenderable_chars() {
-        assert_eq!(ascii("caf\u{e9} \u{1f600}"), "caf? ?");
-    }
 
     #[test]
     fn sky_keywords_pick_the_right_glyph() {

@@ -115,7 +115,7 @@ sudo apt install -y build-essential curl wget file pkg-config \
   libssl-dev libxdo-dev libpipewire-0.3-dev clang ffmpeg
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh   # if you have no Rust
 npm install && ./node_modules/.bin/tauri build --no-bundle
-sudo install -Dm755 target/release/sink /usr/bin/inari
+sudo install -Dm755 target/release/inari /usr/bin/inari
 ```
 
 `ffmpeg` is optional and only needed to play videos on the headset OLED.
@@ -123,8 +123,9 @@ sudo install -Dm755 target/release/sink /usr/bin/inari
 ### Prebuilt packages
 
 Every release ships prebuilt Linux bundles on the
-[Releases page](https://github.com/fbnlrz/inari/releases). Grab the one for your
-distro and install it directly:
+[Releases page](https://github.com/fbnlrz/inari/releases). They are x86_64 /
+amd64 only — there is no ARM/aarch64 build. Grab the one for your distro and
+install it directly:
 
 **Debian / Ubuntu / Mint**
 
@@ -132,10 +133,16 @@ distro and install it directly:
 sudo apt install ./Inari_*_amd64.deb
 ```
 
-**Fedora / openSUSE**
+**Fedora**
 
 ```bash
 sudo dnf install ./Inari-*.x86_64.rpm
+```
+
+**openSUSE**
+
+```bash
+sudo zypper install ./Inari-*.x86_64.rpm
 ```
 
 These install the app properly - launcher entry, icon, uninstall through your

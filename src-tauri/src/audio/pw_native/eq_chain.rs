@@ -132,15 +132,21 @@ impl EqChainHandle {
                 let Some(bytes) = data.data() else { return };
 
                 let n = (valid.min(bytes.len())) / 4;
-                ctx.scratch.clear();
-                ctx.scratch.extend(
-                    bytes[..n * 4]
-                        .chunks_exact(4)
-                        .map(|b| f32::from_ne_bytes([b[0], b[1], b[2], b[3]])),
-                );
-
-                ctx.engine.process_interleaved(&mut ctx.scratch, &ctx.params);
-                ctx.ring.push(&ctx.scratch);
+                // Never grow `scratch` on the RT thread (see mic.rs): slice
+                // an oversized quantum into windows that fit. The window is
+                // an even sample count so every slice is whole frames and
+                // the interleaved L/R phase never flips.
+                let window = (ctx.scratch.capacity() & !1).max(2) * 4;
+                for slice in bytes[..n * 4].chunks(window) {
+                    ctx.scratch.clear();
+                    ctx.scratch.extend(
+                        slice
+                            .chunks_exact(4)
+                            .map(|b| f32::from_ne_bytes([b[0], b[1], b[2], b[3]])),
+                    );
+                    ctx.engine.process_interleaved(&mut ctx.scratch, &ctx.params);
+                    ctx.ring.push(&ctx.scratch);
+                }
             })
             .register()
             .map_err(|e| err("capture listener", e))?;

@@ -1,5 +1,6 @@
+use log::warn;
 use serde::Serialize;
-use tauri::State;
+use tauri::{Manager, State};
 
 use crate::persistence::autostart;
 use crate::persistence::prefs::{DeviceLabelStyle, Prefs};
@@ -117,7 +118,7 @@ pub fn set_onboarded(state: State<'_, AppState>) -> Result<(), String> {
 pub fn reset_app(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     // Best-effort teardown - the relaunch recreates everything anyway.
     for err in state.teardown_virtual_sinks() {
-        eprintln!("sink: reset teardown: {err}");
+        warn!("reset teardown: {err}");
     }
     let _ = autostart::disable();
     crate::persistence::wipe_all().map_err(|e| e.to_string())?;
@@ -156,4 +157,20 @@ pub fn set_default_input(state: State<'_, AppState>, name: String) -> Result<(),
         .backend
         .set_default_input(&name)
         .map_err(|e| e.to_string())
+}
+
+/// Open the log directory in the user's file manager. Started from the app
+/// menu or the systemd autostart unit there is no terminal to read, so this
+/// is the only way a reporter gets at the log file.
+#[tauri::command]
+pub fn open_log_dir(app: tauri::AppHandle) -> Result<(), String> {
+    let dir = app.path().app_log_dir().map_err(|e| e.to_string())?;
+    // The log plugin creates the directory lazily on its first write; xdg-open
+    // on a path that isn't there yet just fails.
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    std::process::Command::new("xdg-open")
+        .arg(&dir)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("xdg-open: {e}"))
 }

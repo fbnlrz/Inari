@@ -87,18 +87,19 @@ pub fn forget_app(
     match_prop: String,
     match_value: String,
 ) -> Result<(), String> {
-    let (seen, assignments, aliases) = {
+    let (seen, assignments, aliases, snapshot) = {
         let mut mixer = state.lock_mixer()?;
         mixer.seen.forget(&match_prop, &match_value);
         mixer.assignments.remove(&match_prop, &match_value);
         mixer.aliases.set(&match_prop, &match_value, "");
-        crate::commands::profiles::autosave_active(&mixer);
         (
             mixer.seen.clone(),
             mixer.assignments.clone(),
             mixer.aliases.clone(),
+            crate::commands::profiles::build_autosave(&mixer),
         )
     };
+    crate::commands::profiles::write_autosave(snapshot);
     seen.save().map_err(|e| e.to_string())?;
     assignments.save().map_err(|e| e.to_string())?;
     aliases.save().map_err(|e| e.to_string())?;
@@ -118,16 +119,19 @@ pub fn set_app_assignment(
     if !sink_name.is_empty() && !is_virtual_sink(&sink_name) {
         return Err(format!("unknown channel: {sink_name}"));
     }
-    let assignments = {
+    let (assignments, snapshot) = {
         let mut mixer = state.lock_mixer()?;
         if sink_name.is_empty() {
             mixer.assignments.remove(&match_prop, &match_value);
         } else {
             mixer.assignments.set(&match_prop, &match_value, &sink_name);
         }
-        crate::commands::profiles::autosave_active(&mixer);
-        mixer.assignments.clone()
+        (
+            mixer.assignments.clone(),
+            crate::commands::profiles::build_autosave(&mixer),
+        )
     };
+    crate::commands::profiles::write_autosave(snapshot);
     assignments.save().map_err(|e| e.to_string())?;
     wireplumber::write(&assignments).map_err(|e| e.to_string())
 }

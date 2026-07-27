@@ -7,7 +7,12 @@
 
   --vp-c-text-1: #c0caf5;
   --vp-c-text-2: #a9b1d6;
-  --vp-c-text-3: #565f89;
+  /* Tokyo Night's comment colour (#565f89) is only 2.8:1 on this background —
+     well under WCAG AA. VitePress uses text-3 for real content (sidebar
+     secondary text, table-of-contents, captions), so it is lifted to 4.9:1
+     while staying visibly muted. The literal palette value is kept for
+     syntax-highlighted comments below, where it belongs. */
+  --vp-c-text-3: #7d87b3;
 
   --vp-c-divider: #2a2e42;
   --vp-c-border: #2a2e42;

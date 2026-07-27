@@ -1,5 +1,7 @@
 ---
 layout: home
+title: SteelSeries Sonar for Linux
+description: Inari is a PipeWire audio mixer for Linux with per-app routing, OBS mixes, a processed virtual mic, and control for Arctis headsets, the base-station OLED and the Aerox 9 mouse.
 
 hero:
   name: Inari
@@ -40,7 +42,7 @@ features:
     details: Ships the original look plus an opt-in Tokyo Night palette, switchable in Settings.
   - icon: ⬇️
     title: One-line install & in-app updates
-    details: Install with a single curl command; the app checks for new releases and updates itself in place.
+    details: Install with a single curl command. The app checks for new releases; .deb installs can update themselves in place via pkexec, others get a link to the release notes.
 ---
 
 <div style="max-width:960px;margin:3rem auto 0;padding:0 24px;">

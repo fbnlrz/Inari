@@ -1,5 +1,7 @@
 use std::sync::{Arc, Mutex};
 
+use log::warn;
+
 use crate::audio::backend::AudioBackend;
 use crate::headset::HeadsetManager;
 use crate::mixer::state::MixerState;
@@ -56,7 +58,7 @@ impl AppState {
         };
         if mixer.prune_stale_apps(now) {
             if let Err(e) = mixer.seen.save() {
-                eprintln!("sink: pruning app history failed: {e}");
+                warn!("pruning app history failed: {e}");
             }
         }
         Self {

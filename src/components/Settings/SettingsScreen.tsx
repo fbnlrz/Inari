@@ -347,6 +347,26 @@ export function SettingsScreen() {
           </div>
           <div className="row">
             <div className="ricon">
+              <Ms name="description" />
+            </div>
+            <div className="rmain">
+              <div className="rtitle">Logs</div>
+              <div className="rsub">
+                Open the log folder to attach a file to a bug report
+              </div>
+            </div>
+            <button
+              type="button"
+              className="select"
+              onClick={() =>
+                void invoke("open_log_dir").catch((e) => setError(String(e)))
+              }
+            >
+              <span>Open</span>
+            </button>
+          </div>
+          <div className="row">
+            <div className="ricon">
               <Ms name="school" />
             </div>
             <div className="rmain">

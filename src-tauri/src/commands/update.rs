@@ -11,6 +11,10 @@ use std::process::Command;
 
 const REPO: &str = "fbnlrz/Inari";
 const PKG: &str = "inari";
+/// Hosts release assets may come from. GitHub serves the release page from
+/// github.com and redirects the actual download to its object store, so both
+/// are needed - and nothing else is.
+const ALLOWED_HOSTS: [&str; 2] = ["github.com", "objects.githubusercontent.com"];
 
 #[derive(Debug, Clone, Serialize)]
 pub struct UpdateInfo {
@@ -48,6 +52,43 @@ fn semver(v: &str) -> (u64, u64, u64) {
     )
 }
 
+/// True when `url` is https and its authority is exactly one of
+/// [`ALLOWED_HOSTS`]. Compares the whole authority, so userinfo tricks
+/// ("https://github.com@evil.example/…") and odd ports are rejected too.
+fn host_allowed(url: &str) -> bool {
+    let Some(rest) = url.strip_prefix("https://") else {
+        return false;
+    };
+    let host = rest.split('/').next().unwrap_or_default();
+    ALLOWED_HOSTS.contains(&host)
+}
+
+/// The release's `SHA256SUMS` asset, derived from the .deb URL rather than
+/// looked up separately: both are assets of the same release, so they share a
+/// download directory, and deriving it means the checksum can't be pointed at
+/// a different release than the package.
+fn sums_url(deb_url: &str) -> Option<String> {
+    let (dir, _) = deb_url.rsplit_once('/')?;
+    Some(format!("{dir}/SHA256SUMS"))
+}
+
+/// The expected digest for `basename` from a `sha256sum` listing.
+fn expected_sha(sums: &str, basename: &str) -> Option<String> {
+    sums.lines().find_map(|line| {
+        // sha256sum's format: digest, two spaces, name.
+        let (sha, name) = line.split_once("  ")?;
+        (name.trim() == basename).then(|| sha.trim().to_ascii_lowercase())
+    })
+}
+
+fn file_sha256(path: &std::path::Path) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    let mut file = std::fs::File::open(path).map_err(|e| format!("reading the download: {e}"))?;
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut file, &mut hasher).map_err(|e| format!("hashing the download: {e}"))?;
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
 /// True when a shell command is on PATH.
 fn have(cmd: &str) -> bool {
     Command::new("sh")
@@ -73,6 +114,15 @@ fn check_blocking() -> Result<UpdateInfo, String> {
     let out = Command::new("curl")
         .args([
             "-fsSL",
+            // Pin the scheme across redirects too, so a hijacked redirect can't
+            // downgrade the check to plaintext, and cap the hang on a
+            // black-holed network.
+            "--proto",
+            "=https",
+            "--proto-redir",
+            "=https",
+            "--max-time",
+            "20",
             "-H",
             "Accept: application/vnd.github+json",
             "-A",
@@ -122,16 +172,65 @@ pub async fn check_update() -> Result<UpdateInfo, String> {
         .map_err(|e| format!("update check failed to run: {e}"))?
 }
 
-fn apply_blocking(deb_url: String) -> Result<(), String> {
-    if !deb_url.ends_with("_amd64.deb") || !deb_url.starts_with("https://") {
+fn apply_blocking(requested: String) -> Result<(), String> {
+    // The URL the frontend hands us is never trusted: this ends in `apt-get`
+    // as root, so the release is looked up again here and only what *we*
+    // resolved gets installed. The argument is still accepted for
+    // compatibility and must match byte for byte.
+    let info = check_blocking()?;
+    let deb_url = info
+        .deb_url
+        .clone()
+        .ok_or_else(|| "the latest release ships no .deb package".to_string())?;
+    if !requested.is_empty() && requested != deb_url {
         return Err("refusing to install an unexpected asset".into());
     }
+    if !host_allowed(&deb_url) || !deb_url.ends_with("_amd64.deb") {
+        return Err("refusing to install an unexpected asset".into());
+    }
+    // Forward only. A stale or spoofed "latest" would otherwise be a way to
+    // reinstall a known-bad older build over the running one.
+    if !info.available {
+        return Err("the latest release is not newer than the installed version".into());
+    }
+
+    // Fetch the release's checksum list before the package, so a mismatch
+    // costs nothing but the listing.
+    let basename = deb_url.rsplit('/').next().unwrap_or_default().to_string();
+    let sums_url = sums_url(&deb_url).ok_or_else(|| "malformed asset url".to_string())?;
+    let sums = Command::new("curl")
+        .args([
+            "-fsSL",
+            "--proto",
+            "=https",
+            "--proto-redir",
+            "=https",
+            "--max-time",
+            "30",
+            &sums_url,
+        ])
+        .output()
+        .map_err(|e| format!("curl is required to install updates: {e}"))?;
+    if !sums.status.success() {
+        return Err("could not fetch the release checksums".into());
+    }
+    let expected = expected_sha(&String::from_utf8_lossy(&sums.stdout), &basename)
+        .ok_or_else(|| format!("the release publishes no checksum for {basename}"))?;
+
     let dir = std::env::temp_dir().join("inari-update");
     std::fs::create_dir_all(&dir).map_err(|e| format!("temp dir: {e}"))?;
     let deb = dir.join("inari_latest_amd64.deb");
 
     let ok = Command::new("curl")
-        .arg("-fL")
+        .args([
+            "-fL",
+            "--proto",
+            "=https",
+            "--proto-redir",
+            "=https",
+            "--max-time",
+            "600",
+        ])
         .arg("-o")
         .arg(&deb)
         .arg(&deb_url)
@@ -140,6 +239,20 @@ fn apply_blocking(deb_url: String) -> Result<(), String> {
         .success();
     if !ok {
         return Err("download failed".into());
+    }
+
+    // Nothing reaches root without matching the checksum the release workflow
+    // published alongside the package.
+    match file_sha256(&deb) {
+        Ok(actual) if actual == expected => {}
+        Ok(_) => {
+            let _ = std::fs::remove_file(&deb);
+            return Err("the download failed its checksum check; not installing".into());
+        }
+        Err(e) => {
+            let _ = std::fs::remove_file(&deb);
+            return Err(e);
+        }
     }
 
     // Make the dir and file readable by apt's `_apt` sandbox user so the local
@@ -152,11 +265,13 @@ fn apply_blocking(deb_url: String) -> Result<(), String> {
 
     // Install as root via polkit (a graphical password prompt). Running apt-get
     // through `sh -c` lets it resolve from PATH under pkexec's reset env; apt
-    // pulls in any new runtime deps and upgrades in place.
+    // pulls in any new runtime deps and upgrades in place. No
+    // `--allow-downgrades`: we only ever install a strictly newer version, and
+    // apt refusing a downgrade is a last line of defence worth keeping.
     let status = Command::new("pkexec")
         .arg("sh")
         .arg("-c")
-        .arg(r#"apt-get install -y --allow-downgrades "$1""#)
+        .arg(r#"apt-get install -y "$1""#)
         .arg("inari-update")
         .arg(&deb)
         .status()
@@ -172,8 +287,10 @@ fn apply_blocking(deb_url: String) -> Result<(), String> {
     }
 }
 
-/// Download the latest `.deb` and install it with `pkexec apt-get`. The UI
-/// should offer to restart once this returns Ok.
+/// Download the latest `.deb`, verify it against the release's `SHA256SUMS`,
+/// and install it with `pkexec apt-get`. The `deb_url` the UI passes is only
+/// cross-checked, never trusted (see [`apply_blocking`]). The UI should offer
+/// to restart once this returns Ok.
 #[tauri::command]
 pub async fn apply_update(deb_url: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || apply_blocking(deb_url))
@@ -220,4 +337,38 @@ pub fn open_url(url: String) -> Result<(), String> {
         .spawn()
         .map(|_| ())
         .map_err(|e| format!("xdg-open: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn host_allowlist_rejects_lookalikes() {
+        assert!(host_allowed("https://github.com/fbnlrz/Inari/releases/download/v1/a.deb"));
+        assert!(host_allowed("https://objects.githubusercontent.com/x"));
+        assert!(!host_allowed("http://github.com/x"), "plaintext");
+        assert!(!host_allowed("https://github.com.evil.example/x"), "suffix");
+        assert!(!host_allowed("https://github.com@evil.example/x"), "userinfo");
+        assert!(!host_allowed("https://github.com:8443/x"), "port");
+        assert!(!host_allowed("https://raw.githubusercontent.com/x"));
+    }
+
+    #[test]
+    fn sums_url_sits_next_to_the_package() {
+        assert_eq!(
+            sums_url("https://github.com/o/r/releases/download/v1.0.7/inari_1.0.7_amd64.deb"),
+            Some("https://github.com/o/r/releases/download/v1.0.7/SHA256SUMS".to_string())
+        );
+    }
+
+    #[test]
+    fn expected_sha_matches_by_basename_only() {
+        let sums = "aaaa  inari_1.0.7_amd64.AppImage\nBBBB  inari_1.0.7_amd64.deb\n";
+        assert_eq!(
+            expected_sha(sums, "inari_1.0.7_amd64.deb").as_deref(),
+            Some("bbbb")
+        );
+        assert!(expected_sha(sums, "inari_9.9.9_amd64.deb").is_none());
+    }
 }

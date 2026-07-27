@@ -1,3 +1,4 @@
+use log::error;
 use tauri::State;
 
 use crate::audio::types::VirtualSink;
@@ -40,7 +41,7 @@ pub fn add_channel(
     }
 
     defs.save().map_err(|e| e.to_string())?;
-    let (buses, names) = {
+    let (buses, names, snapshot) = {
         let mut mixer = state.lock_mixer()?;
         mixer.channels.push(VirtualSink {
             name: def.name,
@@ -53,15 +54,16 @@ pub fn add_channel(
         // The new channel joins the master mix automatically.
         let names = crate::commands::buses::channel_names(&mixer);
         mixer.buses.sync_master(&names);
-        crate::commands::profiles::autosave_active(&mixer);
-        (mixer.buses.clone(), names)
+        let snapshot = crate::commands::profiles::build_autosave(&mixer);
+        (mixer.buses.clone(), names, snapshot)
     };
+    crate::commands::profiles::write_autosave(snapshot);
     // The master and every auto-include mix pick the new channel up.
     for bus in &buses.buses {
         let members = bus.effective_members(&names);
         if members.contains(&names[names.len() - 1]) {
             if let Err(e) = state.backend.set_bus_members(&bus.name, &members) {
-                eprintln!("sink: membership for mix {} failed: {e}", bus.name);
+                error!("membership for mix {} failed: {e}", bus.name);
             }
         }
     }
@@ -72,7 +74,7 @@ pub fn add_channel(
 /// Reorder the channel strips (cosmetic - no audio plumbing changes).
 #[tauri::command]
 pub fn reorder_channels(state: State<'_, AppState>, order: Vec<String>) -> Result<(), String> {
-    let defs = {
+    let (defs, snapshot) = {
         let mut mixer = state.lock_mixer()?;
         mixer
             .channel_defs
@@ -82,9 +84,12 @@ pub fn reorder_channels(state: State<'_, AppState>, order: Vec<String>) -> Resul
         mixer
             .channels
             .sort_by_key(|c| order.iter().position(|n| n == &c.name).unwrap_or(usize::MAX));
-        crate::commands::profiles::autosave_active(&mixer);
-        mixer.channel_defs.clone()
+        (
+            mixer.channel_defs.clone(),
+            crate::commands::profiles::build_autosave(&mixer),
+        )
     };
+    crate::commands::profiles::write_autosave(snapshot);
     defs.save().map_err(|e| e.to_string())
 }
 
@@ -96,7 +101,7 @@ pub fn set_channel_icon(
     icon: String,
 ) -> Result<(), String> {
     let icon = if icon.is_empty() { None } else { Some(icon) };
-    let defs = {
+    let (defs, snapshot) = {
         let mut mixer = state.lock_mixer()?;
         mixer
             .channel_defs
@@ -105,9 +110,12 @@ pub fn set_channel_icon(
         if let Some(channel) = mixer.channel_mut(&sink_name) {
             channel.icon = icon;
         }
-        crate::commands::profiles::autosave_active(&mixer);
-        mixer.channel_defs.clone()
+        (
+            mixer.channel_defs.clone(),
+            crate::commands::profiles::build_autosave(&mixer),
+        )
     };
+    crate::commands::profiles::write_autosave(snapshot);
     defs.save().map_err(|e| e.to_string())
 }
 
@@ -119,7 +127,7 @@ pub fn rename_channel(
     sink_name: String,
     label: String,
 ) -> Result<(), String> {
-    let defs = {
+    let (defs, snapshot) = {
         let mut mixer = state.lock_mixer()?;
         mixer
             .channel_defs
@@ -128,9 +136,12 @@ pub fn rename_channel(
         if let Some(channel) = mixer.channel_mut(&sink_name) {
             channel.label = label.trim().to_string();
         }
-        crate::commands::profiles::autosave_active(&mixer);
-        mixer.channel_defs.clone()
+        (
+            mixer.channel_defs.clone(),
+            crate::commands::profiles::build_autosave(&mixer),
+        )
     };
+    crate::commands::profiles::write_autosave(snapshot);
     defs.save().map_err(|e| e.to_string())
 }
 
@@ -153,7 +164,7 @@ pub fn remove_channel(state: State<'_, AppState>, sink_name: String) -> Result<(
         for stream in streams {
             if stream.assigned_sink.as_deref() == Some(sink_name.as_str()) {
                 if let Err(e) = state.backend.move_stream_to_sink(stream.index, "") {
-                    eprintln!("sink: evacuating {} failed: {e}", stream.app_name);
+                    error!("evacuating {} failed: {e}", stream.app_name);
                 }
             }
         }
@@ -164,7 +175,7 @@ pub fn remove_channel(state: State<'_, AppState>, sink_name: String) -> Result<(
         .destroy_virtual_sink(&sink_name)
         .map_err(|e| e.to_string())?;
 
-    let (defs, assignments, outputs, eq, buses, names) = {
+    let (defs, assignments, outputs, eq, buses, names, snapshot) = {
         let mut mixer = state.lock_mixer()?;
         mixer.channels.retain(|c| c.name != sink_name);
         mixer
@@ -179,7 +190,6 @@ pub fn remove_channel(state: State<'_, AppState>, sink_name: String) -> Result<(
         mixer.buses.remove_channel(&sink_name);
         // Re-evaluate auto-routing with the channel gone.
         mixer.auto_routed.clear();
-        crate::commands::profiles::autosave_active(&mixer);
         (
             mixer.channel_defs.clone(),
             mixer.assignments.clone(),
@@ -187,8 +197,10 @@ pub fn remove_channel(state: State<'_, AppState>, sink_name: String) -> Result<(
             mixer.eq.clone(),
             mixer.buses.clone(),
             crate::commands::buses::channel_names(&mixer),
+            crate::commands::profiles::build_autosave(&mixer),
         )
     };
+    crate::commands::profiles::write_autosave(snapshot);
 
     for bus in &buses.buses {
         let _ = state

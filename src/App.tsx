@@ -11,7 +11,9 @@ import { OnboardingModal } from "./components/Onboarding/OnboardingModal";
 import { SettingsScreen } from "./components/Settings/SettingsScreen";
 import { Ms } from "./components/Icons";
 import { Tooltip } from "./components/Tooltip";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { useAudio } from "./hooks/useAudio";
+import { useHeadset } from "./store/headset";
 import { useMixerStore } from "./store/mixer";
 import { useUpdate } from "./store/update";
 
@@ -26,12 +28,38 @@ const NAV = [
 
 type NavId = (typeof NAV)[number]["id"] | "settings";
 
+/** The app-wide failure banner; every store surfaces its errors through it. */
+function ErrorBanner({
+  label,
+  message,
+  onDismiss,
+}: Readonly<{ label: string; message: string; onDismiss: () => void }>) {
+  return (
+    <div className="error-banner" role="alert">
+      <span className="error-banner-msg">
+        <strong>{label}</strong> {message}
+      </span>
+      <button
+        type="button"
+        className="error-banner-x"
+        aria-label="Dismiss error"
+        title="Dismiss"
+        onClick={onDismiss}
+      >
+        <Ms name="close" style={{ fontSize: 16 }} />
+      </button>
+    </div>
+  );
+}
+
 export default function App() {
   useAudio();
   const [nav, setNav] = useState<NavId>("mixer");
   const [version, setVersion] = useState("");
   const error = useMixerStore((s) => s.error);
   const clearError = useMixerStore((s) => s.clearError);
+  const headsetError = useHeadset((s) => s.error);
+  const clearHeadsetError = useHeadset((s) => s.clearError);
 
   const update = useUpdate();
 
@@ -60,20 +88,15 @@ export default function App() {
       <TitleBar screen={current.label} />
 
       {error && (
-        <div className="error-banner" role="alert">
-          <span className="error-banner-msg">
-            <strong>Audio error:</strong> {error}
-          </span>
-          <button
-            type="button"
-            className="error-banner-x"
-            aria-label="Dismiss error"
-            title="Dismiss"
-            onClick={clearError}
-          >
-            <Ms name="close" style={{ fontSize: 16 }} />
-          </button>
-        </div>
+        <ErrorBanner label="Audio error:" message={error} onDismiss={clearError} />
+      )}
+
+      {headsetError && (
+        <ErrorBanner
+          label="Headset error:"
+          message={headsetError}
+          onDismiss={clearHeadsetError}
+        />
       )}
 
       {update.installed ? (
@@ -151,7 +174,9 @@ export default function App() {
           {version && <div className="rail-version">v{version}</div>}
         </nav>
 
-        {screen}
+        {/* Keyed on `nav` so a crashed screen clears when the user
+         * navigates away, instead of sticking until a reload. */}
+        <ErrorBoundary key={nav}>{screen}</ErrorBoundary>
       </div>
 
       <OnboardingModal />

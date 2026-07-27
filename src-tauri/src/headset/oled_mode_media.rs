@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 use image::{DynamicImage, GenericImageView};
 
 use super::oled::{Framebuffer, HEIGHT, WIDTH};
+use super::oled_draw::ascii;
 
 /// One `playerctl metadata` call gets everything in a single fork+exec.
 const FORMAT: &str =
@@ -52,15 +53,20 @@ struct Track {
     art_url: String,
 }
 
-/// Decoded cover for one `artUrl`. A failed decode is cached as `None` so a
-/// broken URL isn't retried until the track changes.
+/// Decoded cover for one `artUrl`, already dithered to 1bpp. A failed decode is
+/// cached as `None` so a broken URL isn't retried until the track changes.
+///
+/// The dithering happens once per track, on the poll thread: Floyd–Steinberg
+/// over all 8192 pixels is far too expensive to redo 25 times a second for an
+/// image that only changes every [`META_INTERVAL`].
 #[derive(Default)]
 struct Art {
     url: String,
-    /// ART_SIZE x ART_SIZE thumbnail for the split screen.
-    thumb: Option<Vec<u8>>,
-    /// WIDTH x HEIGHT height-filling rendition for the art-only screen.
-    full: Option<Vec<u8>>,
+    /// Split-screen frame: the thumbnail already blitted at (2, 2) with the
+    /// text half cleared, so rendering it is a memcpy.
+    thumb: Option<Framebuffer>,
+    /// Full-panel height-filling rendition for the art-only screen.
+    full: Option<Framebuffer>,
 }
 
 /// Everything the poller thread produces and the render path consumes.
@@ -116,13 +122,12 @@ impl MediaMode {
     /// Text-only screen: title (marquee), artist, elapsed/total and a bar.
     pub fn render_now_playing(&mut self) -> Framebuffer {
         let phase = self.scroll_phase();
-        let mut fb = Framebuffer::new();
-        let state = self.state();
-        let Some(track) = state.track.as_ref() else {
+        let Some((track, pos)) = track_and_pos(&self.state()) else {
+            let mut fb = Framebuffer::new();
             fb.draw_text_centered(24, "NO MEDIA", 2);
             return fb;
         };
-        let pos = display_position(track, state.pos_at);
+        let mut fb = Framebuffer::new();
 
         // Title big, artist below it; both windowed to the panel width.
         draw_window(&mut fb, 2, 2, WIDTH - 4, &track.title, 2, phase);
@@ -146,38 +151,21 @@ impl MediaMode {
     /// Split screen: dithered 60x60 cover on the left, text and bar on the right.
     pub fn render_with_art(&mut self) -> Framebuffer {
         let phase = self.scroll_phase();
-        let state = self.state();
-        let Some(track) = state.track.as_ref() else {
+        // One lock for both halves of the screen, released before any drawing.
+        let (snapshot, art) = {
+            let state = self.state();
+            (track_and_pos(&state), state.art.thumb.clone())
+        };
+        let Some((track, pos)) = snapshot else {
             let mut fb = Framebuffer::new();
             fb.draw_text_centered(24, "NO MEDIA", 2);
             return fb;
         };
-        let pos = display_position(track, state.pos_at);
 
-        // blit_gray_dithered wants a whole frame, so compose the art into a
-        // full-size gray buffer (the text half stays black) and dither once.
-        let mut gray = vec![0u8; WIDTH * HEIGHT];
-        let thumb = state
-            .art
-            .thumb
-            .as_deref()
-            .filter(|t| t.len() >= ART_SIZE * ART_SIZE);
-        let has_art = thumb.is_some();
-        if let Some(thumb) = thumb {
-            for y in 0..ART_SIZE {
-                for x in 0..ART_SIZE {
-                    let (dx, dy) = (x + 2, y + 2);
-                    if dx < WIDTH && dy < HEIGHT {
-                        gray[dy * WIDTH + dx] = thumb[y * ART_SIZE + x];
-                    }
-                }
-            }
-        }
-        let mut fb = Framebuffer::new();
-        fb.blit_gray_dithered(&gray);
-        // Error diffusion can smear a pixel or two past the art; wipe the text
-        // half so white-on-black stays clean.
-        fb.fill_rect(64, 0, WIDTH - 64, HEIGHT, false);
+        // The cover was dithered when it was decoded, so the left half of the
+        // frame already exists; starting from it is a 1 KB copy.
+        let has_art = art.is_some();
+        let mut fb = art.unwrap_or_default();
 
         if !has_art {
             // Placeholder so a missing cover still reads as "this is the art".
@@ -208,24 +196,26 @@ impl MediaMode {
     /// The cover alone, scaled to fill the panel height and centred.
     #[allow(dead_code)] // kept for an art-only OLED mode not yet wired into the rotation
     pub fn render_art_only(&mut self) -> Framebuffer {
-        let mut fb = Framebuffer::new();
-        let state = self.state();
-        match state
-            .art
-            .full
-            .as_deref()
-            .filter(|g| g.len() >= WIDTH * HEIGHT)
-        {
-            Some(gray) => fb.blit_gray_dithered(gray),
-            None => fb.draw_text_centered(24, "NO ART", 2),
-        }
-        fb
+        let art = self.state().art.full.clone();
+        art.unwrap_or_else(|| {
+            let mut fb = Framebuffer::new();
+            fb.draw_text_centered(24, "NO ART", 2);
+            fb
+        })
     }
 
     /// Marquee step counter (one character per `SCROLL_STEP_MS`).
     fn scroll_phase(&self) -> usize {
         (self.started.elapsed().as_millis() / SCROLL_STEP_MS) as usize
     }
+}
+
+/// Copy the track out of the shared state so the guard can be dropped before
+/// the draw — holding it across a render would block the poller for a frame.
+fn track_and_pos(state: &Shared) -> Option<(Track, u64)> {
+    let track = state.track.clone()?;
+    let pos = display_position(&track, state.pos_at);
+    Some((track, pos))
 }
 
 /// Last polled position advanced by wall-clock time, so the bar moves smoothly
@@ -294,8 +284,9 @@ fn poll_loop(shared: Weak<Mutex<Shared>>) {
     }
 }
 
-/// Decode one cover into both renditions. Failure yields an `Art` with the URL
-/// recorded and no buffers, which negatively caches the bad URL.
+/// Decode one cover into both renditions, dithered ready to blit. Failure
+/// yields an `Art` with the URL recorded and no frames, which negatively
+/// caches the bad URL.
 fn decode_art(url: &str) -> Art {
     let mut art = Art {
         url: url.to_string(),
@@ -308,9 +299,38 @@ fn decode_art(url: &str) -> Art {
     let Ok(img) = image::open(path) else {
         return art;
     };
-    art.thumb = Some(gray_fit(&img, ART_SIZE, ART_SIZE));
-    art.full = Some(gray_fill_height(&img));
+    art.thumb = Some(dither_thumb(&img));
+    art.full = Some(dither_full(&img));
     art
+}
+
+/// The split-screen half-frame: thumbnail at (2, 2), text half cleared.
+fn dither_thumb(img: &DynamicImage) -> Framebuffer {
+    // blit_gray_dithered wants a whole frame, so compose the art into a
+    // full-size gray buffer (the text half stays black) and dither that.
+    let thumb = gray_fit(img, ART_SIZE, ART_SIZE);
+    let mut gray = vec![0u8; WIDTH * HEIGHT];
+    for y in 0..ART_SIZE {
+        for x in 0..ART_SIZE {
+            let (dx, dy) = (x + 2, y + 2);
+            if dx < WIDTH && dy < HEIGHT {
+                gray[dy * WIDTH + dx] = thumb[y * ART_SIZE + x];
+            }
+        }
+    }
+    let mut fb = Framebuffer::new();
+    fb.blit_gray_dithered(&gray);
+    // Error diffusion can smear a pixel or two past the art; wipe the text
+    // half so white-on-black stays clean.
+    fb.fill_rect(64, 0, WIDTH - 64, HEIGHT, false);
+    fb
+}
+
+/// The art-only screen: cover scaled to the full panel height.
+fn dither_full(img: &DynamicImage) -> Framebuffer {
+    let mut fb = Framebuffer::new();
+    fb.blit_gray_dithered(&gray_fill_height(img));
+    fb
 }
 
 // =============================== drawing ===============================
@@ -374,21 +394,6 @@ fn fmt_time(us: u64) -> String {
     } else {
         format!("{m}:{s:02}")
     }
-}
-
-/// The 5x7 font only has 256 glyphs and track titles are full of typographic
-/// punctuation, so fold the common cases and drop everything else to '?'.
-fn ascii(s: &str) -> String {
-    s.chars()
-        .map(|c| match c {
-            '\u{2018}' | '\u{2019}' | '\u{02bc}' => '\'',
-            '\u{201c}' | '\u{201d}' => '"',
-            '\u{2010}'..='\u{2015}' => '-',
-            '\u{00a0}' => ' ',
-            c if c.is_ascii_graphic() || c == ' ' => c,
-            _ => '?',
-        })
-        .collect()
 }
 
 // =============================== album art ===============================

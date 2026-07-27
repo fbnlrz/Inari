@@ -49,8 +49,17 @@ body:
     attributes:
       label: Logs
       description: |
-        If it's a crash or misbehaviour, run Inari from a terminal (`inari`) and
-        paste any relevant output.
+        Inari writes a rotating log file — please attach it, it covers the run
+        the bug actually happened in:
+
+        `~/.local/share/com.fbnlrz.inari/logs/inari.log`
+
+        If Inari was started by its autostart unit, the same lines are also in
+        `journalctl --user -u inari -n 200`.
+
+        For more detail, quit Inari and rerun it from a terminal with
+        `RUST_LOG=debug inari` — that raises the level for both the terminal
+        output and the log file.
       render: shell
     validations:
       required: false

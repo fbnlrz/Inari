@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::{Component, Path, PathBuf};
 
 use serde::Serialize;
 use tauri::State;
@@ -30,12 +31,15 @@ pub fn set_channel_eq(
         .backend
         .set_channel_eq(&sink_name, &config)
         .map_err(|e| e.to_string())?;
-    let eq = {
+    let (eq, snapshot) = {
         let mut mixer = state.lock_mixer()?;
         mixer.eq.set(&sink_name, config);
-        crate::commands::profiles::autosave_active(&mixer);
-        mixer.eq.clone()
+        (
+            mixer.eq.clone(),
+            crate::commands::profiles::build_autosave(&mixer),
+        )
     };
+    crate::commands::profiles::write_autosave(snapshot);
     eq.save().map_err(|e| e.to_string())
 }
 
@@ -112,16 +116,52 @@ pub fn export_channel_eq(state: State<'_, AppState>, sink_name: String) -> Resul
     serde_json::to_string_pretty(&preset).map_err(|e| e.to_string())
 }
 
+/// The directories the preset file commands may touch: the user's home, plus
+/// the XDG user dirs, which can be relocated onto another volume.
+fn allowed_roots() -> Vec<PathBuf> {
+    [
+        dirs::home_dir(),
+        dirs::desktop_dir(),
+        dirs::document_dir(),
+        dirs::download_dir(),
+        dirs::config_dir(),
+        dirs::data_dir(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
+/// Gate for the two preset file commands. The frontend only ever passes a path
+/// the user picked in a native dialog, but the IPC boundary doesn't enforce
+/// that - a compromised webview could hand us `/etc/shadow` or `~/.ssh/config`
+/// just as easily. So: absolute, no `..` (checked lexically, since an export
+/// target need not exist yet and so can't be canonicalized), and under one of
+/// [`allowed_roots`].
+fn user_path(path: &str) -> Result<&Path, String> {
+    let candidate = Path::new(path);
+    let outside = || format!("refusing a path outside your own directories: {path}");
+    if !candidate.is_absolute() || candidate.components().any(|c| c == Component::ParentDir) {
+        return Err(outside());
+    }
+    if !allowed_roots().iter().any(|root| candidate.starts_with(root)) {
+        return Err(outside());
+    }
+    Ok(candidate)
+}
+
 /// Write a channel's EQ preset JSON to `path` (picked via the native save
-/// dialog; the file I/O stays in Rust so no fs plugin scope is needed).
+/// dialog; the file I/O stays in Rust, and [`user_path`] enforces what the
+/// dialog only implies - IPC could pass any path at all).
 #[tauri::command]
 pub fn export_channel_eq_to_file(
     state: State<'_, AppState>,
     sink_name: String,
     path: String,
 ) -> Result<(), String> {
+    let target = user_path(&path)?;
     let json = export_channel_eq(state, sink_name)?;
-    std::fs::write(&path, json).map_err(|e| format!("write {path}: {e}"))
+    std::fs::write(target, json).map_err(|e| format!("write {path}: {e}"))
 }
 
 /// Parse pasted preset text: our JSON schema or an AutoEq result block.
@@ -145,9 +185,13 @@ pub fn import_eq_config(text: String) -> Result<EqConfig, String> {
     }
 }
 
-/// Read + parse a preset file picked via the native open dialog.
+/// Read + parse a preset file picked via the native open dialog. Same
+/// [`user_path`] gate as the export side: without it this command reads any
+/// file the app can, and hands its first line back to the webview in the parse
+/// error.
 #[tauri::command]
 pub fn import_eq_file(path: String) -> Result<EqConfig, String> {
-    let text = std::fs::read_to_string(&path).map_err(|e| format!("read {path}: {e}"))?;
+    let source = user_path(&path)?;
+    let text = std::fs::read_to_string(source).map_err(|e| format!("read {path}: {e}"))?;
     import_eq_config(text)
 }

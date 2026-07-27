@@ -1,3 +1,4 @@
+use log::error;
 use tauri::State;
 
 use crate::audio::backend::AudioBackend;
@@ -47,11 +48,14 @@ pub fn add_bus(state: State<'_, AppState>, label: String) -> Result<(), String> 
         .backend
         .set_bus_members(&def.name, &def.effective_members(&all))
     {
-        eprintln!("sink: members for new mix {} failed: {e}", def.name);
+        error!("members for new mix {} failed: {e}", def.name);
     }
     defs.save().map_err(|e| e.to_string())?;
-    let mixer = state.lock_mixer()?;
-    crate::commands::profiles::autosave_active(&mixer);
+    let snapshot = {
+        let mixer = state.lock_mixer()?;
+        crate::commands::profiles::build_autosave(&mixer)
+    };
+    crate::commands::profiles::write_autosave(snapshot);
     Ok(())
 }
 
@@ -89,8 +93,11 @@ pub fn rename_bus(state: State<'_, AppState>, name: String, label: String) -> Re
     apply_bus_level(state.backend.as_ref(), &def);
 
     defs.save().map_err(|e| e.to_string())?;
-    let mixer = state.lock_mixer()?;
-    crate::commands::profiles::autosave_active(&mixer);
+    let snapshot = {
+        let mixer = state.lock_mixer()?;
+        crate::commands::profiles::build_autosave(&mixer)
+    };
+    crate::commands::profiles::write_autosave(snapshot);
     Ok(())
 }
 
@@ -98,12 +105,15 @@ pub fn rename_bus(state: State<'_, AppState>, name: String, label: String) -> Re
 #[tauri::command]
 pub fn remove_bus(state: State<'_, AppState>, name: String) -> Result<(), String> {
     state.backend.destroy_bus(&name).map_err(|e| e.to_string())?;
-    let defs = {
+    let (defs, snapshot) = {
         let mut mixer = state.lock_mixer()?;
         mixer.buses.remove(&name).map_err(|e| e.to_string())?;
-        crate::commands::profiles::autosave_active(&mixer);
-        mixer.buses.clone()
+        (
+            mixer.buses.clone(),
+            crate::commands::profiles::build_autosave(&mixer),
+        )
     };
+    crate::commands::profiles::write_autosave(snapshot);
     defs.save().map_err(|e| e.to_string())
 }
 
@@ -140,15 +150,18 @@ pub fn set_bus_members(
         .backend
         .set_bus_members(&name, &channels)
         .map_err(|e| e.to_string())?;
-    let defs = {
+    let (defs, snapshot) = {
         let mut mixer = state.lock_mixer()?;
         mixer
             .buses
             .set_members(&name, stored)
             .map_err(|e| e.to_string())?;
-        crate::commands::profiles::autosave_active(&mixer);
-        mixer.buses.clone()
+        (
+            mixer.buses.clone(),
+            crate::commands::profiles::build_autosave(&mixer),
+        )
     };
+    crate::commands::profiles::write_autosave(snapshot);
     defs.save().map_err(|e| e.to_string())
 }
 
@@ -160,16 +173,19 @@ pub fn set_bus_exclude(
     name: String,
     exclude: bool,
 ) -> Result<(), String> {
-    let defs = {
+    let (defs, snapshot) = {
         let mut mixer = state.lock_mixer()?;
         let all = channel_names(&mixer);
         mixer
             .buses
             .set_exclude(&name, exclude, &all)
             .map_err(|e| e.to_string())?;
-        crate::commands::profiles::autosave_active(&mixer);
-        mixer.buses.clone()
+        (
+            mixer.buses.clone(),
+            crate::commands::profiles::build_autosave(&mixer),
+        )
     };
+    crate::commands::profiles::write_autosave(snapshot);
     defs.save().map_err(|e| e.to_string())
 }
 
@@ -186,12 +202,15 @@ pub fn set_bus_volume(state: State<'_, AppState>, name: String, volume: u8) -> R
         .backend
         .set_sink_volume(&name, volume)
         .map_err(|e| e.to_string())?;
-    let defs = {
+    let (defs, snapshot) = {
         let mut mixer = state.lock_mixer()?;
         mixer.buses.set_volume(&name, volume).map_err(|e| e.to_string())?;
-        crate::commands::profiles::autosave_active(&mixer);
-        mixer.buses.clone()
+        (
+            mixer.buses.clone(),
+            crate::commands::profiles::build_autosave(&mixer),
+        )
     };
+    crate::commands::profiles::write_autosave(snapshot);
     defs.save().map_err(|e| e.to_string())
 }
 
@@ -205,12 +224,15 @@ pub fn set_bus_mute(state: State<'_, AppState>, name: String, muted: bool) -> Re
         .backend
         .set_sink_mute(&name, muted)
         .map_err(|e| e.to_string())?;
-    let defs = {
+    let (defs, snapshot) = {
         let mut mixer = state.lock_mixer()?;
         mixer.buses.set_muted(&name, muted).map_err(|e| e.to_string())?;
-        crate::commands::profiles::autosave_active(&mixer);
-        mixer.buses.clone()
+        (
+            mixer.buses.clone(),
+            crate::commands::profiles::build_autosave(&mixer),
+        )
     };
+    crate::commands::profiles::write_autosave(snapshot);
     defs.save().map_err(|e| e.to_string())
 }
 

@@ -1,6 +1,6 @@
 [package]
 name = "inari"
-version = "1.0.6"
+version = "1.0.7"
 description = "Linux-native audio routing and mixing for PipeWire, with SteelSeries device control"
 edition = "2021"
 rust-version = "1.77"
@@ -34,6 +34,14 @@ libc = "0.2"
 # Decode OLED media (still images + animated GIFs) to 1-bit frames. Video is
 # handled out-of-process via the system ffmpeg, so no heavy codec deps here.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "bmp", "webp"] }
+# Verify the downloaded .deb against the release's SHA256SUMS before handing it
+# to `pkexec apt-get` - the one place we run attacker-reachable bytes as root.
+sha2 = "0.10"
 # 0.8.0 on crates.io predates PipeWire 1.6 headers (libspa bindgen breaks);
 # git main carries the header fixes. v0_3_49 gates Buffer::requested().
 pipewire = { git = "https://gitlab.freedesktop.org/pipewire/pipewire-rs", rev = "v0.10.0", features = ["v0_3_49"] }
+# Logging. Started from the app menu or the systemd autostart unit, stderr
+# goes somewhere the user can't find - so everything also lands in a small
+# rotating file under the app's log dir that a bug report can attach.
+tauri-plugin-log = "2"
+log = "0.4"

@@ -7,6 +7,7 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use log::{info, warn};
 use tauri::{AppHandle, Emitter};
 
 use crate::audio::pw_native::levels::LevelStore;
@@ -205,7 +206,7 @@ impl HeadsetManager {
                     }
                 }
                 Err(e) => {
-                    eprintln!("sink: dbus-monitor unavailable ({e}); notification mirror off");
+                    warn!("dbus-monitor unavailable ({e}); notification mirror off");
                 }
             }
         }
@@ -306,7 +307,7 @@ impl HeadsetManager {
             let mut reader = match writer.open_reader() {
                 Ok(r) => r,
                 Err(e) => {
-                    eprintln!("sink: headset reader open failed: {e}");
+                    warn!("headset reader open failed: {e}");
                     std::thread::sleep(Duration::from_secs(3));
                     continue;
                 }
@@ -317,12 +318,18 @@ impl HeadsetManager {
                 *slot = Some(kind);
             }
 
-            // Only the Nova generation has an OLED we can drive.
+            // Only the Nova generation has an OLED we can drive. The handle is
+            // kept so teardown can wait for the thread: a detached one would
+            // still be pushing frames while a reconnect opened a second fd to
+            // the same panel.
+            let mut oled_thread = None;
             if kind.has_oled() {
                 let (oled_tx, oled_rx) = std::sync::mpsc::channel();
                 let path = path.clone();
                 let levels = self.levels.lock().ok().and_then(|l| l.clone());
-                std::thread::spawn(move || oled_controller::run(path, oled_rx, levels));
+                oled_thread = Some(std::thread::spawn(move || {
+                    oled_controller::run(path, oled_rx, levels)
+                }));
                 if let Ok(mut slot) = self.oled_tx.lock() {
                     *slot = Some(oled_tx);
                 }
@@ -335,6 +342,7 @@ impl HeadsetManager {
                 *slot = Some(Arc::clone(&writer));
             }
             self.emit_presence(true);
+            info!("headset connected: {kind:?} at {}", path.dev.display());
 
             // Safe handshake: pull an initial snapshot (and, on Nova, enable
             // the event stream). Never writes user settings.
@@ -426,10 +434,15 @@ impl HeadsetManager {
             // then loop back to discovery.
             hb_stop.store(true, Ordering::Relaxed);
             let _ = heartbeat.join();
+            // Signal first, then join — and drop the sender either way, so a
+            // thread that missed the message still sees the channel close.
             if let Ok(mut slot) = self.oled_tx.lock() {
                 if let Some(tx) = slot.take() {
                     let _ = tx.send(OledCommand::Shutdown);
                 }
+            }
+            if let Some(handle) = oled_thread.take() {
+                let _ = handle.join();
             }
             if let Ok(mut slot) = self.writer.lock() {
                 *slot = None;
@@ -441,6 +454,7 @@ impl HeadsetManager {
                 *s = HeadsetStatus::default();
             }
             self.emit_presence(false);
+            info!("headset disconnected: {kind:?}");
         }
     }
 }

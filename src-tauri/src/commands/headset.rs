@@ -310,10 +310,24 @@ pub fn headset_oled_clips() -> Vec<ClipEntry> {
 }
 
 /// Play a built-in procedural animation on the OLED.
+///
+/// Rendering a clip is ~140 dithered frames of work - far too much for the IPC
+/// thread, which every other command queues behind. It runs on the blocking
+/// pool instead, and the cache means only the first play of each clip pays.
 #[tauri::command]
-pub fn headset_oled_clip(state: State<'_, AppState>, name: String) -> Result<(), String> {
-    let frames = clips::generate(&name).ok_or_else(|| format!("unknown clip: {name}"))?;
-    state.headset.oled_play(frames, true)
+pub async fn headset_oled_clip(state: State<'_, AppState>, name: String) -> Result<(), String> {
+    let wanted = name.clone();
+    let frames = tauri::async_runtime::spawn_blocking(move || clips::generate_cached(&name))
+        .await
+        .map_err(|e| format!("clip render failed to run: {e}"))?
+        .ok_or_else(|| format!("unknown clip: {wanted}"))?;
+    // Straight to the command rather than through `oled_play`: the cache
+    // already hands us the Arc the OLED thread wants, so a replay costs a
+    // refcount bump instead of a re-render.
+    state.headset.oled(OledCommand::Set(OledContent::Frames {
+        frames,
+        looping: true,
+    }))
 }
 
 /// Show any live mode by its identifier.
