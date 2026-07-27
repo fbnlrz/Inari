@@ -324,8 +324,23 @@ fn relaunch_script(exe: &str) -> String {
 /// and the app would just quit. Instead: resolve the real path, hand a detached
 /// helper the job of relaunching it after we've fully exited (so our virtual
 /// sinks are torn down before the fresh instance recreates them), then exit.
+///
+/// Under the autostart unit that helper does not survive us either:
+/// `setsid` gets a new session but stays in the service's cgroup, and systemd's
+/// default `KillMode=control-group` sweeps it up the moment the main process
+/// exits - mid-sleep, before it ever reaches the `exec`. `Restart=on-failure`
+/// does not cover for that either, because quitting to restart is a clean exit.
+///
+/// So when we *are* that unit, hand the job to systemd instead of trying to
+/// outlive ourselves.
 #[tauri::command]
 pub fn restart_app(app: tauri::AppHandle) {
+    if crate::persistence::autostart::running_as_unit()
+        && crate::persistence::autostart::request_restart()
+    {
+        app.exit(0);
+        return;
+    }
     if let Ok(exe) = std::env::current_exe() {
         let script = relaunch_script(&exe.to_string_lossy());
         // setsid detaches the relauncher into its own session so it survives our
