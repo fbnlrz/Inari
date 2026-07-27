@@ -146,7 +146,8 @@ pub fn get_output_devices(state: State<'_, AppState>) -> Result<Vec<OutputDevice
         .map_err(|e| e.to_string())
 }
 
-/// Create the user's virtual sinks and reset them to 100%, unmuted.
+/// Create the user's virtual sinks, wire them up, and take the strips'
+/// volume/mute from what those sinks actually report.
 /// Idempotent: safe to call again if the sinks already exist.
 #[tauri::command]
 pub fn init_virtual_devices(
@@ -163,16 +164,12 @@ pub fn init_virtual_devices(
             .backend
             .create_virtual_sink(&def.name, &prefs.decorate(&def.label))
             .map_err(|e| e.to_string())?;
-        // Known starting point - adopted sinks from a previous run may carry
-        // stale volume/mute.
-        state
-            .backend
-            .set_sink_volume(&def.name, 100)
-            .map_err(|e| e.to_string())?;
-        state
-            .backend
-            .set_sink_mute(&def.name, false)
-            .map_err(|e| e.to_string())?;
+        // No volume/mute written here on purpose. This used to reset every
+        // sink to 100%/unmuted as a "known starting point", but the session
+        // manager (WirePlumber) restores a remembered level per node.name the
+        // moment the sink appears and wins that race - a channel left at 0%
+        // came back at 0% regardless. The write only ever desynced the UI from
+        // the audio; the state is read back below instead.
     }
 
     let (outputs, eq, mic, buses) = {
@@ -246,6 +243,32 @@ pub fn init_virtual_devices(
             }
         }
     }
+
+    // Now that the sinks are up and wired, take the strips' volume/mute from
+    // the sinks themselves. Deliberately here rather than right after
+    // `create_virtual_sink`: the routing/EQ/mix/mic round trips above give the
+    // session manager time to apply its restore, so what we read is the level
+    // the user will actually hear. Anything the backend can't report keeps the
+    // 100%/unmuted placeholder - a fallback, not a claim.
+    //
+    // Read outside the mixer lock: each call is a backend round trip (up to
+    // the native backend's 3s request timeout) and holding the mutex across
+    // them would stall every other command behind startup (see TD-004 in
+    // `get_app_streams`).
+    let mut live: std::collections::HashMap<String, (u8, bool)> =
+        std::collections::HashMap::new();
+    for def in &defs.channels {
+        match state.backend.sink_state(&def.name) {
+            Ok(Some(sink_state)) => {
+                live.insert(def.name.clone(), sink_state);
+            }
+            Ok(None) => warn!("{} reported no volume/mute - keeping the default", def.name),
+            Err(e) => warn!("reading the live state of {} failed: {e}", def.name),
+        }
+    }
+    state
+        .lock_mixer()?
+        .adopt_live_channel_state(|name| live.get(name).copied());
 
     // First run: capture the current layout as the "Default" profile so
     // there's always a known-good state to come back to. It also becomes

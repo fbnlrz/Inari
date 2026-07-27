@@ -266,6 +266,13 @@ impl AudioBackend for PipeWireBackend {
         self.request(|reply| Cmd::SetNodeMuteByName { name, muted, reply })
     }
 
+    fn sink_state(&self, sink_name: &str) -> Result<Option<(u8, bool)>, SinkError> {
+        // No extra round trip to the server: the loop thread already mirrors
+        // every node's volume/mute from its Props param events.
+        let name = sink_name.to_string();
+        self.request(|reply| Cmd::SinkState { name, reply })
+    }
+
     fn move_stream_to_sink(&self, stream_index: u32, sink_name: &str) -> Result<(), SinkError> {
         let sink_name = sink_name.to_string();
         self.request(|reply| Cmd::MoveStream {

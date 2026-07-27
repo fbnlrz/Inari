@@ -34,6 +34,8 @@ pub enum Cmd {
     ListStreams { reply: Reply<Vec<AppStream>> },
     ListOutputs { reply: Reply<Vec<OutputDevice>> },
     ResolvedOutputs { reply: Reply<HashMap<String, Option<String>>> },
+    /// Live volume/mute of a node by name (None = unknown or not yet observed).
+    SinkState { name: String, reply: Reply<Option<(u8, bool)>> },
     SetNodeVolumeByName { name: String, percent: u8, reply: Reply<()> },
     SetNodeMuteByName { name: String, muted: bool, reply: Reply<()> },
     SetNodeVolumeById { id: u32, percent: u8, reply: Reply<()> },
@@ -80,6 +82,9 @@ pub(super) struct NodeEntry {
     pub(super) volume_percent: u8,
     pub(super) channels: usize,
     pub(super) muted: bool,
+    /// True once a Props param event has actually been seen for this node.
+    /// Until then `volume_percent`/`muted` are placeholders, not readings.
+    pub(super) props_seen: bool,
     /// True while the node is in the Running state (actively streaming).
     pub(super) active: bool,
 }
@@ -215,6 +220,17 @@ impl State {
             .find(|n| n.props.get("node.name").map(String::as_str) == Some(name))
     }
 
+    /// A node's volume/mute as observed on the wire, or `None` while we have
+    /// no reading for it. A freshly bound `NodeEntry` carries placeholder
+    /// defaults until its first Props event lands, and passing those off as
+    /// the sink's state would be exactly the illusion the read path exists to
+    /// end - an unknown node and an unobserved one are equally unknown.
+    pub(super) fn observed_state(&self, name: &str) -> Option<(u8, bool)> {
+        self.node_by_name(name)
+            .filter(|n| n.props_seen)
+            .map(|n| (n.volume_percent, n.muted))
+    }
+
     /// The sink a stream is currently connected to, resolved through links.
     pub(super) fn sink_of_stream(&self, stream_id: u32) -> Option<&NodeEntry> {
         self.links
@@ -272,6 +288,15 @@ mod tests {
         assert!(expected.contains(&"sink_kept"));
         assert!(!expected.contains(&"bus_stream"));
         assert!(!expected.contains(&MIC_NODE));
+    }
+
+    /// A node we have never seen has no state to report - the caller must get
+    /// `None` and fall back, not a fabricated 100%. (The observed branch needs
+    /// a bound PipeWire node, which can't be built without a live server.)
+    #[test]
+    fn observed_state_of_an_unknown_node_is_unknown() {
+        let s = State::default();
+        assert_eq!(s.observed_state("sink_music"), None);
     }
 
     #[test]

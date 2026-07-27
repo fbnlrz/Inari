@@ -15,6 +15,17 @@ pub trait AudioBackend: Send + Sync {
     fn list_output_devices(&self) -> Result<Vec<OutputDevice>, SinkError>;
     fn set_sink_volume(&self, sink_name: &str, volume_percent: u8) -> Result<(), SinkError>;
     fn set_sink_mute(&self, sink_name: &str, muted: bool) -> Result<(), SinkError>;
+
+    /// What a sink is *actually* doing right now: `(volume_percent, muted)`.
+    /// `None` means the backend cannot say - the sink is unknown, or its state
+    /// hasn't been observed yet.
+    ///
+    /// This exists because volumes have to be read at startup, not assumed.
+    /// The session manager (WirePlumber) remembers a level per `node.name` and
+    /// restores it the moment the sink appears; a write from here racing that
+    /// restore loses, so the old "reset every channel to 100%" only ever made
+    /// the strips disagree with the audio. See `init_virtual_devices`.
+    fn sink_state(&self, sink_name: &str) -> Result<Option<(u8, bool)>, SinkError>;
     /// Move an app stream to a sink. An empty `sink_name` means "unassign":
     /// the stream is returned to the system default sink.
     fn move_stream_to_sink(&self, stream_index: u32, sink_name: &str) -> Result<(), SinkError>;

@@ -191,6 +191,10 @@ pub(super) fn handle_cmd(state: &Rc<RefCell<State>>, registry: &RegistryRc, cmd:
                 .collect();
             let _ = reply.send(Ok(resolved));
         }
+        Cmd::SinkState { name, reply } => {
+            let s = state.borrow();
+            let _ = reply.send(Ok(s.observed_state(&name)));
+        }
         Cmd::SetNodeVolumeByName { name, percent, reply } => {
             let s = state.borrow();
             let _ = reply.send(set_props(s.node_by_name(&name), Some(percent), None));

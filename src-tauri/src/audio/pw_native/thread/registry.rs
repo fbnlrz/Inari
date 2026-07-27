@@ -240,12 +240,16 @@ fn on_node(
             if let Some(entry) = s.nodes.get_mut(&node_id) {
                 if let Some(linear) = parsed.volume_linear {
                     entry.volume_percent = pods::linear_to_percent(linear);
+                    // From here on the fields are readings, not placeholders -
+                    // `observed_state` may report them.
+                    entry.props_seen = true;
                 }
                 if let Some(channels) = parsed.channels {
                     entry.channels = channels;
                 }
                 if let Some(muted) = parsed.muted {
                     entry.muted = muted;
+                    entry.props_seen = true;
                 }
             }
         })
@@ -262,6 +266,7 @@ fn on_node(
         volume_percent: 100,
         channels: 2,
         muted: false,
+        props_seen: false,
         active: false,
     };
 
