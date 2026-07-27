@@ -287,3 +287,48 @@ pub fn delete_profile(
     crate::refresh_tray(&app);
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mixer::state::MixerState;
+
+    #[test]
+    fn unmanaged_state_snapshots_nothing() {
+        // No active profile means every mutation must skip the write, not
+        // invent a profile name to save under.
+        assert!(build_autosave(&MixerState::default()).is_none());
+    }
+
+    #[test]
+    fn autosave_snapshots_the_live_state_under_the_bound_name() {
+        let mut mixer = MixerState::default();
+        mixer.init_defaults();
+        mixer.active_profile = Some("Gaming".into());
+        mixer.active_trigger = Some("alsa_output.usb-SteelSeries".into());
+        mixer
+            .assignments
+            .set("application.name", "Firefox", "sink_browser");
+
+        let profile = build_autosave(&mixer).expect("a profile is bound");
+        assert_eq!(profile.name, "Gaming");
+        let taken: Vec<&str> = profile.channels.iter().map(|c| c.name.as_str()).collect();
+        let live: Vec<&str> = mixer.channels.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(taken, live);
+        assert_eq!(
+            profile.assignments.sink_for("application.name", "Firefox"),
+            Some("sink_browser")
+        );
+        // The trigger comes from the cache; re-reading the file per mutation
+        // is what the cache exists to avoid.
+        assert_eq!(
+            profile.trigger_device.as_deref(),
+            Some("alsa_output.usb-SteelSeries")
+        );
+    }
+
+    #[test]
+    fn write_autosave_on_nothing_is_a_no_op() {
+        write_autosave(None);
+    }
+}

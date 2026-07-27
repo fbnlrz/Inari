@@ -195,3 +195,116 @@ pub fn import_eq_file(path: String) -> Result<EqConfig, String> {
     let text = std::fs::read_to_string(source).map_err(|e| format!("read {path}: {e}"))?;
     import_eq_config(text)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audio::types::{EqBand, EqBandKind};
+
+    fn home() -> PathBuf {
+        dirs::home_dir().expect("the test host has a home directory")
+    }
+
+    fn band(freq_hz: f32) -> EqBand {
+        EqBand {
+            kind: EqBandKind::Peaking,
+            freq_hz,
+            gain_db: 3.0,
+            q: 1.0,
+        }
+    }
+
+    /// Preset JSON built through the real type, so the tests can't drift from
+    /// the wire format.
+    fn preset_text(schema: u32, bands: Vec<EqBand>) -> String {
+        serde_json::to_string(&EqPreset {
+            schema,
+            name: "T".into(),
+            author: None,
+            description: None,
+            preamp_db: 0.0,
+            bands,
+        })
+        .expect("serializes")
+    }
+
+    // --- the path gate ----------------------------------------------------
+
+    #[test]
+    fn user_path_accepts_a_file_in_the_home_directory() {
+        assert!(user_path(&home().join("preset.json").to_string_lossy()).is_ok());
+    }
+
+    #[test]
+    fn user_path_refuses_relative_and_traversing_paths() {
+        assert!(user_path("preset.json").is_err(), "relative");
+        assert!(user_path("~/preset.json").is_err(), "an unexpanded tilde");
+        let escape = home().join("../../etc/shadow");
+        assert!(user_path(&escape.to_string_lossy()).is_err(), "..");
+    }
+
+    #[test]
+    fn user_path_refuses_paths_outside_the_users_own_directories() {
+        assert!(user_path("/etc/shadow").is_err());
+        assert!(user_path("/proc/self/environ").is_err());
+        assert!(user_path("/").is_err());
+    }
+
+    #[test]
+    fn user_path_matches_components_not_string_prefixes() {
+        // "/home/bob-evil" shares a string prefix with "/home/bob" but is a
+        // different directory, and Path::starts_with must be what decides.
+        let sibling = format!("{}-evil/preset.json", home().to_string_lossy());
+        assert!(user_path(&sibling).is_err());
+    }
+
+    #[test]
+    fn import_eq_file_refuses_before_it_reads() {
+        // The gate has to fire first: otherwise the file's contents come back
+        // to the webview inside the parse error.
+        let err = import_eq_file("/etc/hostname".into()).expect_err("outside home");
+        assert!(err.starts_with("refusing a path"), "{err}");
+    }
+
+    // --- preset parsing ---------------------------------------------------
+
+    #[test]
+    fn import_eq_config_previews_disabled_and_clamped() {
+        let config = import_eq_config(preset_text(PRESET_SCHEMA, vec![band(99_000.0)]))
+            .expect("imports");
+        assert!(!config.enabled, "the modal previews before applying");
+        assert_eq!(config.bands[0].freq_hz, 20_000.0);
+    }
+
+    #[test]
+    fn import_eq_config_rejects_unusable_preset_json() {
+        assert!(import_eq_config("{not json".into()).is_err());
+        assert!(
+            import_eq_config(preset_text(PRESET_SCHEMA + 1, vec![band(1000.0)])).is_err(),
+            "future schema"
+        );
+        assert!(
+            import_eq_config(preset_text(PRESET_SCHEMA, Vec::new())).is_err(),
+            "no bands"
+        );
+    }
+
+    #[test]
+    fn import_eq_config_falls_through_to_autoeq_for_non_json() {
+        let config = import_eq_config(
+            "Preamp: -6.0 dB\nFilter 1: ON PK Fc 105 Hz Gain -2.4 dB Q 0.70\n".into(),
+        )
+        .expect("parses");
+        assert_eq!(config.preamp_db, -6.0);
+        assert!(!config.enabled);
+        // Leading whitespace must not push pasted JSON onto the AutoEq branch.
+        let padded = format!("\n  {}", preset_text(PRESET_SCHEMA, vec![band(1000.0)]));
+        assert!(import_eq_config(padded).is_ok());
+    }
+
+    #[test]
+    fn import_eq_config_rejects_text_that_is_neither_format() {
+        assert!(import_eq_config("hello".into()).is_err());
+        assert!(import_eq_config(String::new()).is_err());
+    }
+}

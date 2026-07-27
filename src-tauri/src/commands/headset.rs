@@ -67,15 +67,20 @@ pub fn headset_set_mic_led(state: State<'_, AppState>, level: u8) -> Result<(), 
     state.headset.send(&protocol::set_mic_led(level))
 }
 
+/// The UI's ANC identifier. Unknown values are refused rather than defaulted -
+/// silently picking a mode would misreport what the headset is doing.
+fn anc_mode(name: &str) -> Result<AncMode, String> {
+    match name {
+        "on" => Ok(AncMode::On),
+        "transparent" => Ok(AncMode::Transparent),
+        "off" => Ok(AncMode::Off),
+        other => Err(format!("unknown ANC mode: {other}")),
+    }
+}
+
 #[tauri::command]
 pub fn headset_set_anc(state: State<'_, AppState>, mode: String) -> Result<(), String> {
-    let mode = match mode.as_str() {
-        "on" => AncMode::On,
-        "transparent" => AncMode::Transparent,
-        "off" => AncMode::Off,
-        other => return Err(format!("unknown ANC mode: {other}")),
-    };
-    state.headset.send(&protocol::set_anc(mode))
+    state.headset.send(&protocol::set_anc(anc_mode(&mode)?))
 }
 
 #[tauri::command]
@@ -101,14 +106,19 @@ pub fn headset_set_wireless_range(state: State<'_, AppState>, range: bool) -> Re
     state.headset.send(&protocol::set_wireless_range(range))
 }
 
+fn line_out_mode(name: &str) -> Result<LineOut, String> {
+    match name {
+        "speaker" => Ok(LineOut::Speaker),
+        "stream" => Ok(LineOut::Stream),
+        other => Err(format!("unknown line-out mode: {other}")),
+    }
+}
+
 #[tauri::command]
 pub fn headset_set_line_out(state: State<'_, AppState>, mode: String) -> Result<(), String> {
-    let mode = match mode.as_str() {
-        "speaker" => LineOut::Speaker,
-        "stream" => LineOut::Stream,
-        other => return Err(format!("unknown line-out mode: {other}")),
-    };
-    state.headset.send(&protocol::set_line_out(mode))
+    state
+        .headset
+        .send(&protocol::set_line_out(line_out_mode(&mode)?))
 }
 
 #[tauri::command]
@@ -255,6 +265,12 @@ pub fn headset_set_notify_display(
     state.headset.set_notify_display(duration_secs, scroll)
 }
 
+/// How long a notification stays up. Clamped because the value crosses IPC:
+/// too short flashes by unread, too long wedges the display.
+fn notify_duration(ms: u64) -> Duration {
+    Duration::from_millis(ms.clamp(500, 60_000))
+}
+
 #[tauri::command]
 pub fn headset_oled_notify(
     state: State<'_, AppState>,
@@ -263,7 +279,7 @@ pub fn headset_oled_notify(
 ) -> Result<(), String> {
     state.headset.oled(OledCommand::Notify {
         lines,
-        duration: Duration::from_millis(duration_ms.clamp(500, 60_000)),
+        duration: notify_duration(duration_ms),
     })
 }
 
@@ -329,6 +345,12 @@ pub fn headset_oled_mode(state: State<'_, AppState>, id: String) -> Result<(), S
         .oled(OledCommand::Set(OledContent::Mode(mode)))
 }
 
+/// The rotation list. Ids we don't know are dropped instead of failing the
+/// call, so a list saved by a build that had one more mode still rotates.
+fn rotation_modes(ids: &[String]) -> Vec<ModeId> {
+    ids.iter().filter_map(|i| ModeId::from_str(i)).collect()
+}
+
 /// Cycle through `ids` every `secs` seconds. An empty list stops rotating.
 #[tauri::command]
 pub fn headset_oled_rotate(
@@ -336,7 +358,7 @@ pub fn headset_oled_rotate(
     ids: Vec<String>,
     secs: u64,
 ) -> Result<(), String> {
-    let modes: Vec<ModeId> = ids.iter().filter_map(|i| ModeId::from_str(i)).collect();
+    let modes = rotation_modes(&ids);
     if modes.is_empty() {
         return state.headset.oled(OledCommand::Set(OledContent::Ui));
     }
@@ -387,4 +409,44 @@ pub fn headset_oled_brightness(state: State<'_, AppState>, level: u8) -> Result<
 #[tauri::command]
 pub fn headset_oled_return_ui(state: State<'_, AppState>) -> Result<(), String> {
     state.headset.oled(OledCommand::Set(OledContent::Ui))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::headset::oled_rotation::ALL_MODES;
+
+    #[test]
+    fn mode_names_are_translated_exactly_or_refused() {
+        assert_eq!(anc_mode("transparent"), Ok(AncMode::Transparent));
+        assert_eq!(anc_mode("off"), Ok(AncMode::Off));
+        assert!(anc_mode("On").is_err(), "matching is case-sensitive");
+        assert!(anc_mode("").is_err());
+        assert_eq!(line_out_mode("stream"), Ok(LineOut::Stream));
+        assert!(line_out_mode("aux").is_err());
+    }
+
+    #[test]
+    fn notify_duration_stays_within_something_readable() {
+        assert_eq!(notify_duration(0), Duration::from_millis(500));
+        assert_eq!(notify_duration(3_000), Duration::from_millis(3_000));
+        assert_eq!(notify_duration(u64::MAX), Duration::from_millis(60_000));
+    }
+
+    #[test]
+    fn rotation_drops_unknown_ids_and_all_unknown_stops_rotating() {
+        let ids = ["clock".to_string(), "nope".to_string(), "vu".to_string()];
+        assert_eq!(rotation_modes(&ids), vec![ModeId::Clock, ModeId::Vu]);
+        // Empty is the command's "stop and return to the UI screen" signal.
+        assert!(rotation_modes(&["nope".to_string()]).is_empty());
+    }
+
+    #[test]
+    fn every_id_the_picker_is_handed_comes_back_as_a_mode() {
+        // `headset_oled_modes` publishes `as_str`; the rotate command parses
+        // it back. A mode missing a `from_str` arm would silently vanish.
+        for mode in ALL_MODES {
+            assert_eq!(ModeId::from_str(mode.as_str()), Some(*mode));
+        }
+    }
 }

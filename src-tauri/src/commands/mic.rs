@@ -30,6 +30,27 @@ pub fn set_mic_config(state: State<'_, AppState>, mut config: MicConfig) -> Resu
     mic::save(&config).map_err(|e| e.to_string())
 }
 
+/// Mute/unmute the mic chain from outside the webview - the tray, a global
+/// hotkey, the CLI. Same apply-then-persist path as [`set_mic_config`], minus
+/// the round trip through a UI that may not even be running.
+pub(crate) fn set_mic_muted(state: &AppState, muted: bool) -> Result<(), String> {
+    let (config, label) = {
+        let mixer = state.lock_mixer()?;
+        let mut config = mixer.mic.clone();
+        config.muted = muted;
+        let label = mixer.prefs.decorate(&config.output_label);
+        (config, label)
+    };
+    let mut applied = config.clone();
+    applied.output_label = label;
+    state
+        .backend
+        .set_mic_config(&applied)
+        .map_err(|e| e.to_string())?;
+    state.lock_mixer()?.mic = config.clone();
+    mic::save(&config).map_err(|e| e.to_string())
+}
+
 /// Hardware microphones available as the chain's input.
 #[tauri::command]
 pub fn get_input_devices(state: State<'_, AppState>) -> Result<Vec<OutputDevice>, String> {

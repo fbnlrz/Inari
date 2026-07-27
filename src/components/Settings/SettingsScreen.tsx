@@ -10,6 +10,7 @@ import { ConfirmModal } from "../ConfirmModal";
 import { MenuItem } from "../MenuItem";
 import { Popover } from "../Popover";
 import { Toggle } from "../Toggle";
+import { HotkeysSection } from "./HotkeysSection";
 
 interface DefaultDevices {
   output: string | null;
@@ -294,6 +295,8 @@ export function SettingsScreen() {
             </div>
           )}
         </div>
+
+        <HotkeysSection />
 
         <div className="section-label">About</div>
         <div className="card" style={{ padding: "var(--sp-2)" }}>

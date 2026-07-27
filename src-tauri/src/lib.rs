@@ -13,14 +13,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use log::{error, info, warn};
-use tauri::menu::{CheckMenuItem, Menu, MenuItem}; // CheckMenuItem: profile rows
+use tauri::menu::{CheckMenuItem, Menu, MenuItem}; // CheckMenuItem: profile + mute rows
 use tauri::tray::TrayIconBuilder;
 use tauri::{Emitter, Manager, WindowEvent};
 
 use audio::backend::AudioBackend;
 use audio::pactl::PactlBackend;
 use audio::pw_native::levels::LevelStore;
-use audio::pw_native::PipeWireBackend;
+use audio::pw_native::{GraphCoalescer, GraphNotify, PipeWireBackend, GRAPH_MAX_WAIT, GRAPH_QUIET};
 use state::AppState;
 
 /// Global level for the logger. Info by default: lifecycle events only, since
@@ -68,23 +68,50 @@ fn log_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
         .build()
 }
 
+/// The chosen backend plus its two native-only side channels: live metering
+/// and graph-change notifications, both `None` on the pactl fallback.
+type BackendSetup = (
+    Arc<dyn AudioBackend>,
+    Option<Arc<LevelStore>>,
+    Option<Arc<GraphNotify>>,
+);
+
+/// Answer a command line that needs no app at all (`--help`, a typo'd
+/// subcommand), returning the exit code. `None` means "go on and run".
+/// Lives here so `main` can reply without paying for a whole Tauri boot.
+pub fn cli_early_exit() -> Option<i32> {
+    commands::cli::early_exit(&std::env::args().skip(1).collect::<Vec<_>>())
+}
+
+/// The arguments this process was started with, minus argv[0].
+fn own_args() -> Vec<String> {
+    std::env::args().skip(1).collect()
+}
+
+/// State was changed from outside the webview (tray, hotkey, CLI): refresh
+/// the tray's check marks and let an open window re-read what moved.
+pub(crate) fn after_external_change(app: &tauri::AppHandle) {
+    refresh_tray(app);
+    let _ = app.emit("state-changed", ());
+}
+
 pub fn run() {
     // Prefer the native PipeWire backend (Phase 2); fall back to pactl
     // subprocess calls if the native loop can't come up. Levels (real VU
     // metering) are native-only. This runs before the logger exists, so the
     // outcome is logged from `setup` below instead.
     let mut backend_fallback: Option<String> = None;
-    let (backend, levels): (Arc<dyn AudioBackend>, Option<Arc<LevelStore>>) =
-        match PipeWireBackend::new() {
-            Ok(backend) => {
-                let levels = backend.levels.clone();
-                (Arc::new(backend), Some(levels))
-            }
-            Err(e) => {
-                backend_fallback = Some(e.to_string());
-                (Arc::new(PactlBackend::new()), None)
-            }
-        };
+    let (backend, levels, graph): BackendSetup = match PipeWireBackend::new() {
+        Ok(backend) => {
+            let levels = backend.levels.clone();
+            let graph = backend.graph.clone();
+            (Arc::new(backend), Some(levels), Some(graph))
+        }
+        Err(e) => {
+            backend_fallback = Some(e.to_string());
+            (Arc::new(PactlBackend::new()), None, None)
+        }
+    };
     let backend_native = levels.is_some();
     let app_state = AppState::new(backend, backend_native);
 
@@ -95,8 +122,16 @@ pub fn run() {
         // running instance and the new process exits — no duplicate. We reveal
         // the existing window unless the relaunch asked to stay in the tray
         // (`--minimized`), so a menu relaunch brings Inari to the front.
+        //
+        // This is also the CLI's transport: `inari mute chat` is just such a
+        // second launch, handled here and — like `--minimized` — without
+        // touching the window.
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
-            if argv.iter().any(|a| a == "--minimized") {
+            let args: Vec<String> = argv.into_iter().skip(1).collect();
+            if commands::cli::handle_control(app, &args) {
+                return;
+            }
+            if args.iter().any(|a| a == "--minimized") {
                 return;
             }
             if let Some(window) = app.get_webview_window("main") {
@@ -107,7 +142,11 @@ pub fn run() {
         }))
         .plugin(log_plugin())
         .plugin(tauri_plugin_dialog::init())
+        // Registration happens later, from `setup`: nothing is bound by
+        // default, so the plugin starts empty.
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(app_state)
+        .manage(commands::hotkeys::HotkeyErrors::default())
         .invoke_handler(tauri::generate_handler![
             commands::devices::get_virtual_devices,
             commands::devices::get_app_streams,
@@ -174,6 +213,9 @@ pub fn run() {
             commands::settings::set_start_minimized,
             commands::settings::reset_app,
             commands::settings::open_log_dir,
+            commands::hotkeys::get_hotkeys,
+            commands::hotkeys::set_hotkey,
+            commands::hotkeys::set_hotkey_channel,
             commands::headset::get_headset_status,
             commands::headset::headset_set_sidetone,
             commands::headset::headset_set_mic_volume,
@@ -229,6 +271,15 @@ pub fn run() {
             commands::update::open_url,
         ])
         .setup(move |app| {
+            // Reaching setup means no other Inari was running - the
+            // single-instance plugin exits the process before this when one
+            // is. So a control command has nothing to act on: say so instead
+            // of silently booting a whole mixer the user did not ask for.
+            let args = own_args();
+            if matches!(commands::cli::parse(&args), commands::cli::Cli::Control(_)) {
+                eprintln!("inari: not running - start Inari first");
+                std::process::exit(1);
+            }
             // First lines in the log: the two facts every bug report needs.
             info!("Inari {} starting", env!("CARGO_PKG_VERSION"));
             match &backend_fallback {
@@ -236,9 +287,13 @@ pub fn run() {
                 None => info!("audio backend: native PipeWire"),
             }
             build_tray(app)?;
+            // Off the main thread on purpose: registering a hotkey hops to the
+            // main thread, which is still inside `setup` and would deadlock.
+            let handle = app.handle().clone();
+            std::thread::spawn(move || commands::hotkeys::apply(&handle));
             // The window starts hidden (config) to avoid a flash; show it
             // now unless launched with --minimized (autostart-to-tray).
-            let minimized = std::env::args().any(|a| a == "--minimized");
+            let minimized = args.iter().any(|a| a == "--minimized");
             if !minimized {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.show();
@@ -248,6 +303,9 @@ pub fn run() {
                 // The OLED VU mode reads the same peak store as the UI meters.
                 app.state::<AppState>().headset.set_levels(levels.clone());
                 spawn_level_emitter(app.handle().clone(), levels);
+            }
+            if let Some(graph) = graph {
+                spawn_graph_emitter(app.handle().clone(), graph);
             }
             // Start the Arctis base-station supervisor (discovery, status
             // stream, OLED). No-op on machines without the headset.
@@ -313,6 +371,48 @@ fn spawn_oled_aux_feeder(handle: tauri::AppHandle) {
     });
 }
 
+/// Turns PipeWire graph changes into coalesced `graph-changed` events, so the
+/// UI refetches streams and devices when something actually happened instead
+/// of every 2s forever (TD-009). Native backend only - the pactl fallback has
+/// no graph to listen to and keeps polling.
+fn spawn_graph_emitter(handle: tauri::AppHandle, graph: Arc<GraphNotify>) {
+    /// How long to sit idle before looking again. Only a safety net against a
+    /// lost condvar wakeup - a quiet session costs one wakeup a minute.
+    const IDLE_WAIT: Duration = Duration::from_secs(60);
+    /// Re-check cadence while a burst is settling.
+    const TICK: Duration = Duration::from_millis(25);
+
+    std::thread::spawn(move || {
+        let mut coalescer = GraphCoalescer::new(GRAPH_QUIET, GRAPH_MAX_WAIT);
+        // Starts at 0 like the coalescer, so whatever the loop thread already
+        // saw while the app was booting counts as one change.
+        let mut revision = 0;
+        loop {
+            let wait = if coalescer.pending() { TICK } else { IDLE_WAIT };
+            revision = graph.wait_changed(revision, wait);
+            if !coalescer.poll(revision, std::time::Instant::now()) {
+                continue;
+            }
+            // Same reason the level emitter checks: don't wake a webview
+            // nobody can see. The UI refetches on visibilitychange anyway,
+            // so nothing is lost by dropping the event here (TD-008).
+            let onscreen = handle
+                .get_webview_window("main")
+                .map(|w| w.is_visible().unwrap_or(true) && !w.is_minimized().unwrap_or(false))
+                .unwrap_or(true);
+            if !onscreen {
+                continue;
+            }
+            // No payload: the event says "the graph moved", the UI decides
+            // what it needs to reread.
+            if handle.emit("graph-changed", ()).is_err() {
+                // App is shutting down.
+                break;
+            }
+        }
+    });
+}
+
 /// Streams per-channel peak levels to the UI at 10 Hz as `levels` events.
 /// Peaks are drained (read-and-reset), so silence decays to zero.
 fn spawn_level_emitter(handle: tauri::AppHandle, levels: Arc<LevelStore>) {
@@ -353,14 +453,59 @@ fn spawn_level_emitter(handle: tauri::AppHandle, levels: Arc<LevelStore>) {
     });
 }
 
-/// Build the tray menu, including the live Profiles submenu (check on the
-/// active profile). Rebuilt via `refresh_tray` whenever profiles change.
+/// A tray mute row: what the menu must show for one mutable thing. Split out
+/// as plain data so the state → menu mapping is testable without a tray.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct TrayMute {
+    /// Menu id; the part after `mute:` is the sink name (or `mic`).
+    pub id: String,
+    pub label: String,
+    pub muted: bool,
+}
+
+/// The mic first, then one row per live channel strip. Before
+/// `init_virtual_devices` there are no strips yet, so only the mic shows -
+/// muting a channel that does not exist would just fail.
+pub(crate) fn tray_mutes(mixer: &mixer::state::MixerState) -> Vec<TrayMute> {
+    let mut rows = vec![TrayMute {
+        id: "mute:mic".to_string(),
+        label: "Microphone".to_string(),
+        muted: mixer.mic.muted,
+    }];
+    rows.extend(mixer.channels.iter().map(|c| TrayMute {
+        id: format!("mute:{}", c.name),
+        label: c.label.clone(),
+        muted: c.muted,
+    }));
+    rows
+}
+
+/// Build the tray menu, including the live Mute and Profiles submenus (checks
+/// on what is muted / active). Rebuilt via `refresh_tray` whenever any of that
+/// changes.
 fn build_tray_menu(
     app: &tauri::AppHandle,
 ) -> Result<Menu<tauri::Wry>, Box<dyn std::error::Error>> {
     use tauri::menu::{IsMenuItem, Submenu};
 
     let show = MenuItem::with_id(app, "show", "Show Window", true, None::<&str>)?;
+
+    let mutes = app
+        .state::<AppState>()
+        .lock_mixer()
+        .map(|m| tray_mutes(&m))
+        .unwrap_or_default();
+    let mute_items: Vec<CheckMenuItem<tauri::Wry>> = mutes
+        .iter()
+        .map(|row| {
+            CheckMenuItem::with_id(app, &row.id, &row.label, true, row.muted, None::<&str>)
+        })
+        .collect::<Result<_, _>>()?;
+    let mute_refs: Vec<&dyn IsMenuItem<tauri::Wry>> = mute_items
+        .iter()
+        .map(|i| i as &dyn IsMenuItem<tauri::Wry>)
+        .collect();
+    let mute_menu = Submenu::with_items(app, "Mute", true, &mute_refs)?;
 
     let active = app
         .state::<AppState>()
@@ -388,14 +533,27 @@ fn build_tray_menu(
     let profiles_menu = Submenu::with_items(app, "Profiles", true, &profile_refs)?;
 
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    Ok(Menu::with_items(app, &[&show, &profiles_menu, &quit])?)
+    Ok(Menu::with_items(
+        app,
+        &[&show, &mute_menu, &profiles_menu, &quit],
+    )?)
 }
 
-/// Rebuild the tray menu (called after anything that changes profiles or
-/// their active state).
+/// Rebuild the tray menu (called after anything that changes profiles, mute
+/// state or the channel set).
+///
+/// The rebuild is posted to the main thread rather than run inline: menu items
+/// are GTK objects, and the callers now include a global-hotkey handler and
+/// the single-instance D-Bus callback, neither of which runs there. Posting
+/// (rather than waiting) also means a caller still holding the mixer lock
+/// cannot deadlock against `build_tray_menu` taking it.
 pub(crate) fn refresh_tray(app: &tauri::AppHandle) {
-    if let Some(tray) = app.tray_by_id("sink-tray") {
-        match build_tray_menu(app) {
+    let handle = app.clone();
+    let posted = app.run_on_main_thread(move || {
+        let Some(tray) = handle.tray_by_id("sink-tray") else {
+            return;
+        };
+        match build_tray_menu(&handle) {
             Ok(menu) => {
                 if let Err(e) = tray.set_menu(Some(menu)) {
                     error!("tray menu refresh failed: {e}");
@@ -403,7 +561,28 @@ pub(crate) fn refresh_tray(app: &tauri::AppHandle) {
             }
             Err(e) => error!("tray menu rebuild failed: {e}"),
         }
+    });
+    if let Err(e) = posted {
+        error!("tray menu refresh could not reach the main thread: {e}");
     }
+}
+
+/// Flip the mute of one tray target (`mic` or a sink name) to the opposite of
+/// what the mixer currently holds.
+fn toggle_tray_mute(app: &tauri::AppHandle, target: &str) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    if target == "mic" {
+        let muted = !state.lock_mixer()?.mic.muted;
+        return commands::mic::set_mic_muted(&state, muted);
+    }
+    let muted = state
+        .lock_mixer()?
+        .channels
+        .iter()
+        .find(|c| c.name == target)
+        .ok_or_else(|| format!("unknown channel: {target}"))?
+        .muted;
+    commands::routing::toggle_channel_mute(app.state(), target.to_string(), !muted)
 }
 
 fn build_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
@@ -434,6 +613,16 @@ fn build_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 }
                 return;
             }
+            if let Some(target) = id.strip_prefix("mute:") {
+                // The check mark the user just clicked is only a request; the
+                // rebuild below re-reads the real state, so a failed mute
+                // snaps back instead of lying.
+                if let Err(e) = toggle_tray_mute(app, target) {
+                    error!("tray mute of {target} failed: {e}");
+                }
+                after_external_change(app);
+                return;
+            }
             match id {
                 "show" => {
                     if let Some(window) = app.get_webview_window("main") {
@@ -456,4 +645,51 @@ fn build_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .build(app)?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mixer::state::MixerState;
+
+    #[test]
+    fn before_the_sinks_exist_only_the_mic_can_be_muted() {
+        let rows = tray_mutes(&MixerState::default());
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, "mute:mic");
+        assert!(!rows[0].muted);
+    }
+
+    #[test]
+    fn tray_mute_rows_mirror_the_live_state() {
+        let mut mixer = MixerState::default();
+        mixer.init_defaults();
+        mixer.mic.muted = true;
+        mixer.channel_mut("sink_chat").expect("chat").muted = true;
+
+        let rows = tray_mutes(&mixer);
+        assert_eq!(rows.len(), 1 + mixer.channels.len());
+        assert_eq!(rows[0], TrayMute {
+            id: "mute:mic".into(),
+            label: "Microphone".into(),
+            muted: true,
+        });
+        // Ids carry the sink name the handler mutes, labels carry what the
+        // user named the channel - mixing the two up would mute the wrong one.
+        assert_eq!(rows[1].id, "mute:sink_game");
+        assert_eq!(rows[1].label, "Game");
+        assert!(!rows[1].muted);
+        assert_eq!(rows[2].id, "mute:sink_chat");
+        assert!(rows[2].muted, "the muted channel shows checked");
+    }
+
+    #[test]
+    fn renaming_a_channel_moves_the_label_not_the_id() {
+        let mut mixer = MixerState::default();
+        mixer.init_defaults();
+        mixer.channel_mut("sink_game").expect("game").label = "Battlefield".into();
+        let rows = tray_mutes(&mixer);
+        assert_eq!(rows[1].id, "mute:sink_game");
+        assert_eq!(rows[1].label, "Battlefield");
+    }
 }

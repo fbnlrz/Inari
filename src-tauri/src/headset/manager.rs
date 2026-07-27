@@ -14,7 +14,7 @@ use crate::audio::pw_native::levels::LevelStore;
 use crate::device::{Caps, DeviceEntry, HeadsetOps};
 use crate::persistence::prefs::{NotifyScroll, Prefs};
 
-use super::hidraw::HidDevice;
+use super::hidraw::{HidDevice, READ_POLL_INTERVAL};
 use super::media::OledFrame;
 use super::oled_controller::{self, AuxData, OledCommand, OledContent};
 use super::protocol::{self, HeadsetStatus};
@@ -103,10 +103,16 @@ impl HeadsetManager {
     /// Run a control command through the writer. Returns an error string
     /// suitable for a Tauri command result.
     pub fn send(&self, packet: &[u8]) -> Result<(), String> {
-        let guard = self.writer.lock().map_err(|_| "writer lock poisoned")?;
-        let writer = guard
-            .as_ref()
-            .ok_or("no Arctis Nova Pro Wireless base station connected")?;
+        // Take a handle and drop the outer guard *before* touching the device:
+        // the write ends up in the USB stack, and holding `writer` across it
+        // would block connect/teardown (and every other command) too.
+        let writer = {
+            let guard = self.writer.lock().map_err(|_| "writer lock poisoned")?;
+            guard
+                .as_ref()
+                .map(Arc::clone)
+                .ok_or("no Arctis Nova Pro Wireless base station connected")?
+        };
         let mut dev = writer.lock().map_err(|_| "device lock poisoned")?;
         dev.write_command(packet)
             .map_err(|e| format!("write failed: {e}"))
@@ -382,12 +388,16 @@ impl HeadsetManager {
             // Heartbeat: refresh the full status every 2 s so battery/charge
             // stay current even without a triggering event.
             let hb_writer = Arc::clone(&writer);
-            let hb_stop = Arc::new(AtomicBool::new(false));
-            let hb_stop2 = Arc::clone(&hb_stop);
+            // "This connection is over": teardown sets it, and so does the
+            // heartbeat once writes start failing — otherwise a base station
+            // that stops talking but stays enumerated would keep the read loop
+            // waiting for frames that will never come.
+            let stop = Arc::new(AtomicBool::new(false));
+            let hb_stop = Arc::clone(&stop);
             // Built once: the packets are constant for the connected model.
             let hb_packets = ops.heartbeat();
             let heartbeat = std::thread::spawn(move || {
-                while !hb_stop2.load(Ordering::Relaxed) {
+                while !hb_stop.load(Ordering::Relaxed) {
                     std::thread::sleep(Duration::from_secs(2));
                     let ok = hb_writer
                         .lock()
@@ -395,17 +405,23 @@ impl HeadsetManager {
                         .map(|mut d| hb_packets.iter().all(|p| d.write_command(p).is_ok()))
                         .unwrap_or(false);
                     if !ok {
+                        hb_stop.store(true, Ordering::Relaxed);
                         break;
                     }
                 }
             });
 
-            // Read loop — blocks until the device disappears or errors.
+            // Read loop — runs until the device disappears, errors, or the
+            // heartbeat declares the link dead. The bounded wait is what makes
+            // that last case observable; a healthy device is unaffected,
+            // because poll hands the frame over the moment it is queued.
             let mut buf = [0u8; protocol::COMMAND_LEN];
-            loop {
-                match reader.read_report(&mut buf) {
-                    Ok(0) | Err(_) => break,
-                    Ok(_) => {
+            while !stop.load(Ordering::Relaxed) {
+                match reader.read_report(&mut buf, READ_POLL_INTERVAL) {
+                    Ok(Some(0)) | Err(_) => break,
+                    // Idle device: nothing to decode, just loop and re-check.
+                    Ok(None) => continue,
+                    Ok(Some(_)) => {
                         // The hardware ChatMix wheel drives the software mix
                         // live via a dedicated event (kept out of the status
                         // snapshot so periodic heartbeats can't re-apply it).
@@ -442,7 +458,7 @@ impl HeadsetManager {
 
             // Teardown: device gone. Stop heartbeat + OLED, mark disconnected,
             // then loop back to discovery.
-            hb_stop.store(true, Ordering::Relaxed);
+            stop.store(true, Ordering::Relaxed);
             let _ = heartbeat.join();
             // Signal first, then join — and drop the sender either way, so a
             // thread that missed the message still sees the channel close.
