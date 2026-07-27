@@ -18,9 +18,12 @@ subprocesses so the basics keep working. Level metering only exists on the
 native backend, so on the fallback the meters simply never move — including the
 one on the Mic tab.
 
-Check which one you're on: **Settings → About → Audio engine**. It reads
-"Native PipeWire (pipewire-rs)" with a `native` tag, or "pactl fallback" with a
-`fallback` tag. The reason is also the second line in the log:
+Check which one you're on: **Settings → About → Audio engine**, or the pill in
+the title bar. It reads "Native PipeWire (pipewire-rs)" with a `native` tag, or
+"pactl fallback" with a `fallback` tag. A third state, `stopped`, means the
+native engine started and later died — the fallback does *not* take over, and
+audio control stays gone until you restart Inari. The reason is also the second
+line in the log:
 
 ```bash
 grep 'audio backend\|native PipeWire backend unavailable' \
@@ -44,11 +47,13 @@ through Inari at all — the app is still playing on your default output. See
 
 Yes. The close button hides the window to the tray instead of quitting — the
 audio nodes, the routing and the headset connection all stay up. Use **Quit** in
-the tray menu to actually stop it.
+the tray menu to actually stop it. The tray menu also carries per-channel mute
+rows and the profile list, and starting `inari` again just raises the window
+that is already running rather than opening a second copy.
 
-One side effect: the app-stream poll pauses while the window is hidden, so an
-app started while Inari sits in the tray may not be moved onto its channel until
-you show the window again.
+One side effect: Inari stops watching the PipeWire graph while the window is
+hidden, so an app started while Inari sits in the tray may not be moved onto its
+channel until you show the window again.
 
 ## Do I need root, or a background daemon?
 
@@ -60,6 +65,10 @@ installs for SteelSeries hardware. It tags the vendor's `hidraw` nodes with
 `uaccess`, which hands read/write to whoever is logged in at the seat, so Inari
 can talk to a headset or mouse as your own user. Autostart, if you enable it, is
 a **systemd user** unit at `~/.config/systemd/user/inari.service`.
+
+Nothing listens on the network either, unless you switch on
+[Inari Remote](/guide/remote) — and even then it binds loopback until you pick
+another address, and refuses any client that doesn't present the paired token.
 
 ## Does it run on ARM / aarch64?
 
@@ -98,8 +107,20 @@ way. See [Supported hardware](/reference/hardware) for what's covered.
 
 ## Are there keyboard shortcuts?
 
-There are no global hotkeys, but every slider is keyboard-operable. Tab to a
-fader, an app volume slider, a mic DSP slider or the balance bar, then:
+Yes, three kinds.
+
+**Global hotkeys** (since v1.0.8). Four actions can be bound in
+**Settings → Hotkeys**: mute the microphone, mute a chosen channel, load the
+next profile, and show/hide the window. Nothing is bound by default. On Wayland
+the compositor owns the keyboard and a grab can register but never fire — bind
+your desktop's own shortcuts to the [CLI](/reference/cli) instead. Details:
+[Hotkeys](/features/hotkeys).
+
+**The tray.** The **Mute** submenu has a row for the microphone and one per
+channel, so you can mute Chat without opening the window.
+
+**In-window keys.** Every slider is keyboard-operable. Tab to a fader, an app
+volume slider, a mic DSP slider or the balance bar, then:
 
 | Key | Effect |
 | --- | --- |

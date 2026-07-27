@@ -1,6 +1,6 @@
 ---
 title: Configuration & files
-description: Every file Inari writes under ~/.config/inari and ~/.config/wireplumber, plus autostart, command line and migration from upstream Sink.
+description: Every file Inari writes under ~/.config/inari and ~/.config/wireplumber, the remote token, the log file, autostart and migration from upstream Sink.
 ---
 
 # Configuration & files
@@ -8,7 +8,7 @@ description: Every file Inari writes under ~/.config/inari and ~/.config/wireplu
 Inari keeps its state in `~/.config/inari`, created with `0700` (owner-only —
 routing rules and app history are nobody else's business, see
 `src-tauri/src/persistence/mod.rs`). Most files are JSON; two are plain-text
-markers.
+markers and one is a secret.
 
 | Path | What |
 | --- | --- |
@@ -21,12 +21,36 @@ markers.
 | `~/.config/inari/eq.json`, `eq_presets/` | Per-channel EQ + saved presets |
 | `~/.config/inari/mic.json` | Mic chain config |
 | `~/.config/inari/profiles/` | Saved layouts |
-| `~/.config/inari/prefs.json` | App preferences |
+| `~/.config/inari/prefs.json` | App preferences — theme, device naming, balance slider, notification display, **your [hotkey](/features/hotkeys) bindings** and the **[remote](/guide/remote)'s enabled flag, address and port** |
+| `~/.config/inari/remote-token` | The remote's bearer token. Its own file, `0600` |
 | `~/.config/inari/active_profile` | Plain text: the name of the live-bound profile |
 | `~/.config/inari/notify_mirror` | Marker file; its presence means OLED notification mirroring is on |
 
-Writes are atomic (temp file + `rename`), so a crash mid-save leaves either the
-old file or the complete new one.
+Writes are atomic (temp file + `fsync` + `rename`), so a crash mid-save leaves
+either the old file or the complete new one. Each file carries a schema version,
+and keys a build doesn't recognise are preserved across a load/save round trip —
+so running an older Inari once does not silently drop settings a newer one
+wrote.
+
+## The remote token
+
+`remote-token` is 32 bytes from the OS random source, hex-encoded, written with
+mode `0600` and kept **out of `prefs.json`** — that file is ordinary
+configuration people paste into bug reports. Deleting the file mints a new token
+on the next start; **Settings → Remote → Regenerate token** does the same on
+demand, and invalidates every device that had paired with the old one.
+
+## Log file
+
+```
+~/.local/share/com.fbnlrz.inari/logs/inari.log
+```
+
+One file, capped at 512 KiB. When it fills, the previous contents are
+*discarded* rather than archived, so grab the log reasonably soon after a
+problem. **Settings → About** has a button that opens the folder. Collecting a
+log for a bug report is covered in
+[Troubleshooting](/troubleshooting#collecting-logs-for-a-bug-report).
 
 ## WirePlumber fragments
 
@@ -46,16 +70,19 @@ startup only, so changes take effect at the next login or WirePlumber restart.
 
 Enable autostart in **Settings**; Inari writes a systemd user unit
 (`~/.config/systemd/user/inari.service`) anchored to your graphical session.
+With **Start minimized** on, the unit's `ExecStart` gains `--minimized`, so the
+unit is rewritten whenever you toggle it.
+
+**Reset Inari** wipes `~/.config/inari`, removes the routing fragment and
+deletes this unit. The one thing it leaves behind is
+`51-arctis-nova-pro-headroom.conf` — delete that by hand if you want it gone.
 
 ## Command line
 
-```bash
-inari                 # launch
-inari --minimized     # start to tray (used by autostart)
-```
-
-`--minimized` is the only argument Inari looks at. The installed version is
-shown in the **Settings** screen.
+`inari` takes `--minimized` to boot straight to the tray, and a handful of
+verbs (`status`, `mute`, `volume`, `profile`) that talk to the already-running
+instance. A second launch never opens a second window — it raises the one that
+is running. See [Command line](/reference/cli).
 
 ## Migrating from upstream Sink
 

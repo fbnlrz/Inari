@@ -37,7 +37,8 @@ That mix is what recorders capture.
 
 Open the **Apps** tab. Anything currently playing audio shows up by itself,
 grouped by the channel it's on, with everything else under **Unrouted**. The
-list refreshes every two seconds while the window is open.
+list follows the PipeWire graph, so a new stream appears as it starts rather
+than on the next tick.
 
 1. Find the app's row.
 2. Open the channel dropdown on the right.
@@ -52,11 +53,11 @@ anything. Apps you have routed before but that aren't running appear under
 
 Two things worth knowing:
 
-- **Assignments are enforced while the Inari window is on screen.** The stream
-  poll pauses while Inari sits in the tray, so an app you start during a game
-  may play on your default output until you bring the window up once. It moves
-  on the next poll — no restart needed. The saved rules are also written to a
-  WirePlumber fragment, but WirePlumber only reads those at login.
+- **Assignments are enforced while the Inari window is on screen.** Inari stops
+  watching the graph while it sits in the tray, so an app you start during a
+  game may play on your default output until you bring the window up once. It
+  moves as soon as you do — no restart needed. The saved rules are also written
+  to a WirePlumber fragment, but WirePlumber only reads those at login.
 - **Apps that pick an output device themselves don't follow assignments.**
   Discord, OBS and anything else with its own device menu need the Inari channel
   selected *inside that app* — that's what the two recipes below do.
@@ -124,6 +125,19 @@ and AutoEq import. Open it from the **Equalizer** button on the channel strip.
 
 ![Equalizer](/eq.png)
 
+## Optional: put the mixer on a tablet
+
+If the machine you play on isn't the one within arm's reach, turn on
+**Settings → Remote** and scan the QR code with a tablet or phone on the same
+network. You get the same faders, the headset controls and media transport in a
+browser.
+
+It is off until you switch it on, and listens on loopback until you choose an
+address — read [Remote control](/guide/remote) before you expose it, especially
+the part about what a paired device is and isn't allowed to do.
+
+![The Inari mixer on a tablet](/remote-tablet.png)
+
 ## Check that it's actually working
 
 Three quick tests, in order of how much they tell you:
@@ -154,5 +168,9 @@ the [FAQ](/faq#why-don-t-my-vu-meters-move).
 
 - [Audio mixer](/features/mixer) — channels, mixes, EQ, profiles
 - [SteelSeries headset](/features/headset) and the [OLED](/features/oled)
+- [Remote control](/guide/remote) — the same mixer on a tablet
+- [Media](/features/media) — see and drive what's playing
+- [Hotkeys](/features/hotkeys) and the [command line](/reference/cli) — mute or
+  switch profiles without touching the window
 - [Configuration & files](/reference/configuration) — every file Inari writes
 - [FAQ](/faq) and [Troubleshooting](/troubleshooting)

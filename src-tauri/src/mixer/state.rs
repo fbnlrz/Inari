@@ -49,8 +49,11 @@ pub struct MixerState {
 }
 
 impl MixerState {
-    /// Populate the channel strips from the user's channel definitions,
-    /// each at 100% volume, unmuted.
+    /// Populate the channel strips from the user's channel definitions.
+    ///
+    /// The 100%/unmuted here is a placeholder, not a claim about the audio:
+    /// `adopt_live_channel_state` replaces it with what the sinks report, and
+    /// it only survives for channels the backend can't tell us about.
     pub fn init_defaults(&mut self) {
         self.channels = self
             .channel_defs
@@ -66,6 +69,26 @@ impl MixerState {
             })
             .collect();
         self.initialized = true;
+    }
+
+    /// Replace the strips' volume/mute with what the sinks are actually doing.
+    ///
+    /// `read` answers `None` when the backend can't say - unknown sink, no
+    /// reading yet, or a fallback backend that doesn't report it - and those
+    /// strips keep the `init_defaults` placeholder as a deliberate fallback.
+    ///
+    /// Read rather than written because the session manager (WirePlumber)
+    /// restores a remembered volume per node name when a sink appears and wins
+    /// any race against a write from us. A channel restored to 0% used to show
+    /// 100% in the UI and be silent with no visible reason; the strips follow
+    /// the sinks now, so nothing on screen is a value the backend never gave.
+    pub fn adopt_live_channel_state(&mut self, read: impl Fn(&str) -> Option<(u8, bool)>) {
+        for channel in &mut self.channels {
+            if let Some((volume_percent, muted)) = read(&channel.name) {
+                channel.volume_percent = volume_percent;
+                channel.muted = muted;
+            }
+        }
     }
 
     pub fn channel_mut(&mut self, sink_name: &str) -> Option<&mut VirtualSink> {
@@ -132,6 +155,50 @@ mod tests {
         assert!(state.seen.get("application.name", "plain").is_none());
         assert!(state.seen.get("application.name", "assigned").is_some());
         assert!(state.seen.get("application.name", "aliased").is_some());
+    }
+
+    /// The regression this exists for: a channel WirePlumber restored to 0%
+    /// and muted used to be shown at 100%, unmuted - silent with no visible
+    /// reason. The strips must carry what the sink reports.
+    #[test]
+    fn strips_take_volume_and_mute_from_the_sinks() {
+        let mut state = MixerState::default();
+        state.init_defaults();
+        state.adopt_live_channel_state(|name| match name {
+            "sink_music" => Some((0, true)),
+            "sink_game" => Some((42, false)),
+            _ => None,
+        });
+        let music = state.channels.iter().find(|c| c.name == "sink_music").expect("music");
+        assert_eq!(music.volume_percent, 0);
+        assert!(music.muted);
+        let game = state.channels.iter().find(|c| c.name == "sink_game").expect("game");
+        assert_eq!(game.volume_percent, 42);
+        assert!(!game.muted);
+    }
+
+    /// Nothing on screen may be a number the backend never gave us. When the
+    /// read fails (unknown sink, no reading yet, pactl fallback), the strip
+    /// keeps the documented 100%/unmuted fallback and nothing is invented.
+    #[test]
+    fn unreadable_channels_keep_the_default_instead_of_a_guess() {
+        let mut state = MixerState::default();
+        state.init_defaults();
+        // Pretend a previous adoption left a real reading on one strip, so the
+        // test also proves an unreadable channel isn't reset by a later pass.
+        state.adopt_live_channel_state(|name| (name == "sink_chat").then_some((30, true)));
+        state.adopt_live_channel_state(|_| None);
+
+        let chat = state.channels.iter().find(|c| c.name == "sink_chat").expect("chat");
+        assert_eq!((chat.volume_percent, chat.muted), (30, true));
+        for channel in state.channels.iter().filter(|c| c.name != "sink_chat") {
+            assert_eq!(
+                (channel.volume_percent, channel.muted),
+                (100, false),
+                "{} invented a value",
+                channel.name
+            );
+        }
     }
 
     #[test]

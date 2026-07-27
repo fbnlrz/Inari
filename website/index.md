@@ -28,6 +28,15 @@ features:
   - icon: 🎙️
     title: Processed virtual mic
     details: Noise gate, compressor and limiter into a virtual microphone you select in Discord or OBS.
+  - icon: 📱
+    title: Mix from a tablet
+    details: Serve the same interface to a device on your LAN. Scan a QR code to pair; off by default, loopback-only until you say otherwise.
+  - icon: ⌨️
+    title: Hotkeys, tray mutes and a CLI
+    details: Bind mute or profile switching to a global shortcut, mute any channel from the tray, or script it — inari mute chat, inari profile Gaming.
+  - icon: ▶️
+    title: Media transport
+    details: See and control whatever is playing over MPRIS — cover art, scrubbing, previous / play / next — on the desktop and on the tablet.
   - icon: 🎧
     title: Arctis Nova Pro control
     details: Battery, ANC / transparency, sidetone, mic, 10-band hardware EQ, auto-off and more over USB — no root, no SteelSeries GG.
@@ -57,5 +66,14 @@ Debian / Ubuntu and derivatives. See [Getting started](/guide/getting-started)
 for prebuilt packages, the AppImage, and building from source.
 
 ![Mixer](/mixer.png)
+
+## Or from the couch
+
+Switch on [Inari Remote](/guide/remote) and the same mixer answers on your
+network — pair a tablet by scanning a QR code. It can mix, route, drive the
+headset and the OLED and control media; it cannot change settings, edit your
+channel layout or update the app.
+
+![The Inari mixer served to a tablet](/remote-tablet.png)
 
 </div>

@@ -33,8 +33,9 @@ struct PactlVolume {
     value_percent: String,
 }
 
-// Channel volume/mute state is owned by MixerState, so sinks only need
-// identity fields here. serde ignores the unparsed JSON keys.
+// Identity plus the live level: `sink_state` reads volume/mute back off this
+// so the strips can follow the sinks instead of assuming a value. serde
+// ignores the unparsed JSON keys.
 #[derive(Deserialize)]
 struct PactlSink {
     index: u32,
@@ -42,6 +43,10 @@ struct PactlSink {
     description: String,
     #[serde(default)]
     owner_module: Option<u32>,
+    #[serde(default)]
+    mute: bool,
+    #[serde(default)]
+    volume: HashMap<String, PactlVolume>,
 }
 
 #[derive(Deserialize)]
@@ -286,6 +291,16 @@ impl AudioBackend for PactlBackend {
         Ok(())
     }
 
+    fn sink_state(&self, sink_name: &str) -> Result<Option<(u8, bool)>, SinkError> {
+        Ok(Self::list_sinks()?
+            .iter()
+            // A sink with no volume map tells us nothing about its level, and
+            // `volume_percent`'s 100 default would be a guess dressed up as a
+            // reading - report "unknown" and let the caller fall back.
+            .find(|s| s.name == sink_name && !s.volume.is_empty())
+            .map(|s| (volume_percent(&s.volume), s.mute)))
+    }
+
     fn move_stream_to_sink(&self, stream_index: u32, sink_name: &str) -> Result<(), SinkError> {
         // Empty sink name = unassign: hand the stream back to the default sink.
         let target = if sink_name.is_empty() {
@@ -473,6 +488,26 @@ mod tests {
         assert_eq!(sinks[0].index, 66);
         assert_eq!(sinks[0].name, "alsa_output.usb-Arctis-00.analog-stereo");
         assert_eq!(sinks[0].owner_module, Some(PA_INVALID_INDEX));
+    }
+
+    /// The fallback's read path: `sink_state` is only as good as this parse,
+    /// so pin volume and mute against real `pactl list sinks` output.
+    #[test]
+    fn parses_sink_volume_and_mute_for_the_live_state_read() {
+        let json = r#"[{"index":81,"state":"RUNNING","name":"sink_music","description":"Music","mute":true,"owner_module":22,"volume":{"front-left":{"value":0,"value_percent":"0%","db":"-inf dB"},"front-right":{"value":0,"value_percent":"0%","db":"-inf dB"}}}]"#;
+        let sinks: Vec<PactlSink> = serde_json::from_str(json).expect("sink json should parse");
+        assert_eq!(volume_percent(&sinks[0].volume), 0);
+        assert!(sinks[0].mute);
+    }
+
+    /// A sink without a volume map is "unknown", not 100% - `sink_state`
+    /// filters those out so the caller falls back deliberately.
+    #[test]
+    fn a_sink_without_a_volume_map_reports_nothing() {
+        let json = r#"[{"index":81,"name":"sink_music","description":"Music"}]"#;
+        let sinks: Vec<PactlSink> = serde_json::from_str(json).expect("sink json should parse");
+        assert!(sinks[0].volume.is_empty());
+        assert!(!sinks[0].mute);
     }
 
     #[test]

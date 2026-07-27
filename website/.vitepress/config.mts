@@ -77,6 +77,7 @@ export default defineConfig({
         items: [
           { text: "Getting started", link: "/guide/getting-started" },
           { text: "First steps", link: "/guide/first-steps" },
+          { text: "Remote", link: "/guide/remote" },
           { text: "Updating", link: "/guide/updating" },
           { text: "Building from source", link: "/guide/building" },
         ],
@@ -88,8 +89,10 @@ export default defineConfig({
           { text: "Mixes", link: "/features/mixes" },
           { text: "Equalizer", link: "/features/eq" },
           { text: "Microphone", link: "/features/mic" },
+          { text: "Media", link: "/features/media" },
           { text: "Profiles", link: "/features/profiles" },
           { text: "Settings", link: "/features/settings" },
+          { text: "Hotkeys", link: "/features/hotkeys" },
           { text: "Headset", link: "/features/headset" },
           { text: "OLED display", link: "/features/oled" },
           { text: "Mouse", link: "/features/mouse" },
@@ -100,6 +103,7 @@ export default defineConfig({
         items: [
           { text: "Supported hardware", link: "/reference/hardware" },
           { text: "Configuration & files", link: "/reference/configuration" },
+          { text: "Command line", link: "/reference/cli" },
           { text: "Protocols", link: "/reference/protocols" },
         ],
       },
