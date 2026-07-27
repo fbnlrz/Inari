@@ -80,12 +80,15 @@ jobs:
             echo "::error::version must be X.Y.Z (got '$ver')"; exit 1
           fi
           tag="v$ver"
+          # `pending` = this version is new (not yet released). It drives whether
+          # a dev branch is opened even when the release itself is skipped.
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            release=true; force=true      # manual run: (re)publish this version
+            release=true; force=true; pending=false   # manual (re)publish
           elif git rev-parse "$tag" >/dev/null 2>&1; then
             echo "::notice::$tag already released - nothing to do"
-            release=false; force=false    # version unchanged since last release
+            release=false; force=false; pending=false
           else
+            pending=true
             # New version. Only cut a release if real app source changed since
             # the last release — a docs/website/.github-only bump is not worth an
             # app release. These paths are never touched by the version bump.
@@ -103,6 +106,7 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "release=$release" >> "$GITHUB_OUTPUT"
           echo "force=$force" >> "$GITHUB_OUTPUT"
+          echo "pending=$pending" >> "$GITHUB_OUTPUT"
           echo "Release decision: tag=$tag release=$release force=$force"
 
       - name: Stamp version into the build
@@ -178,32 +182,41 @@ jobs:
             target/release/bundle/rpm/*.rpm
 
       - name: Open the next dev branch
-        # After releasing vX.Y.Z, open dev/X.Y.(Z+1) off the release commit with
-        # the manifest already bumped to that next version, so simply merging the
-        # branch back to main auto-releases it (no manual version bump needed).
-        # Never touches an existing branch.
-        if: steps.ver.outputs.release == 'true'
+        # Always keep a dev branch available to work on after a push to main:
+        #  - released vX.Y.Z  -> open dev/X.Y.(Z+1), manifest bumped to it, so
+        #    merging it back auto-releases the next version.
+        #  - release skipped (docs/meta-only) but the version is still unreleased
+        #    -> open dev/X.Y.Z at the current version (no extra bump), so the
+        #    pending version keeps a home until a code change ships it.
+        # Never touches an existing branch. Skipped on manual dispatch.
+        if: github.event_name == 'push' && (steps.ver.outputs.release == 'true' || steps.ver.outputs.pending == 'true')
         run: |
           set -euo pipefail
           ver="${{ steps.ver.outputs.version }}"
-          IFS=. read -r ma mi pa <<< "$ver"
-          next="${ma}.${mi}.$((pa + 1))"
+          if [ "${{ steps.ver.outputs.release }}" = "true" ]; then
+            IFS=. read -r ma mi pa <<< "$ver"
+            next="${ma}.${mi}.$((pa + 1))"   # released -> work toward the next
+          else
+            next="$ver"                       # skipped -> keep the pending version
+          fi
           branch="dev/${next}"
           if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
             echo "::notice::$branch already exists - leaving it untouched"
             exit 0
           fi
           git checkout -b "$branch"
-          # Bump the version everywhere it is declared.
-          jq --arg v "$next" '.version = $v' src-tauri/tauri.conf.json > /tmp/conf.json
-          mv /tmp/conf.json src-tauri/tauri.conf.json
-          npm pkg set version="$next"
-          sed -i '0,/^version = /{s/^version = .*/version = "'"$next"'"/}' src-tauri/Cargo.toml
-          # Keep Cargo.lock's own package entry in sync so the branch builds clean.
-          sed -i '/^name = "inari"$/{n;s/^version = .*/version = "'"$next"'"/}' Cargo.lock || true
-          git config user.name "fbnlrz"
-          git config user.email "137117973+fbnlrz@users.noreply.github.com"
-          git add src-tauri/tauri.conf.json package.json src-tauri/Cargo.toml Cargo.lock
-          git commit -m "chore: begin $next development"
+          # Bump the manifest to $next only if it isn't already there (it is
+          # already at $ver in the skip case, so no commit is needed then).
+          if [ "$(jq -r .version src-tauri/tauri.conf.json)" != "$next" ]; then
+            jq --arg v "$next" '.version = $v' src-tauri/tauri.conf.json > /tmp/conf.json
+            mv /tmp/conf.json src-tauri/tauri.conf.json
+            npm pkg set version="$next"
+            sed -i '0,/^version = /{s/^version = .*/version = "'"$next"'"/}' src-tauri/Cargo.toml
+            sed -i '/^name = "inari"$/{n;s/^version = .*/version = "'"$next"'"/}' Cargo.lock || true
+            git config user.name "fbnlrz"
+            git config user.email "137117973+fbnlrz@users.noreply.github.com"
+            git add src-tauri/tauri.conf.json package.json src-tauri/Cargo.toml Cargo.lock
+            git commit -m "chore: begin $next development"
+          fi
           git push origin "$branch"
           echo "::notice::opened $branch at version $next"
