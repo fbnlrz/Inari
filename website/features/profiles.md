@@ -17,7 +17,15 @@ known-good state to come back to.
 
 Profiles live in the profile menu in the title bar, and in the **Profiles**
 submenu of the tray icon — the tray path lets you switch layouts without opening
-the window at all.
+the window at all. There are three more ways in that never touch the window:
+
+- a global hotkey bound to **Next profile** ([Hotkeys](/features/hotkeys));
+- `inari profile <name>` from a script or a desktop shortcut
+  ([Command line](/reference/cli));
+- the [remote](/guide/remote), which may *load* a profile but not create,
+  delete or re-bind one.
+
+However you switch, the rest of the UI follows.
 
 Loading a profile reconciles the layout: missing channels are created, extra
 ones are removed (their apps fall back to the default output first), then
@@ -43,6 +51,13 @@ experiment in.
 
 The name of the active profile is shown on the profile button in the title bar
 and checked in the tray submenu, and it survives restarts.
+
+One consequence of the volume read added in v1.0.10: a profile is not replayed
+at startup. Inari takes each channel's volume and mute from the sink itself
+(see [Mixer](/features/mixer#volume-and-mute-survive-a-restart)), and the
+autosave then writes those values into the active profile. The profile follows
+the audio, not the other way round — loading a profile explicitly is still what
+applies its stored levels.
 
 ## Auto-switch when a device connects
 

@@ -1,6 +1,6 @@
 ---
 title: Troubleshooting
-description: Symptom, cause and fix for the problems people actually hit — dead meters, a black window, empty OLED modes, devices that stay disconnected, and how to collect a log.
+description: Symptom, cause and fix for the problems people actually hit — a silent channel with its fader up, dead meters, a black window, empty OLED modes, devices that stay disconnected, and how to collect a log.
 ---
 
 # Troubleshooting
@@ -10,15 +10,40 @@ Symptom → cause → fix. Short "why does it work that way" questions are in th
 [issues](https://github.com/fbnlrz/Inari/issues) or ask in
 [Discussions](https://github.com/fbnlrz/Inari/discussions).
 
+## A channel is silent, but its fader is at 100 %
+
+**Symptom.** One channel plays nothing. Routing looks right, the app is on the
+channel, other channels are fine — and the strip reads 100 %, unmuted. Nudging
+the fader fixes it instantly.
+
+**Cause.** Versions **before v1.0.10** wrote 100 %, unmuted to every sink at
+startup and then showed that value. WirePlumber remembers a volume per PipeWire
+node name and restores it *after* Inari's write, so a channel you had left at
+0 % (or muted) came back that way while the interface still claimed 100 %.
+Moving the fader was the first moment anyone wrote the value again.
+
+**Fix.** Update. Since v1.0.10 Inari reads each channel's volume and mute off
+the sink instead of setting it, so the strips show what you will actually hear —
+and your channel volumes survive a restart. On an older build, confirm it with:
+
+```bash
+pactl list sinks short | grep sink_
+pactl get-sink-volume sink_music
+```
+
 ## The VU meters never move
 
 **Cause.** Level metering only exists on the native PipeWire backend. If the
 native loop can't start, Inari falls back to `pactl` subprocesses and the meters
-stay flat — as do the EQ, the mixes and the processed microphone.
+stay flat — as do the EQ, the mixes and the processed microphone. A third case:
+the native engine started and later *died*, in which case audio control stops
+altogether and the fallback does not step in.
 
-**Fix.** Check **Settings → About → Audio engine**. A `fallback` tag confirms
-it; quit from the tray and relaunch once your session's PipeWire is fully up.
-Full explanation: [Why don't my VU meters move?](/faq#why-don-t-my-vu-meters-move).
+**Fix.** Check the pill in the title bar, or **Settings → About → Audio
+engine**. A `fallback` tag means no native engine; a `stopped` tag means it
+died and Inari has to be restarted. Either way, quit from the tray and relaunch
+once your session's PipeWire is fully up. Full explanation:
+[Why don't my VU meters move?](/faq#why-don-t-my-vu-meters-move).
 
 ## The window is black, or Inari won't draw at all
 
@@ -81,6 +106,30 @@ are in [Optional dependencies](/guide/getting-started#optional-dependencies).
 Inari picks each helper up on the next use, so there is no need to restart it —
 reselect the mode, or toggle notification mirroring off and on again.
 
+The same goes for the [Media tab](/features/media): without `playerctl` it says
+so rather than sitting empty.
+
+## Album art is blank for anything played in a browser
+
+**Cause.** Fixed in **v1.0.9**. Browsers hand MPRIS an extensionless temp file
+(Chromium writes `/tmp/.org.chromium.Chromium.XXXXXX`), and Inari used to pick
+its image decoder from the file name — so a perfectly good PNG decoded as
+nothing and the panel fell back to `NO ART`. Local files named `cover.jpg`
+always worked, which is why it went unnoticed.
+
+**Fix.** Update. Covers are now identified by their content.
+
+## A global hotkey never fires
+
+**Cause.** Almost always Wayland. Inari's grabs go through X11, and on Wayland
+the compositor owns the keyboard: the binding registers fine and then simply
+never triggers. A binding the desktop refused outright is shown as `inactive`
+with the reason in **Settings → Hotkeys**.
+
+**Fix.** Bind the shortcut in your desktop environment instead and point it at
+the [command line](/reference/cli) — `inari mute mic`, `inari profile Gaming`.
+See [Hotkeys](/features/hotkeys).
+
 ## No audio after enabling anti-crackle headroom
 
 **Cause.** The headroom fix is a WirePlumber fragment, and WirePlumber only
@@ -97,12 +146,17 @@ world-readable to avoid the notice on current versions.
 
 ## Collecting logs for a bug report
 
-Inari logs to a small rotating file, so you don't have to reproduce the problem
-to report it — the run it happened in is already on disk:
+Inari logs to a small file, so you don't have to reproduce the problem to report
+it — the run it happened in is already on disk:
 
 ```
 ~/.local/share/com.fbnlrz.inari/logs/inari.log
 ```
+
+**Settings → About → Logs → Open** opens that folder for you.
+
+It is a single file capped at 512 KiB, and when it fills the older contents are
+discarded rather than archived — so collect it while the problem is fresh.
 
 Started by the autostart unit, the same lines also land in the journal:
 

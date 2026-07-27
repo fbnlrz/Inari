@@ -36,6 +36,24 @@ Each strip carries a fader (0–150 %, with the dB equivalent under it), a mute
 button and a live VU meter. The `tune` button opens the channel's
 [equalizer](/features/eq).
 
+### Volume and mute survive a restart
+
+Inari **reads** each channel's volume and mute off the sink at startup instead
+of setting them. WirePlumber remembers a level per PipeWire node name and
+restores it the moment the sink reappears, so a channel you left at 40 % — or
+muted — comes back that way, and the strip shows it.
+
+Where the backend can't report a channel's state (the `pactl` fallback, or a
+node whose properties haven't arrived yet) the strip falls back to 100 %,
+unmuted. That is a documented fallback, not a reading.
+
+::: warning Before v1.0.10
+Inari used to write 100 %, unmuted to every sink at startup. That write lost
+the race against the session's own restore, so a channel could sit at 0 % and
+be silent while its fader read 100 %, with nothing on screen to say so. Moving
+the fader was the only way out. If you see that, update.
+:::
+
 ## Output device per channel
 
 The footer of every strip picks where that channel plays: a specific device, or
@@ -76,6 +94,13 @@ Anything that plays audio shows up on the **Applications** screen by itself.
 Assign it to a channel once and Inari remembers that choice by app identity, not
 by process — the app lands on the right channel every time it starts, including
 after a reboot. The rule is also mirrored into a WirePlumber fragment.
+
+On the native backend the list follows the PipeWire graph: the backend pushes a
+change event when a stream or device appears, disappears or is renamed, and the
+screen refetches on that, with a slow timer behind it so a dropped event can't
+strand the view. The `pactl` fallback has nothing to listen to and keeps polling
+every two seconds. Either way the refresh stops while Inari sits in the tray and
+catches up when you bring the window back.
 
 Apps that are not running are listed under **Not running**. You can set their
 channel there too (pre-routing): the assignment applies the moment the app next

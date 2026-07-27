@@ -1,6 +1,6 @@
 ---
 title: Settings
-description: Theme, device naming, default input and output, the software ChatMix slider, autostart, the engine indicator — and the factory reset that wipes everything.
+description: Theme, device naming, default input and output, the software ChatMix slider, autostart, global hotkeys, the remote, the engine indicator — and the factory reset that wipes everything.
 ---
 
 # Settings
@@ -64,17 +64,68 @@ With it enabled, **Start minimized** appears: Inari boots straight to the tray
 instead of opening the window. Toggling it rewrites the unit, so it takes effect
 on the next login.
 
+Starting Inari a second time does not open a second copy — the running instance
+raises and focuses its window instead. That is also how the
+[command line](/reference/cli) reaches a running Inari.
+
+## Hotkeys
+
+Four actions can be bound to a global shortcut: **Mute microphone**, **Mute a
+channel** (with a picker underneath for which channel), **Next profile** and
+**Show/hide Inari**. Nothing is bound out of the box — click a row, press the
+combination, or **Clear** to unbind.
+
+A binding the desktop refuses to hand over is shown as `inactive` with the
+reason, rather than looking bound and doing nothing. On Wayland that is the
+normal case: the compositor owns the keyboard and Inari's grabs go through X11.
+Bind your compositor's own shortcuts to the [CLI](/reference/cli) instead.
+
+Full detail: [Hotkeys](/features/hotkeys).
+
+## Remote
+
+**Inari Remote** serves this same interface over your network, so a tablet on
+the couch can move faders. It is **off** by default and, when first switched on,
+listens on loopback only — nothing on the network reaches it until you pick an
+address. Pair a device by scanning the QR code; **Regenerate token** cuts every
+paired device loose.
+
+The remote is deliberately less capable than the desktop window: it can mix,
+route, drive the headset, the OLED and media, and load profiles, but it cannot
+create or delete channels, profiles or mixes, change settings, update, or reset
+Inari. Those controls are simply not drawn in the browser.
+
+Setup, addresses, ports and the full permission list:
+[Remote control](/guide/remote).
+
+## Tray menu
+
+Beyond **Show Window** and **Quit**, the tray carries two submenus:
+
+- **Mute** — one checkable row for the microphone and one per channel, so you
+  can mute Chat without opening the window. A mute the engine refuses snaps
+  back.
+- **Profiles** — switch [layouts](/features/profiles) with the window closed.
+
 ## About
 
-- **Audio engine** — which backend is live. `native` is the native PipeWire
-  engine (live metering, passive routing) and is what you want; `fallback` means
-  the native engine was unavailable and Inari is driving `pactl` as a
-  subprocess, where mixes, the mic chain, the software EQ and monitoring are not
-  available.
+- **Audio engine** — which backend is live, as one of three states:
+
+  | Tag | Means |
+  | --- | --- |
+  | `native` | The native PipeWire engine — live metering, passive routing. What you want. |
+  | `fallback` | The native engine was unavailable, so Inari drives `pactl` as a subprocess. Mixes, the mic chain, the software EQ and monitoring are not available. |
+  | `stopped` | The native engine came up and later died. Audio control is gone until you restart Inari; the fallback does **not** take over. |
+
+  The same indicator sits in the title bar, so a stopped engine is visible
+  without opening Settings.
 - **Inari `<version>`** — the installed version, the licence, and a reminder
   that the config lives in `~/.config/inari`.
 - **Updates** — check for a new release and, on `.deb` installs, apply it in
   place. See [Updating](/guide/updating).
+- **Logs** — opens the log folder, so you can attach the file to a bug report
+  without hunting for the path. See
+  [Collecting logs](/troubleshooting#collecting-logs-for-a-bug-report).
 - **Tutorial** — replays the first-run tour at any time.
 
 ## Reset Inari
@@ -84,11 +135,13 @@ on the next login.
 
 - the entire `~/.config/inari` directory — channels, mixes, profiles, app
   assignments and history, renamed apps, EQ settings and your saved EQ presets,
-  and all preferences;
+  your hotkey bindings, the remote's pairing token, and all preferences;
 - the WirePlumber routing fragment Inari wrote outside that directory.
 
-It also tears down Inari's audio nodes, turns off autostart, and relaunches the
-app as if it had just been installed. There is no undo and nothing is backed up.
+It also tears down Inari's audio nodes, removes the autostart unit, and
+relaunches the app as if it had just been installed. The one thing it leaves is
+the optional anti-crackle headroom fragment. There is no undo and nothing is
+backed up.
 If you only want a clean layout, create a fresh [profile](/features/profiles)
 instead.
 :::

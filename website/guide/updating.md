@@ -20,6 +20,12 @@ The one-click self-update is offered only when Inari was installed from the
 AppImage or source installs, the banner links to the release notes instead.
 :::
 
+Before anything is installed as root, the updater checks that the package is an
+amd64 `.deb` served from `github.com`, that its SHA256 matches the release's
+`SHA256SUMS`, and that the release is **strictly newer** than what you are
+running — an older or equal version is never reinstalled over the top. A remote
+device can't trigger any of this; updating is desktop-only.
+
 ## Command line
 
 Re-running the installer updates to the latest release (and no-ops if you are

@@ -72,14 +72,14 @@ chmod +x Inari_*_amd64.AppImage
 
 ## Optional dependencies
 
-Several OLED features shell out to programs Inari does not bundle. None of them
-are required to run the app, and none of them are installed for you. When one is
-missing the feature fails silently — the mode still shows up in the picker, it
-just stays empty.
+A few features shell out to programs Inari does not bundle. None of them are
+required to run the app, and none of them are installed for you. When one is
+missing the feature degrades rather than breaking — an OLED mode stays in the
+picker but empty, and the Media tab says which program it is waiting for.
 
 | Program | Usual package | Needed for |
 | --- | --- | --- |
-| `playerctl` | `playerctl` | The **Now playing** and **Album art** OLED modes (title, artist, progress and cover come from `playerctl metadata`) |
+| `playerctl` | `playerctl` | The [**Media** tab](/features/media) and its page on the remote, plus the **Now playing** and **Album art** OLED modes (title, artist, progress and cover all come from `playerctl metadata`) |
 | `dbus-monitor` | `dbus-bin` on Debian/Ubuntu, `dbus` elsewhere | Mirroring desktop notifications to the OLED |
 | `ffmpeg` | `ffmpeg` | Playing video files on the OLED (images and GIFs decode in-process and need nothing) |
 | `nvidia-smi` | your NVIDIA driver package | GPU load in the **CPU/GPU graphs** mode. AMD GPUs are read from amdgpu sysfs and need nothing |
@@ -100,10 +100,13 @@ exception. Leave it out of the rotation if you'd rather not make that request.
 
 ## Next steps
 
+- [First steps](/guide/first-steps)
 - [Building from source](/guide/building)
 - [Updating](/guide/updating)
+- [Remote control](/guide/remote) — serve the mixer to a tablet
 - [SteelSeries devices](/features/headset)
 - [Supported hardware](/reference/hardware)
+- [Command line](/reference/cli)
 
 Config lives in `~/.config/inari` — see
 [Configuration & files](/reference/configuration). Coming from the upstream
