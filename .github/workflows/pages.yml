@@ -6,6 +6,11 @@ on:
     paths:
       - "website/**"
       - ".github/workflows/pages.yml"
+  # The changelog page is generated from the releases at build time, so a new
+  # release has to rebuild the site — a push-only trigger left it stale until
+  # the next website commit.
+  release:
+    types: [published]
   workflow_dispatch:
 
 permissions:
@@ -22,25 +27,45 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          # VitePress reads `git log -1` per file for "Last updated"; in a
+          # shallow clone every page reports the same bogus date.
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: npm
+          cache-dependency-path: website/package-lock.json
       - name: Generate changelog from releases
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # Built into a temp file and only swapped in on success, so a GitHub API
+        # hiccup leaves the committed placeholder in place instead of publishing
+        # a changelog page with nothing but a heading.
         run: |
-          {
+          if {
+            # Frontmatter has to be re-emitted here: this file replaces the
+            # committed one, so a page title/description set there would be lost.
+            echo "---"
+            echo "title: Changelog"
+            echo "description: Release notes for every published Inari version, generated from the GitHub releases."
+            echo "---"
+            echo
             echo "# Changelog"
             echo
             echo "Auto-generated from the [GitHub releases](https://github.com/${{ github.repository }}/releases)."
             echo
             gh api "repos/${{ github.repository }}/releases" --paginate \
               --jq '.[] | select(.draft|not) | "## \(.name // .tag_name)\n\n_\(.published_at[0:10])_ · [\(.tag_name)](\(.html_url))\n\n\(.body // "_No notes._")\n"'
-          } > website/changelog.md || echo "changelog generation skipped"
+          } > /tmp/changelog.md; then
+            mv /tmp/changelog.md website/changelog.md
+          else
+            echo "::warning::changelog generation failed - keeping the placeholder"
+          fi
       - name: Build the docs site
         working-directory: website
         run: |
-          npm install
+          npm ci
           npm run build
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

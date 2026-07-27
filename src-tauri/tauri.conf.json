@@ -51,7 +51,14 @@
           "libayatana-appindicator3-1",
           "pulseaudio-utils",
           "pipewire-pulse",
-          "wireplumber"
+          "wireplumber",
+          "curl"
+        ],
+        "recommends": [
+          "playerctl",
+          "dbus",
+          "policykit-1",
+          "xdg-utils"
         ],
         "files": {
           "/usr/lib/udev/rules.d/60-inari.rules": "../packaging/udev/60-inari.rules"
@@ -64,12 +71,20 @@
           "libayatana-appindicator3.so.1()(64bit)",
           "pulseaudio-utils",
           "pipewire-pulseaudio",
-          "wireplumber"
+          "wireplumber",
+          "curl"
+        ],
+        "recommends": [
+          "playerctl",
+          "dbus",
+          "polkit",
+          "xdg-utils"
         ],
         "files": {
           "/usr/lib/udev/rules.d/60-inari.rules": "../packaging/udev/60-inari.rules"
         },
-        "postInstallScript": "../packaging/deb/postinst"
+        "postInstallScript": "../packaging/deb/postinst",
+        "postRemoveScript": "../packaging/deb/postrm"
       }
     },
     "icon": [
