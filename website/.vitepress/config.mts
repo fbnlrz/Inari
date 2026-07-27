@@ -32,35 +32,47 @@ export default defineConfig({
     nav: [
       { text: "Home", link: "/" },
       { text: "Guide", link: "/guide/getting-started" },
-      { text: "Devices", link: "/guide/devices" },
+      { text: "Features", link: "/features/mixer" },
+      { text: "Reference", link: "/reference/hardware" },
+      { text: "Troubleshooting", link: "/troubleshooting" },
+      { text: "Changelog", link: "/changelog" },
+    ],
+
+    sidebar: [
       {
-        text: "v1.0",
+        text: "Guide",
         items: [
-          { text: "Releases", link: "https://github.com/fbnlrz/Inari/releases" },
-          { text: "Changelog", link: "https://github.com/fbnlrz/Inari/commits/main" },
+          { text: "Getting started", link: "/guide/getting-started" },
+          { text: "Updating", link: "/guide/updating" },
+          { text: "Building from source", link: "/guide/building" },
+        ],
+      },
+      {
+        text: "Features",
+        items: [
+          { text: "Audio mixer", link: "/features/mixer" },
+          { text: "Headset", link: "/features/headset" },
+          { text: "OLED display", link: "/features/oled" },
+          { text: "Mouse", link: "/features/mouse" },
+        ],
+      },
+      {
+        text: "Reference",
+        items: [
+          { text: "Supported hardware", link: "/reference/hardware" },
+          { text: "Configuration & files", link: "/reference/configuration" },
+          { text: "Protocols", link: "/reference/protocols" },
+        ],
+      },
+      {
+        text: "Project",
+        items: [
+          { text: "Troubleshooting", link: "/troubleshooting" },
+          { text: "Contributing", link: "/contributing" },
+          { text: "Changelog", link: "/changelog" },
         ],
       },
     ],
-
-    sidebar: {
-      "/guide/": [
-        {
-          text: "Getting started",
-          items: [
-            { text: "Install", link: "/guide/getting-started" },
-            { text: "Updating", link: "/guide/updating" },
-            { text: "Building from source", link: "/guide/building" },
-          ],
-        },
-        {
-          text: "Features",
-          items: [
-            { text: "Audio mixer", link: "/guide/mixer" },
-            { text: "SteelSeries devices", link: "/guide/devices" },
-          ],
-        },
-      ],
-    },
 
     socialLinks: [{ icon: "github", link: "https://github.com/fbnlrz/Inari" }],
 

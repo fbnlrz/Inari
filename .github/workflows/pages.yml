@@ -25,6 +25,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - name: Generate changelog from releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          {
+            echo "# Changelog"
+            echo
+            echo "Auto-generated from the [GitHub releases](https://github.com/${{ github.repository }}/releases)."
+            echo
+            gh api "repos/${{ github.repository }}/releases" --paginate \
+              --jq '.[] | select(.draft|not) | "## \(.name // .tag_name)\n\n_\(.published_at[0:10])_ · [\(.tag_name)](\(.html_url))\n\n\(.body // "_No notes._")\n"'
+          } > website/changelog.md || echo "changelog generation skipped"
       - name: Build the docs site
         working-directory: website
         run: |
