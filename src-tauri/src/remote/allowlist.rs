@@ -117,7 +117,18 @@ sync_table! {
     headset_oled_modes => |_, _| ok(commands::headset::headset_oled_modes()),
     headset_oled_clips => |_, _| ok(commands::headset::headset_oled_clips()),
     headset_oled_status => |app, _| ok(commands::headset::headset_oled_status(app.state())?),
+    // The headset page reads these on mount. Denying them did not protect
+    // anything -- they only report state -- it just left the page broken.
+    // Their `set` counterparts stay off the list: one spawns a dbus-monitor
+    // process, the other writes a WirePlumber fragment that only takes effect
+    // at the next login, neither of which belongs to a tablet.
+    headset_get_notify_mirror => |app, _| ok(commands::headset::headset_get_notify_mirror(app.state())),
+    headset_get_notify_display => |app, _| ok(commands::headset::headset_get_notify_display(app.state())),
+    headset_get_alsa_headroom => |_, _| ok(commands::headset::headset_get_alsa_headroom()),
     list_profiles => |_, _| ok(commands::profiles::list_profiles()?),
+    // The mixer reads this to know which channels the balance slider blends
+    // and whether to show it at all. Prefs carry no secret.
+    get_prefs => |app, _| ok(commands::settings::get_prefs(app.state())?),
     get_active_profile => |app, _| ok(commands::profiles::get_active_profile(app.state())?),
     get_backend_info => |app, _| ok(commands::settings::get_backend_info(app.state())),
 
@@ -177,6 +188,16 @@ sync_table! {
     headset_set_line_out => |app, a| ok(commands::headset::headset_set_line_out(app.state(), a.get("mode")?)?),
     headset_set_line_out_volumes => |app, a| ok(commands::headset::headset_set_line_out_volumes(
         app.state(), a.get("left")?, a.get("right")?, a.get("aux")?)?),
+    // The balance slider is a mixer control, and the ChatMix blend is one of
+    // the things you actually want to reach for mid-game. Both only write
+    // prefs.
+    set_balance_visible => |app, a| ok(commands::settings::set_balance_visible(app.state(), a.get("visible")?)?),
+    set_balance_channels => |app, a| ok(commands::settings::set_balance_channels(
+        app.state(), a.get("a")?, a.get("b")?)?),
+    // Writes prefs and tells the OLED thread; no process, no path, no system
+    // config -- so how long a mirrored notification stays up is fair game.
+    headset_set_notify_display => |app, a| ok(commands::headset::headset_set_notify_display(
+        app.state(), a.get("duration_secs")?, a.get("scroll")?)?),
     headset_set_eq_bands => |app, a| ok(commands::headset::headset_set_eq_bands(app.state(), a.get("bands")?)?),
     headset_set_eq_preset => |app, a| ok(commands::headset::headset_set_eq_preset(app.state(), a.get("preset")?)?),
     headset_apply_eq_preset => |app, a| ok(commands::headset::headset_apply_eq_preset(app.state(), a.get("name")?)?),
@@ -410,5 +431,107 @@ mod tests {
         assert_eq!(camel_case("sink_name"), "sinkName");
         assert_eq!(camel_case("duration_ms"), "durationMs");
         assert_eq!(camel_case("name"), "name");
+    }
+}
+
+#[cfg(test)]
+mod frontend_contract {
+    use super::*;
+
+    /// Every command the frontend can send, read out of the sources.
+    fn called_by_frontend() -> Vec<String> {
+        let mut out = Vec::new();
+        let mut stack = vec![std::path::PathBuf::from("../src")];
+        while let Some(dir) = stack.pop() {
+            let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+            for e in entries.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    stack.push(p);
+                    continue;
+                }
+                let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if !name.ends_with(".ts") && !name.ends_with(".tsx") {
+                    continue;
+                }
+                // ipc.ts holds the union itself; tests call whatever they like.
+                if name == "ipc.ts" || name.contains(".test.") {
+                    continue;
+                }
+                let Ok(src) = std::fs::read_to_string(&p) else { continue };
+                for (i, _) in src.match_indices("call(").chain(src.match_indices("call<")) {
+                    let rest = &src[i..];
+                    let Some(open) = rest.find('(') else { continue };
+                    let Some(q) = rest.find('"') else { continue };
+                    // The name has to be the literal argument. Anything else
+                    // between the paren and the quote means this is a computed
+                    // command (a ternary, a variable) and not ours to read.
+                    if q < open || !rest[open + 1..q].trim().is_empty() {
+                        continue;
+                    }
+                    let after = &rest[q + 1..];
+                    let Some(end) = after.find('"') else { continue };
+                    let cmd = &after[..end];
+                    if !cmd.is_empty()
+                        && cmd.chars().all(|c| c.is_ascii_lowercase() || c == '_' || c.is_ascii_digit())
+                    {
+                        out.push(cmd.to_string());
+                    }
+                }
+            }
+        }
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+
+    /// A command the UI can send but the remote denies is a button that fails
+    /// in the user's hand — which is how `get_hotkeys`, the headset reads and
+    /// `init_virtual_devices` were each found, one error at a time. Whenever
+    /// that gap changes, it has to be a decision: either the command joins the
+    /// allowlist, or the control it belongs to is hidden outside the desktop
+    /// shell (see `src/lib/platform.ts`). This test exists to force that
+    /// decision rather than let a browser find it.
+    #[test]
+    fn every_command_the_ui_sends_is_either_allowed_or_deliberately_not() {
+        // Denied on purpose. Each entry must have its UI gated behind
+        // `isTauri`; add here only together with that gating.
+        const GATED_IN_THE_UI: &[&str] = &[
+            // installs as root, restarts, opens things on the PC
+            "apply_update", "check_update", "restart_app", "open_url", "open_log_dir",
+            // system and desktop settings
+            "reset_app", "set_autostart", "get_autostart", "set_start_minimized",
+            "set_device_label_style", "get_default_devices", "set_default_output",
+            "set_default_input", "set_onboarded",
+            // take a filesystem path
+            "import_eq_file", "export_channel_eq_to_file",
+            // spawn a process / write system config
+            "headset_set_notify_mirror", "headset_set_alsa_headroom",
+            // the desktop instance owns the audio graph's lifetime
+            "init_virtual_devices", "teardown_virtual_devices",
+            // global shortcuts are a property of the PC, not the tablet
+            "get_hotkeys", "set_hotkey", "set_hotkey_channel",
+            // the mouse is out of scope for the remote
+            "get_mouse_status", "mouse_set_dpi", "mouse_set_polling",
+            "mouse_set_zone_color", "mouse_set_rainbow", "mouse_set_reactive",
+            "mouse_set_sleep", "mouse_set_dim", "mouse_set_startup_lighting",
+            // structural: the remote operates the mixer, it does not rebuild it
+            "add_channel", "remove_channel", "rename_channel", "reorder_channels",
+            "set_channel_icon", "add_bus", "remove_bus", "rename_bus",
+            "create_blank_profile", "delete_profile", "set_profile_trigger",
+            "rename_app", "forget_app",
+            // the tablet does not configure the remote
+            "remote_status", "remote_set_enabled", "remote_regenerate_token",
+        ];
+
+        let unexplained: Vec<String> = called_by_frontend()
+            .into_iter()
+            .filter(|c| !is_allowed(c) && !GATED_IN_THE_UI.contains(&c.as_str()))
+            .collect();
+        assert!(
+            unexplained.is_empty(),
+            "the UI can send these but the remote denies them, and nothing says that is intended:\n  {unexplained:?}\n\
+             Either add each to the allowlist, or hide its control behind `isTauri` and list it in GATED_IN_THE_UI."
+        );
     }
 }
