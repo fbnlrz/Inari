@@ -147,6 +147,18 @@ export type Command =
   | "set_remote_bind"
   | "set_remote_enabled"
   | "set_start_minimized"
+  | "soundboard_add_clip"
+  | "soundboard_clips"
+  | "soundboard_duck"
+  | "soundboard_formats"
+  | "soundboard_play"
+  | "soundboard_remove_clip"
+  | "soundboard_rename_clip"
+  | "soundboard_set_clip_volume"
+  | "soundboard_set_duck"
+  | "soundboard_status"
+  | "soundboard_stop_all"
+  | "soundboard_toggle"
   | "teardown_virtual_devices"
   | "toggle_channel_mute";
 

@@ -3032,11 +3032,128 @@ input[type="range"]::-webkit-slider-thumb:hover { background: var(--accent-hover
 }
 
 /* ============================================================
+   Soundboard - the pad grid, the library behind it, ducking
+   ============================================================ */
+/* Target picker and "stop all" share the card header; on a narrow tablet
+   they wrap under the title rather than squeezing the pads. */
+.sb-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.sb-stop { white-space: nowrap; }
+.sb-live {
+  margin: 0;
+  font-size: var(--fs-meta);
+  color: var(--fg-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Column count carries the layout, not a fixed width: the same board is a
+   phone-width strip, a desktop panel and a tablet in landscape. */
+.sb-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  gap: var(--sp-3);
+}
+.sb-pad {
+  min-height: 92px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: var(--sp-3);
+  background: var(--bg-active);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  color: var(--fg-primary);
+  font-family: var(--font-sans);
+  font-size: var(--fs-meta);
+  text-align: center;
+  cursor: pointer;
+  /* A pad is hit in a hurry: no 300 ms double-tap wait on the tablet. */
+  touch-action: manipulation;
+  transition: background 0.12s, border-color 0.12s, color 0.12s, transform 0.06s;
+}
+.sb-pad:hover:not(:disabled) { background: var(--bg-surface-hover); border-color: var(--accent); }
+/* Immediate answer to the press - the poll behind it takes a moment. */
+.sb-pad:active:not(:disabled) { transform: scale(0.97); }
+/* Toggle semantics: the lit pad is the one the next press would stop. */
+.sb-pad.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+.sb-pad.blocked { cursor: not-allowed; opacity: 0.55; }
+.sb-pad-name {
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+.sb-pad-tag { font-size: var(--fs-caption); color: var(--fg-muted); }
+/* The empty board sits inside its card rather than centring the whole screen. */
+.sb-empty { margin: var(--sp-5) auto; }
+
+/* Library (desktop only) */
+.sb-lib { display: flex; flex-direction: column; gap: var(--sp-2); }
+.sb-lib-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+.sb-lib-name {
+  flex: 1 1 140px;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-meta);
+  color: var(--fg-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sb-lib-warn { color: var(--warning); background: rgba(245, 158, 11, 0.14); }
+.sb-lib-input { flex: 1 1 140px; min-width: 0; }
+.sb-lib-row .hslider { flex: 1 1 150px; }
+/* The level slider is the shared HSlider, whose track already carries this -
+   restated so restyling this row cannot silently drop it. Without it a drag
+   on the tablet turns into a scroll and the browser cancels the pointer
+   stream mid-gesture. */
+.sb-lib-row .hs-track { touch-action: none; }
+.sb-lib-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.sb-lib-btn:hover { background: var(--bg-active); color: var(--fg-primary); }
+.sb-lib-btn.danger:hover { color: var(--danger); }
+
+/* A tablet in portrait: name on its own line, slider and actions under it. */
+@media (max-width: 560px) {
+  .sb-lib-row { flex-wrap: wrap; }
+  .sb-lib-name, .sb-lib-input { flex-basis: 100%; }
+}
+
+/* ============================================================
    Keyboard focus - the app is fully operable without a mouse, so
    every interactive surface has to show where focus is. Colours come
    from the tokens, so the ring follows whichever theme is active.
    ============================================================ */
 .nav-item:focus-visible,
+.sb-pad:focus-visible,
+.sb-lib-btn:focus-visible,
 .sbtn:focus-visible,
 .select:focus-visible,
 .strip-x:focus-visible,

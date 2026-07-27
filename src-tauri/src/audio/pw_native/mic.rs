@@ -35,6 +35,11 @@ pub struct MicParams {
     comp_threshold_bits: AtomicU32,
     comp_ratio_bits: AtomicU32,
     limiter_ceiling_bits: AtomicU32,
+    /// Soundboard ducking factor (linear, 1.0 = none). Deliberately *not*
+    /// part of `MicConfig`: it is a momentary state that belongs to whatever
+    /// clip is playing, and `apply` must never overwrite it - the user's gain
+    /// and their mic settings have to survive a clip unchanged.
+    duck_bits: AtomicU32,
 }
 
 impl MicParams {
@@ -49,9 +54,18 @@ impl MicParams {
             comp_threshold_bits: AtomicU32::new((-18.0f32).to_bits()),
             comp_ratio_bits: AtomicU32::new(3.0f32.to_bits()),
             limiter_ceiling_bits: AtomicU32::new((-1.0f32).to_bits()),
+            duck_bits: AtomicU32::new(1.0f32.to_bits()),
         };
         p.apply(config);
         p
+    }
+
+    /// Set the ducking factor (1.0 = no attenuation). Called when a clip
+    /// starts and when the last one ends; the DSP chain ramps to it rather
+    /// than jumping, so this is safe to call at any moment.
+    pub fn set_duck(&self, factor: f32) {
+        let factor = if factor.is_finite() { factor.clamp(0.0, 1.0) } else { 1.0 };
+        self.duck_bits.store(factor.to_bits(), Ordering::Relaxed);
     }
 
     pub fn apply(&self, config: &MicConfig) {
@@ -78,6 +92,7 @@ impl MicParams {
             limiter_enabled: self.limiter.load(Ordering::Relaxed),
             gain: f32::from_bits(self.gain_bits.load(Ordering::Relaxed)),
             muted: self.muted.load(Ordering::Relaxed),
+            duck: f32::from_bits(self.duck_bits.load(Ordering::Relaxed)),
             gate_threshold_db: f32::from_bits(self.gate_threshold_bits.load(Ordering::Relaxed)),
             comp_threshold_db: f32::from_bits(self.comp_threshold_bits.load(Ordering::Relaxed)),
             comp_ratio: f32::from_bits(self.comp_ratio_bits.load(Ordering::Relaxed)),
@@ -332,5 +347,60 @@ impl MicStreams {
             _playback_listener: playback_listener,
             params,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config(gain_percent: u8) -> MicConfig {
+        MicConfig {
+            gain_percent,
+            ..MicConfig::default()
+        }
+    }
+
+    #[test]
+    fn ducking_leaves_the_users_gain_alone() {
+        // The point of a separate factor: after a clip has come and gone, the
+        // mic is back at exactly the level the user set - not at whatever the
+        // ducking left behind.
+        let params = MicParams::from_config(&config(150));
+        assert_eq!(params.settings().gain, 1.5);
+
+        params.set_duck(0.25);
+        let ducked = params.settings();
+        assert_eq!(ducked.gain, 1.5, "the user's gain is untouched while ducking");
+        assert_eq!(ducked.duck, 0.25);
+
+        params.set_duck(1.0);
+        let released = params.settings();
+        assert_eq!(released.gain, 1.5);
+        assert_eq!(released.duck, 1.0);
+    }
+
+    #[test]
+    fn re_applying_the_mic_config_does_not_cancel_an_active_duck() {
+        // A clip is playing and the user moves a mic slider: their edit must
+        // land, and the duck must stay until the clip is done.
+        let params = MicParams::from_config(&config(100));
+        params.set_duck(0.5);
+        params.apply(&config(120));
+        let s = params.settings();
+        assert_eq!(s.gain, 1.2, "the new setting applied");
+        assert_eq!(s.duck, 0.5, "and the duck survived it");
+    }
+
+    #[test]
+    fn a_nonsensical_duck_factor_is_ignored_rather_than_amplifying() {
+        let params = MicParams::from_config(&config(100));
+        params.set_duck(f32::NAN);
+        assert_eq!(params.settings().duck, 1.0);
+        // Ducking attenuates; it never turns into a boost.
+        params.set_duck(4.0);
+        assert_eq!(params.settings().duck, 1.0);
+        params.set_duck(-1.0);
+        assert_eq!(params.settings().duck, 0.0);
     }
 }

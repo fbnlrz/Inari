@@ -1,5 +1,14 @@
-use crate::audio::types::{AppStream, EqConfig, MicConfig, OutputDevice};
+use crate::audio::types::{AppStream, ClipPcm, EqConfig, MicConfig, OutputDevice};
 use crate::error::SinkError;
+
+/// What a backend without in-graph control can honestly say about the
+/// soundboard: a clip has to be published into the virtual microphone and
+/// linked there explicitly, and `pactl` cannot create that link.
+fn soundboard_unsupported() -> SinkError {
+    SinkError::Config(
+        "the soundboard needs the native PipeWire backend (Inari is on the pactl fallback)".into(),
+    )
+}
 
 /// Abstraction over the underlying audio system.
 ///
@@ -100,6 +109,41 @@ pub trait AudioBackend: Send + Sync {
     /// Apply the Phase 3 mic chain configuration. Native-backend only; the
     /// pactl fallback reports it as unsupported.
     fn set_mic_config(&self, config: &MicConfig) -> Result<(), SinkError>;
+
+    /// Whether this backend can publish soundboard clips at all, so the UI can
+    /// say "not on this backend" instead of offering buttons that error.
+    fn play_clip_supported(&self) -> bool {
+        false
+    }
+
+    /// Start a soundboard clip: publish the decoded PCM into the virtual mic
+    /// and/or the user's output, as the clip's targets say. `id` is how the
+    /// caller reaps or stops this one. The engine imposes no exclusivity -
+    /// the soundboard's one-clip-at-a-time rule lives in its manager, where
+    /// the press can be decided atomically.
+    /// Native-only, like the mic chain and the EQ inserts.
+    fn play_clip(&self, _clip: ClipPcm) -> Result<(), SinkError> {
+        Err(soundboard_unsupported())
+    }
+
+    /// Tear down one clip. Unknown ids succeed - a clip that was stopped by
+    /// hand still gets reaped by its own timer.
+    fn stop_clip(&self, _id: u64) -> Result<(), SinkError> {
+        Err(soundboard_unsupported())
+    }
+
+    /// Stop every clip at once.
+    fn stop_all_clips(&self) -> Result<(), SinkError> {
+        Err(soundboard_unsupported())
+    }
+
+    /// Attenuate the processed microphone while a clip plays (1.0 = not at
+    /// all). The DSP chain ramps to it, so this is safe to call mid-sentence.
+    /// A backend with no mic chain has nothing to duck: not an error, just
+    /// nothing to do.
+    fn set_mic_duck(&self, _factor: f32) -> Result<(), SinkError> {
+        Ok(())
+    }
 
     /// False once the backend's engine has stopped serving requests - the
     /// native backend's loop thread left and took every sink, link and EQ

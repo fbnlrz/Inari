@@ -501,6 +501,60 @@ impl Default for EqConfig {
     }
 }
 
+/// Where a soundboard clip is heard. Two independent destinations, because
+/// the two halves of "firing a clip" are separate wishes: the chat has to hear
+/// it (that is what makes it a soundboard) and the user has to hear it too
+/// (or they are playing blind). Neither implies the other, so both are flags
+/// rather than one mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClipTargets {
+    /// Into the virtual microphone - what Discord/OBS capture.
+    pub to_mic: bool,
+    /// Onto the user's own output device.
+    pub to_output: bool,
+}
+
+impl Default for ClipTargets {
+    fn default() -> Self {
+        // Both: the clip is for the room, and playing it without hearing it
+        // yourself is how people fire the same one three times.
+        Self {
+            to_mic: true,
+            to_output: true,
+        }
+    }
+}
+
+/// One decoded clip on its way to the audio engine.
+///
+/// The samples travel as an `Arc` because the command thread decodes them and
+/// the PipeWire loop thread plays them; copying a minute of stereo f32 across
+/// that boundary would be 23 MB per button press.
+#[derive(Clone)]
+pub struct ClipPcm {
+    /// Playback id, chosen by the caller so it can stop exactly this one.
+    pub id: u64,
+    /// Interleaved f32, `channels` samples per frame.
+    pub samples: std::sync::Arc<Vec<f32>>,
+    pub rate: u32,
+    /// 1 or 2.
+    pub channels: u16,
+    /// Linear gain from the clip's own volume setting.
+    pub gain: f32,
+    pub targets: ClipTargets,
+}
+
+#[cfg(test)]
+mod clip_tests {
+    use super::*;
+
+    #[test]
+    fn a_clip_is_heard_on_both_sides_unless_told_otherwise() {
+        let t = ClipTargets::default();
+        assert!(t.to_mic && t.to_output);
+    }
+}
+
 #[cfg(test)]
 mod eq_clamp_tests {
     use super::*;

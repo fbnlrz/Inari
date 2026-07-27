@@ -16,12 +16,13 @@ use pw::core::CoreRc;
 use pw::metadata::{Metadata, MetadataListener};
 use pw::node::{Node, NodeListener};
 
+use crate::audio::pw_native::clip::ClipStream;
 use crate::audio::pw_native::eq_chain::EqChainHandle;
 use crate::audio::pw_native::levels::LevelStore;
 use crate::audio::pw_native::meter::MeterHandle;
 use crate::audio::pw_native::mic::MicStreams;
 use crate::audio::pw_native::GraphNotify;
-use crate::audio::types::{AppStream, EqConfig, MicConfig, OutputDevice};
+use crate::audio::types::{AppStream, ClipPcm, EqConfig, MicConfig, OutputDevice};
 use crate::error::SinkError;
 
 pub(super) type Reply<T> = mpsc::Sender<Result<T, SinkError>>;
@@ -61,6 +62,33 @@ pub enum Cmd {
     GetDefaults { reply: Reply<(Option<String>, Option<String>)> },
     /// Set the configured system default sink (input=false) or source.
     SetDefault { input: bool, name: String, reply: Reply<()> },
+    /// Start a soundboard clip: one stream per playback. The engine can
+    /// carry several at a time (it is the manager that keeps the soundboard
+    /// to one clip), which is also what makes a takeover safe - the incoming
+    /// stream has its own id and cannot be mistaken for the outgoing one.
+    PlayClip { clip: ClipPcm, reply: Reply<()> },
+    /// Reap one clip (its own timer fires this when it has played out).
+    /// Unknown ids succeed: a clip stopped by hand is reaped twice.
+    StopClip { id: u64, reply: Reply<()> },
+    /// Panic button: every clip stops now.
+    StopAllClips { reply: Reply<()> },
+    /// Soundboard ducking factor for the mic chain (1.0 = no attenuation).
+    SetMicDuck { factor: f32, reply: Reply<()> },
+}
+
+/// The mic's soundboard ducking factor (linear, 1.0 = untouched).
+///
+/// A newtype rather than a bare `f32` field so that `State::default()` cannot
+/// quietly mean "muted microphone": zero is what a plain float defaults to,
+/// and it is the one value here that would be a bug nobody sees until they
+/// speak.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct DuckFactor(pub(super) f32);
+
+impl Default for DuckFactor {
+    fn default() -> Self {
+        Self(1.0)
+    }
 }
 
 pub(super) struct PortEntry {
@@ -154,6 +182,14 @@ pub(super) struct State {
     pub(super) monitor_links: HashMap<String, LinkSet>,
     /// Links from the mic playback stream into the virtual mic.
     pub(super) mic_links: LinkSet,
+    /// Soundboard clips currently playing: playback id -> its stream.
+    pub(super) clips: HashMap<u64, ClipStream>,
+    /// (clip playback id, target node id) -> the links feeding that target.
+    pub(super) clip_links: HashMap<(u64, u32), LinkSet>,
+    /// The ducking factor to apply to the mic chain, kept here so a chain
+    /// that gets rebuilt mid-clip (device change, rename) comes back ducked
+    /// rather than snapping to full level under a playing clip.
+    pub(super) mic_duck: DuckFactor,
     /// Per-channel EQ configs (source of truth for chain (re)creation -
     /// kept even while disabled so re-enabling restores the bands).
     pub(super) eq_configs: HashMap<String, EqConfig>,

@@ -9,15 +9,16 @@ use pipewire as pw;
 use pw::node::Node;
 use pw::registry::RegistryRc;
 
+use crate::audio::pw_native::clip::ClipStream;
 use crate::audio::pw_native::eq_chain::EqChainHandle;
 use crate::audio::pw_native::mic::{MicStreams, MIC_NODE};
 use crate::audio::types::{is_virtual_sink, AppStream, OutputDevice};
 use crate::error::SinkError;
 use crate::persistence::buses::is_bus_name;
 
-use super::links::ensure_all_links;
+use super::links::{ensure_all_links, ensure_clip_links};
 use super::registry::{adopt_sink, build_mic_streams};
-use super::state::{Cmd, State, CORE};
+use super::state::{Cmd, DuckFactor, State, CORE};
 use super::{
     create_node_object, set_props, SINK_CLASS, SOURCE_CLASS, STREAM_CLASS, VIRTUAL_SOURCE_CLASS,
 };
@@ -536,6 +537,61 @@ pub(super) fn handle_cmd(state: &Rc<RefCell<State>>, registry: &RegistryRc, cmd:
                 }
             }
             ensure_all_links(state);
+            let _ = reply.send(Ok(()));
+        }
+        Cmd::PlayClip { clip, reply } => {
+            let Some(core) = CORE.with(|c| c.borrow().clone()) else {
+                let _ = reply.send(Err(SinkError::Config(
+                    "playing a clip requires a live core".into(),
+                )));
+                return;
+            };
+            // Built outside the state borrow, and any predecessor with the
+            // same id dropped outside it too: stream construction and
+            // teardown pump the loop, and a registry event re-entering
+            // `borrow_mut` panics inside an FFI callback = process abort.
+            match ClipStream::new(&core, &clip) {
+                Ok(stream) => {
+                    let old = state.borrow_mut().clips.insert(clip.id, stream);
+                    drop(old);
+                    // A no-op until the server has created the stream's
+                    // ports; the registry's Port arm runs it again then.
+                    ensure_clip_links(state);
+                    let _ = reply.send(Ok(()));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(e));
+                }
+            }
+        }
+        Cmd::StopClip { id, reply } => {
+            let doomed = {
+                let mut s = state.borrow_mut();
+                s.clip_links.retain(|(clip, _), _| *clip != id);
+                s.clips.remove(&id)
+            };
+            drop(doomed);
+            let _ = reply.send(Ok(()));
+        }
+        Cmd::StopAllClips { reply } => {
+            let doomed = {
+                let mut s = state.borrow_mut();
+                s.clip_links.clear();
+                std::mem::take(&mut s.clips)
+            };
+            drop(doomed);
+            let _ = reply.send(Ok(()));
+        }
+        Cmd::SetMicDuck { factor, reply } => {
+            let mut s = state.borrow_mut();
+            s.mic_duck = DuckFactor(factor);
+            // Only a store behind an atomic; the DSP chain ramps to it, so
+            // there is nothing to rebuild and nothing to relink. With no mic
+            // chain running there is nothing to duck either - the factor is
+            // remembered and applied when one comes up.
+            if let Some(streams) = &s.mic_streams {
+                streams.params.set_duck(factor);
+            }
             let _ = reply.send(Ok(()));
         }
         Cmd::MoveStream { id, sink_name, reply } => {
