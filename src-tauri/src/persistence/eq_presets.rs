@@ -6,6 +6,8 @@
 use std::fs;
 use std::path::PathBuf;
 
+use log::warn;
+
 use crate::audio::presets::{EqPreset, PRESET_SCHEMA};
 use crate::error::SinkError;
 use crate::persistence::profiles::sanitize_name;
@@ -37,8 +39,8 @@ pub fn list() -> Result<Vec<EqPreset>, SinkError> {
             Ok(preset) if preset.schema == PRESET_SCHEMA && !preset.bands.is_empty() => {
                 presets.push(preset);
             }
-            Ok(_) => eprintln!("sink: skipping eq preset {}: bad schema", path.display()),
-            Err(e) => eprintln!("sink: skipping eq preset {}: {e}", path.display()),
+            Ok(_) => warn!("skipping eq preset {}: bad schema", path.display()),
+            Err(e) => warn!("skipping eq preset {}: {e}", path.display()),
         }
     }
     presets.sort_by(|a, b| a.name.cmp(&b.name));

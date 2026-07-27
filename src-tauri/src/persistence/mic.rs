@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::PathBuf;
 
+use log::warn;
+
 use crate::audio::types::MicConfig;
 use crate::error::SinkError;
 
@@ -16,13 +18,17 @@ pub fn load() -> MicConfig {
     let Ok(path) = config_path() else {
         return MicConfig::default();
     };
-    match fs::read_to_string(&path) {
+    let mut config: MicConfig = match fs::read_to_string(&path) {
         Ok(raw) => serde_json::from_str(&raw).unwrap_or_else(|e| {
-            eprintln!("sink: ignoring malformed {}: {e}", path.display());
+            warn!("ignoring malformed {}: {e}", path.display());
             MicConfig::default()
         }),
         Err(_) => MicConfig::default(),
-    }
+    };
+    // Same sanitization the IPC setter applies (TD-050): a hand-edited or torn
+    // mic.json otherwise pushes inf/NaN into the chain at init.
+    config.clamp_ranges();
+    config
 }
 
 pub fn save(config: &MicConfig) -> Result<(), SinkError> {

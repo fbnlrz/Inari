@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
+use log::warn;
 use serde::{Deserialize, Serialize};
 
 use crate::error::SinkError;
@@ -102,7 +103,7 @@ impl Prefs {
     /// than blocking launch.
     fn parse(raw: &str) -> Self {
         serde_json::from_str(raw).unwrap_or_else(|e| {
-            eprintln!("sink: ignoring malformed prefs: {e}");
+            warn!("ignoring malformed prefs: {e}");
             Self::default()
         })
     }

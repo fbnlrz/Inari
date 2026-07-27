@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
+use log::warn;
 use serde::{Deserialize, Serialize};
 
 use crate::audio::types::EqConfig;
@@ -28,13 +29,20 @@ impl ChannelEq {
         let Ok(path) = Self::config_path() else {
             return Self::default();
         };
-        match fs::read_to_string(&path) {
+        let mut eq: Self = match fs::read_to_string(&path) {
             Ok(raw) => serde_json::from_str(&raw).unwrap_or_else(|e| {
-                eprintln!("sink: ignoring malformed {}: {e}", path.display());
+                warn!("ignoring malformed {}: {e}", path.display());
                 Self::default()
             }),
             Err(_) => Self::default(),
+        };
+        // Same sanitization the IPC setter applies (TD-050): a hand-edited or
+        // torn eq.json otherwise pushes inf/NaN straight through the biquad
+        // cascade onto the output device at init.
+        for config in eq.configs.values_mut() {
+            config.clamp_ranges();
         }
+        eq
     }
 
     pub fn save(&self) -> Result<(), SinkError> {

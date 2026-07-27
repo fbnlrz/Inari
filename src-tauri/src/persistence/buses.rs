@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
+use log::warn;
 use serde::{Deserialize, Serialize};
 
 use crate::error::SinkError;
@@ -119,9 +120,13 @@ impl Buses {
             Err(_) => return Self::default(),
         };
         match fs::read_to_string(&path) {
-            Ok(raw) => serde_json::from_str::<Self>(&raw)
-                .ok()
-                .unwrap_or_default(),
+            // A corrupt file, or one where nothing survived sanitization, falls
+            // back to the master mix alone - sync_master refills it from the
+            // live channel set at init and on every profile load.
+            Ok(raw) => match Self::parse(&raw) {
+                Some(buses) if !buses.buses.is_empty() => buses,
+                _ => Self::default(),
+            },
             Err(_) => {
                 let mut buses = Self::default();
                 buses.buses[0].channels = legacy_channels
@@ -133,6 +138,34 @@ impl Buses {
                 buses
             }
         }
+    }
+
+    /// Parse and sanitize the mix set from JSON, mirroring what `add()`
+    /// guarantees. Entries whose node name falls outside the mix namespace are
+    /// dropped: a hand-edited "sink_game" would collide with a channel node,
+    /// and `set_bus_volume`/`set_bus_mute` reject it anyway, so it could only
+    /// ever be a ghost mix. Duplicates go too, and the user set is capped at
+    /// `MAX_BUSES` so a foreign file can't exhaust the bus slots. Returns
+    /// `None` only when the text isn't valid JSON, so `load` can tell a corrupt
+    /// file from a merely empty one.
+    fn parse(raw: &str) -> Option<Self> {
+        let parsed: Self = serde_json::from_str(raw)
+            .map_err(|e| warn!("ignoring malformed buses.json: {e}"))
+            .ok()?;
+        let mut seen = std::collections::HashSet::new();
+        let mut buses = Vec::new();
+        let mut user = 0usize;
+        for def in parsed.buses {
+            // The master doesn't count against the user's mix budget.
+            let room = is_master(&def.name) || user < MAX_BUSES;
+            if is_bus_name(&def.name) && seen.insert(def.name.clone()) && room {
+                user += usize::from(!is_master(&def.name));
+                buses.push(def);
+            } else {
+                warn!("dropping invalid mix '{}' from buses.json", def.name);
+            }
+        }
+        Some(Self { buses })
     }
 
     pub fn save(&self) -> Result<(), SinkError> {
@@ -439,6 +472,37 @@ mod tests {
         let loaded: Buses = serde_json::from_str(legacy).expect("legacy loads");
         assert_eq!(loaded.buses[0].volume_percent, 100);
         assert!(!loaded.buses[0].muted);
+    }
+
+    #[test]
+    fn parse_drops_foreign_and_duplicate_node_names() {
+        let raw = r#"{"buses":[
+            {"name":"sink_stream","label":"Master","channels":[],"exclude":false},
+            {"name":"sink_stream","label":"Dup","channels":[],"exclude":false},
+            {"name":"sink_game","label":"Channel Collision","channels":[],"exclude":false},
+            {"name":"sink_bus_ok","label":"Fine","channels":[],"exclude":false}
+        ]}"#;
+        let names: Vec<String> = Buses::parse(raw)
+            .expect("valid json")
+            .buses
+            .into_iter()
+            .map(|b| b.name)
+            .collect();
+        assert_eq!(names, ["sink_stream", "sink_bus_ok"]);
+    }
+
+    #[test]
+    fn parse_caps_user_mixes_and_reports_corruption() {
+        let mut items = vec![r#"{"name":"sink_stream","label":"M","channels":[],"exclude":false}"#.to_string()];
+        for i in 0..(MAX_BUSES + 3) {
+            items.push(format!(
+                r#"{{"name":"sink_bus_{i}","label":"B{i}","channels":[],"exclude":false}}"#
+            ));
+        }
+        let raw = format!(r#"{{"buses":[{}]}}"#, items.join(","));
+        // Master plus the capped user set.
+        assert_eq!(Buses::parse(&raw).expect("valid json").buses.len(), MAX_BUSES + 1);
+        assert!(Buses::parse("{ truncated").is_none());
     }
 
     #[test]

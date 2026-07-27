@@ -34,7 +34,7 @@ pub fn route_app_to_channel(
         return Ok(()); // stream vanished between move and lookup
     };
 
-    let assignments = {
+    let (assignments, snapshot) = {
         let mut mixer = state.lock_mixer()?;
         if sink_name.is_empty() {
             mixer
@@ -47,9 +47,12 @@ pub fn route_app_to_channel(
         }
         // The user explicitly placed this stream; don't auto-route it again.
         mixer.auto_routed.insert(stream_index);
-        crate::commands::profiles::autosave_active(&mixer);
-        mixer.assignments.clone()
+        (
+            mixer.assignments.clone(),
+            crate::commands::profiles::build_autosave(&mixer),
+        )
     };
+    crate::commands::profiles::write_autosave(snapshot);
 
     assignments.save().map_err(|e| e.to_string())?;
     wireplumber::write(&assignments).map_err(|e| e.to_string())?;
@@ -74,11 +77,14 @@ pub fn set_channel_volume(
         .set_sink_volume(&sink_name, volume)
         .map_err(|e| e.to_string())?;
 
-    let mut mixer = state.lock_mixer()?;
-    if let Some(channel) = mixer.channel_mut(&sink_name) {
-        channel.volume_percent = volume;
-    }
-    crate::commands::profiles::autosave_active(&mixer);
+    let snapshot = {
+        let mut mixer = state.lock_mixer()?;
+        if let Some(channel) = mixer.channel_mut(&sink_name) {
+            channel.volume_percent = volume;
+        }
+        crate::commands::profiles::build_autosave(&mixer)
+    };
+    crate::commands::profiles::write_autosave(snapshot);
     Ok(())
 }
 
@@ -97,11 +103,14 @@ pub fn toggle_channel_mute(
         .set_sink_mute(&sink_name, muted)
         .map_err(|e| e.to_string())?;
 
-    let mut mixer = state.lock_mixer()?;
-    if let Some(channel) = mixer.channel_mut(&sink_name) {
-        channel.muted = muted;
-    }
-    crate::commands::profiles::autosave_active(&mixer);
+    let snapshot = {
+        let mut mixer = state.lock_mixer()?;
+        if let Some(channel) = mixer.channel_mut(&sink_name) {
+            channel.muted = muted;
+        }
+        crate::commands::profiles::build_autosave(&mixer)
+    };
+    crate::commands::profiles::write_autosave(snapshot);
     Ok(())
 }
 

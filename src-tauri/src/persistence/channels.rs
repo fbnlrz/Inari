@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
+use log::warn;
 use serde::{Deserialize, Serialize};
 
 use crate::error::SinkError;
@@ -92,11 +93,11 @@ impl Channels {
         match Self::parse(&raw) {
             Some(c) if !c.channels.is_empty() => c,
             Some(_) => {
-                eprintln!("sink: channels.json held no valid channels; using defaults");
+                warn!("channels.json held no valid channels; using defaults");
                 Self::default()
             }
             None => {
-                eprintln!("sink: channels.json is unreadable (corrupt?); using defaults");
+                warn!("channels.json is unreadable (corrupt?); using defaults");
                 Self::default()
             }
         }
@@ -122,10 +123,7 @@ impl Channels {
             if valid && channels.len() < MAX_CHANNELS {
                 channels.push(def);
             } else {
-                eprintln!(
-                    "sink: dropping invalid channel '{}' from channels.json",
-                    def.name
-                );
+                warn!("dropping invalid channel '{}' from channels.json", def.name);
             }
         }
         Some(Self { channels })
