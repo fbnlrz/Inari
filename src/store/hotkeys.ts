@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { invoke } from "@tauri-apps/api/core";
+import { call } from "../lib/ipc";
 
 /** Wire ids of the bindable actions; mirrors `HotkeyAction` in prefs.rs. */
 export type HotkeyAction = "mic_mute" | "channel_mute" | "cycle_profile" | "toggle_window";
@@ -84,7 +84,7 @@ export const useHotkeys = create<HotkeyStore>((set) => ({
 
   fetch: async () => {
     try {
-      set({ bindings: await invoke<HotkeyBinding[]>("get_hotkeys"), error: null });
+      set({ bindings: await call<HotkeyBinding[]>("get_hotkeys"), error: null });
     } catch (e) {
       set({ error: String(e) });
     }
@@ -94,7 +94,7 @@ export const useHotkeys = create<HotkeyStore>((set) => ({
     try {
       // The backend re-registers and answers with the fresh list, so a grab
       // the session refused shows up immediately instead of after a restart.
-      const bindings = await invoke<HotkeyBinding[]>("set_hotkey", { action, accelerator });
+      const bindings = await call<HotkeyBinding[]>("set_hotkey", { action, accelerator });
       set({ bindings, error: null });
     } catch (e) {
       set({ error: String(e) });
@@ -103,7 +103,7 @@ export const useHotkeys = create<HotkeyStore>((set) => ({
 
   setChannel: async (sinkName) => {
     try {
-      const bindings = await invoke<HotkeyBinding[]>("set_hotkey_channel", { sinkName });
+      const bindings = await call<HotkeyBinding[]>("set_hotkey_channel", { sinkName });
       set({ bindings, error: null });
     } catch (e) {
       set({ error: String(e) });

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
+import { isTauri } from "../../lib/platform";
 import { useMixerStore } from "../../store/mixer";
 import { MASTER_BUS } from "../../types";
 import { Ms, ICON_CHOICES } from "../Icons";
@@ -139,7 +140,9 @@ export function MixerBoard() {
             label="Channels"
             count={`${channels.length}`}
             hint="Playback: apps route into channels; each has its own volume, mute and output device."
-            onAdd={channels.length < MAX_CHANNELS ? () => setAddingChannel(true) : undefined}
+            // The remote mixes a board someone else built: adding, deleting
+            // and reordering channels are structural and stay on the desktop.
+            onAdd={isTauri && channels.length < MAX_CHANNELS ? () => setAddingChannel(true) : undefined}
             addTitle="Add a channel"
           >
             {channels.map((channel) => (
@@ -179,7 +182,7 @@ export function MixerBoard() {
             count={`${buses.length}`}
             hint="Recordable copies of your channels. In OBS, add a mix as an audio input (mic/aux) - not Desktop Audio."
             onAdd={
-              buses.filter((b) => b.name !== MASTER_BUS).length < MAX_BUSES
+              isTauri && buses.filter((b) => b.name !== MASTER_BUS).length < MAX_BUSES
                 ? () => setAddingMix(true)
                 : undefined
             }

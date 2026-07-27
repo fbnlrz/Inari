@@ -296,7 +296,15 @@ fn decode_art(url: &str) -> Art {
     let Some(path) = art_path(url) else {
         return art;
     };
-    let Ok(img) = image::open(path) else {
+    // Sniff the content instead of trusting the name. `image::open` picks a
+    // decoder from the file extension, and browsers hand MPRIS an extensionless
+    // temp file (Chromium: `/tmp/.org.chromium.Chromium.XXXXXX`), so every
+    // browser-played track decoded as "no art" no matter how good the PNG was.
+    let Ok(img) = image::ImageReader::open(&path)
+        .and_then(|r| r.with_guessed_format())
+        .map_err(|_| ())
+        .and_then(|r| r.decode().map_err(|_| ()))
+    else {
         return art;
     };
     art.thumb = Some(dither_thumb(&img));
@@ -562,6 +570,31 @@ fn parse_us(s: &str) -> u64 {
 
 #[cfg(test)]
 mod tests {
+    /// Browsers hand MPRIS a temp file with no extension, which is what broke
+    /// cover art for every browser-played track: the decoder was chosen from
+    /// the name. This pins that the content decides.
+    #[test]
+    fn art_decodes_from_content_not_from_the_file_name() {
+        use std::io::Write;
+        // A 1x1 PNG, byte for byte.
+        const PNG: &[u8] = &[
+            0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, b'I', b'H',
+            b'D', b'R', 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00,
+            0x00, 0x90, 0x77, 0x53, 0xde, 0x00, 0x00, 0x00, 0x0c, b'I', b'D', b'A', b'T', 0x08,
+            0xd7, 0x63, 0xf8, 0xcf, 0xc0, 0x00, 0x00, 0x03, 0x01, 0x01, 0x00, 0x18, 0xdd, 0x8d,
+            0xb0, 0x00, 0x00, 0x00, 0x00, b'I', b'E', b'N', b'D', 0xae, 0x42, 0x60, 0x82,
+        ];
+        let path = std::env::temp_dir().join(".inari-test-art-no-extension");
+        let mut f = std::fs::File::create(&path).expect("temp art");
+        f.write_all(PNG).expect("write art");
+        drop(f);
+
+        let art = decode_art(&format!("file://{}", path.display()));
+        let _ = std::fs::remove_file(&path);
+        assert!(art.thumb.is_some(), "extensionless PNG decoded as no art");
+        assert!(art.full.is_some());
+    }
+
     use super::*;
 
     #[test]

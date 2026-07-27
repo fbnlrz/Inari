@@ -1,6 +1,6 @@
 [package]
 name = "inari"
-version = "1.0.8"
+version = "1.0.9"
 description = "Linux-native audio routing and mixing for PipeWire, with SteelSeries device control"
 edition = "2021"
 rust-version = "1.77"
@@ -49,3 +49,26 @@ pipewire = { git = "https://gitlab.freedesktop.org/pipewire/pipewire-rs", rev = 
 # rotating file under the app's log dir that a bug report can attach.
 tauri-plugin-log = "2"
 log = "0.4"
+# Inari Remote: the LAN server that lets a tablet drive the mixer. axum is
+# trimmed to what the remote actually needs - one HTTP/1 listener, one
+# WebSocket, query strings. No JSON extractor: frames are parsed by hand so a
+# malformed one is an error reply rather than a 422 with no request id.
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "query", "ws"] }
+# The remote owns this runtime on its own thread; Tauri's async_runtime stays
+# free for the commands that already use it.
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "net", "sync", "time", "macros"] }
+# Pairing QR as an SVG string, rendered in Rust so the token never reaches an
+# npm package. `image` is off - we only ever emit the SVG.
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+# The remote token comes from the OS CSPRNG. Anything derived from the clock
+# would be guessable by whoever else is on the Wi-Fi.
+getrandom = "0.3"
+# Constant-time token comparison, so a wrong token cannot be walked byte by
+# byte from response timings.
+subtle = "2"
+# Request paths arrive percent-encoded; they are decoded before the traversal
+# check so `%2e%2e` cannot slip past it.
+percent-encoding = "2"
+# The bind address is the user's choice, which means offering them the real
+# addresses this machine has rather than a text field and a guess.
+if-addrs = "0.15"

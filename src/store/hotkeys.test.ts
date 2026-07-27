@@ -1,9 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// The store talks to the Rust backend through Tauri IPC; mock the boundary.
-const invoke = vi.fn();
-vi.mock("@tauri-apps/api/core", () => ({
-  invoke: (...args: unknown[]) => invoke(...args),
+// The store talks to the Rust backend through src/lib/ipc; mock that boundary.
+const call = vi.fn();
+const subscribe = vi.fn<(event: string, handler: (payload: never) => void) => Promise<() => void>>(
+  () => Promise.resolve(() => {}),
+);
+vi.mock("../lib/ipc", () => ({
+  call: (...args: unknown[]) => call(...args),
+  subscribe: (event: string, handler: (payload: never) => void) => subscribe(event, handler),
 }));
 
 import {
@@ -34,7 +38,7 @@ const binding = (over: Partial<HotkeyBinding> = {}): HotkeyBinding => ({
 const initialState = useHotkeys.getState();
 
 beforeEach(() => {
-  invoke.mockReset();
+  call.mockReset();
   useHotkeys.setState(initialState, true);
 });
 
@@ -76,11 +80,11 @@ describe("formatAccelerator", () => {
 describe("useHotkeys", () => {
   it("takes the refreshed list straight from the set call", async () => {
     const bound = [binding({ accelerator: "Ctrl+Shift+KeyM", registered: true })];
-    invoke.mockResolvedValue(bound);
+    call.mockResolvedValue(bound);
 
     await useHotkeys.getState().setBinding("mic_mute", "Ctrl+Shift+KeyM");
 
-    expect(invoke).toHaveBeenCalledWith("set_hotkey", {
+    expect(call).toHaveBeenCalledWith("set_hotkey", {
       action: "mic_mute",
       accelerator: "Ctrl+Shift+KeyM",
     });
@@ -90,7 +94,7 @@ describe("useHotkeys", () => {
 
   it("keeps a binding the session refused to grab, marked dead", async () => {
     // The Wayland case: still saved, but the UI must not claim it works.
-    invoke.mockResolvedValue([
+    call.mockResolvedValue([
       binding({ accelerator: "Ctrl+Shift+KeyM", registered: false, error: "HotKey already registered" }),
     ]);
 
@@ -103,14 +107,14 @@ describe("useHotkeys", () => {
   });
 
   it("clears a binding by sending null", async () => {
-    invoke.mockResolvedValue([binding()]);
+    call.mockResolvedValue([binding()]);
     await useHotkeys.getState().setBinding("toggle_window", null);
-    expect(invoke).toHaveBeenCalledWith("set_hotkey", { action: "toggle_window", accelerator: null });
+    expect(call).toHaveBeenCalledWith("set_hotkey", { action: "toggle_window", accelerator: null });
   });
 
   it("surfaces a rejected accelerator instead of pretending it stuck", async () => {
     useHotkeys.setState({ bindings: [binding()] });
-    invoke.mockRejectedValue("Ctrl+Nope is not a valid shortcut");
+    call.mockRejectedValue("Ctrl+Nope is not a valid shortcut");
 
     await useHotkeys.getState().setBinding("mic_mute", "Ctrl+Nope");
 
@@ -119,9 +123,9 @@ describe("useHotkeys", () => {
   });
 
   it("sends the channel target under the name the command expects", async () => {
-    invoke.mockResolvedValue([binding({ action: "channel_mute", channel: "sink_chat" })]);
+    call.mockResolvedValue([binding({ action: "channel_mute", channel: "sink_chat" })]);
     await useHotkeys.getState().setChannel("sink_chat");
-    expect(invoke).toHaveBeenCalledWith("set_hotkey_channel", { sinkName: "sink_chat" });
+    expect(call).toHaveBeenCalledWith("set_hotkey_channel", { sinkName: "sink_chat" });
     expect(useHotkeys.getState().bindings[0].channel).toBe("sink_chat");
   });
 });

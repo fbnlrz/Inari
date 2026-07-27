@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { isTauri } from "../../lib/platform";
 import { useMixerStore } from "../../store/mixer";
 import { IconButton } from "../IconButton";
 import { Ms } from "../Icons";
@@ -78,25 +79,30 @@ export function ProfileMenu() {
                     )}
                   </span>
                 </MenuItem>
-                <div className="profile-row-actions">
-                  <IconButton
-                    boxed
-                    size={15}
-                    icon="bolt"
-                    title="Auto-load when a device connects"
-                    label={`Auto-switch settings for ${profile.name}`}
-                    onClick={() => setTriggerFor((t) => (t === profile.name ? null : profile.name))}
-                  />
-                  <IconButton
-                    boxed
-                    danger
-                    size={15}
-                    icon="delete"
-                    title="Delete profile"
-                    label={`Delete profile ${profile.name}`}
-                    onClick={() => void deleteProfile(profile.name)}
-                  />
-                </div>
+                {/* Switching profiles is the point of the menu; creating,
+                    deleting and arming them rebuilds the mixer, so the remote
+                    gets the rows and nothing else. */}
+                {isTauri && (
+                  <div className="profile-row-actions">
+                    <IconButton
+                      boxed
+                      size={15}
+                      icon="bolt"
+                      title="Auto-load when a device connects"
+                      label={`Auto-switch settings for ${profile.name}`}
+                      onClick={() => setTriggerFor((t) => (t === profile.name ? null : profile.name))}
+                    />
+                    <IconButton
+                      boxed
+                      danger
+                      size={15}
+                      icon="delete"
+                      title="Delete profile"
+                      label={`Delete profile ${profile.name}`}
+                      onClick={() => void deleteProfile(profile.name)}
+                    />
+                  </div>
+                )}
               </div>
               {triggerFor === profile.name && (
                 <div className="trigger-panel">
@@ -130,29 +136,33 @@ export function ProfileMenu() {
           );
         })}
 
-        <div className="menu-sep" />
-        <div className="menu-save">
-          <input
-            className="menu-input"
-            placeholder="New profile name…"
-            value={newName}
-            maxLength={64}
-            onChange={(e) => setNewName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") create();
-            }}
-          />
-          <button
-            type="button"
-            className="select"
-            onClick={create}
-            disabled={!newName.trim()}
-            title="Create a fresh profile (default channels, no routing) and switch to it"
-          >
-            <Ms name="add" />
-            <span>Create</span>
-          </button>
-        </div>
+        {isTauri && (
+          <>
+            <div className="menu-sep" />
+            <div className="menu-save">
+              <input
+                className="menu-input"
+                placeholder="New profile name…"
+                value={newName}
+                maxLength={64}
+                onChange={(e) => setNewName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") create();
+                }}
+              />
+              <button
+                type="button"
+                className="select"
+                onClick={create}
+                disabled={!newName.trim()}
+                title="Create a fresh profile (default channels, no routing) and switch to it"
+              >
+                <Ms name="add" />
+                <span>Create</span>
+              </button>
+            </div>
+          </>
+        )}
       </Popover>
     </div>
   );

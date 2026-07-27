@@ -1,9 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// The store talks to the Rust backend through Tauri IPC; mock the boundary.
-const invoke = vi.fn();
-vi.mock("@tauri-apps/api/core", () => ({
-  invoke: (...args: unknown[]) => invoke(...args),
+// The store talks to the Rust backend through src/lib/ipc; mock that boundary.
+const call = vi.fn();
+const subscribe = vi.fn<(event: string, handler: (payload: never) => void) => Promise<() => void>>(
+  () => Promise.resolve(() => {}),
+);
+vi.mock("../lib/ipc", () => ({
+  call: (...args: unknown[]) => call(...args),
+  subscribe: (event: string, handler: (payload: never) => void) => subscribe(event, handler),
 }));
 
 import { useMixerStore } from "./mixer";
@@ -37,10 +41,10 @@ const initialState = useMixerStore.getState();
 const stored = () => useMixerStore.getState().buses[0];
 
 beforeEach(() => {
-  invoke.mockReset();
+  call.mockReset();
   // list_buses would otherwise resolve undefined and wipe the state the
   // assertions are about; echo the store back so the re-sync is a no-op.
-  invoke.mockImplementation(async (cmd: string) =>
+  call.mockImplementation(async (cmd: string) =>
     cmd === "list_buses" ? useMixerStore.getState().buses : undefined,
   );
   useMixerStore.setState(initialState, true);
@@ -72,7 +76,7 @@ describe("setBusMembers", () => {
 
     await useMixerStore.getState().setBusMembers("sink_bus1", ["sink_game"]);
 
-    expect(invoke).toHaveBeenCalledWith("set_bus_members", {
+    expect(call).toHaveBeenCalledWith("set_bus_members", {
       name: "sink_bus1",
       channels: ["sink_game"],
     });
@@ -101,12 +105,12 @@ describe("setBusMembers", () => {
 
     await useMixerStore.getState().setBusMembers("sink_bus1", ["sink_game"]);
 
-    expect(invoke).toHaveBeenCalledWith("list_buses");
+    expect(call).toHaveBeenCalledWith("list_buses");
   });
 
   it("re-syncs from the backend when the write fails", async () => {
     useMixerStore.setState({ buses: [bus()] });
-    invoke.mockImplementation(async (cmd: string) => {
+    call.mockImplementation(async (cmd: string) => {
       if (cmd === "set_bus_members") throw "no such mix";
       return cmd === "list_buses" ? [bus({ channels: ["sink_game"] })] : undefined;
     });
@@ -174,7 +178,7 @@ describe("setBusExclude", () => {
 
   it("re-syncs from the backend when the write fails", async () => {
     useMixerStore.setState({ buses: [bus({ channels: ["sink_game"] })] });
-    invoke.mockImplementation(async (cmd: string) => {
+    call.mockImplementation(async (cmd: string) => {
       if (cmd === "set_bus_exclude") throw "backend down";
       return cmd === "list_buses" ? [bus({ channels: ["sink_game"] })] : undefined;
     });

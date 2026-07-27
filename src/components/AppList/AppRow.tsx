@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { isTauri } from "../../lib/platform";
 import { useMixerStore } from "../../store/mixer";
 import type { AppStream } from "../../types";
 import { IconButton } from "../IconButton";
@@ -69,14 +70,18 @@ export function AppRow({ stream }: Readonly<AppRowProps>) {
                 {stream.app_name}
               </span>
             )}
-            <IconButton
-              reveal
-              size={14}
-              icon="edit"
-              title="Rename"
-              label={`Rename ${displayName}`}
-              onClick={startEdit}
-            />
+            {/* An alias is a lasting edit to the app history, not a routing
+             * decision, so renaming stays with the desktop. */}
+            {isTauri && (
+              <IconButton
+                reveal
+                size={14}
+                icon="edit"
+                title="Rename"
+                label={`Rename ${displayName}`}
+                onClick={startEdit}
+              />
+            )}
             <IconButton
               reveal
               size={14}

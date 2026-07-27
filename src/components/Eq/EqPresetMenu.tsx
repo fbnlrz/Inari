@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { call } from "../../lib/ipc";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { isTauri } from "../../lib/platform";
 import type { EqConfig } from "../../types";
 import { Ms } from "../Icons";
 import { Popover } from "../Popover";
@@ -36,7 +37,7 @@ export function EqPresetMenu({ sinkName, config, onApply, onError }: Readonly<Eq
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
   const refresh = () => {
-    invoke<EqPresetEntry[]>("list_eq_presets")
+    call<EqPresetEntry[]>("list_eq_presets")
       .then(setPresets)
       .catch((e) => onError(String(e)));
   };
@@ -62,7 +63,7 @@ export function EqPresetMenu({ sinkName, config, onApply, onError }: Readonly<Eq
     const name = saveName.trim();
     if (!name) return;
     try {
-      await invoke("save_user_eq_preset", { name, config });
+      await call("save_user_eq_preset", { name, config });
       setSaveName("");
       refresh();
     } catch (e) {
@@ -81,7 +82,7 @@ export function EqPresetMenu({ sinkName, config, onApply, onError }: Readonly<Eq
 
   const importPasted = async () => {
     try {
-      applyImported(await invoke<EqConfig>("import_eq_config", { text: importText }));
+      applyImported(await call<EqConfig>("import_eq_config", { text: importText }));
     } catch (e) {
       onError(String(e));
     }
@@ -94,7 +95,7 @@ export function EqPresetMenu({ sinkName, config, onApply, onError }: Readonly<Eq
         filters: [{ name: "EQ preset", extensions: ["json", "txt"] }],
       });
       if (typeof path !== "string") return;
-      applyImported(await invoke<EqConfig>("import_eq_file", { path }));
+      applyImported(await call<EqConfig>("import_eq_file", { path }));
     } catch (e) {
       onError(String(e));
     }
@@ -107,7 +108,7 @@ export function EqPresetMenu({ sinkName, config, onApply, onError }: Readonly<Eq
         filters: [{ name: "EQ preset", extensions: ["json"] }],
       });
       if (typeof path !== "string") return;
-      await invoke("export_channel_eq_to_file", { sinkName, path });
+      await call("export_channel_eq_to_file", { sinkName, path });
       setMenuOpen(false);
     } catch (e) {
       onError(String(e));
@@ -116,7 +117,7 @@ export function EqPresetMenu({ sinkName, config, onApply, onError }: Readonly<Eq
 
   const deletePreset = async (name: string) => {
     try {
-      await invoke("delete_user_eq_preset", { name });
+      await call("delete_user_eq_preset", { name });
       setConfirmDelete(null);
       refresh();
     } catch (e) {
@@ -270,15 +271,17 @@ export function EqPresetMenu({ sinkName, config, onApply, onError }: Readonly<Eq
             <Ms name="content_paste" style={{ fontSize: 15 }} />
             <span>Import</span>
           </button>
-          <button
-            type="button"
-            className="select eqm-io-btn"
-            title="Export this curve to a JSON file"
-            onClick={() => void exportToFile()}
-          >
-            <Ms name="download" style={{ fontSize: 15 }} />
-            <span>Export</span>
-          </button>
+          {isTauri && (
+            <button
+              type="button"
+              className="select eqm-io-btn"
+              title="Export this curve to a JSON file"
+              onClick={() => void exportToFile()}
+            >
+              <Ms name="download" style={{ fontSize: 15 }} />
+              <span>Export</span>
+            </button>
+          )}
         </div>
         {importing && (
           <div className="eqm-import">
@@ -298,9 +301,11 @@ export function EqPresetMenu({ sinkName, config, onApply, onError }: Readonly<Eq
               >
                 Apply pasted
               </button>
-              <button type="button" className="select" onClick={() => void importFromFile()}>
-                From file…
-              </button>
+              {isTauri && (
+                <button type="button" className="select" onClick={() => void importFromFile()}>
+                  From file…
+                </button>
+              )}
             </div>
           </div>
         )}

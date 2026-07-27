@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { isTauri } from "../../lib/platform";
 import { Ms } from "../Icons";
 import {
   useHeadset,
@@ -244,7 +245,9 @@ export function HeadsetScreen() {
             ]}
           />
         </div>
-        <div className="hs-row">
+        {/* Writes a WirePlumber fragment that only takes effect at the next
+            login, so it is a desktop setting and the remote cannot send it. */}
+        <div className="hs-row" hidden={!isTauri}>
           <span>
             Anti-crackle headroom{" "}
             <span className="hs-hint" style={{ display: "block" }}>

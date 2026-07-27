@@ -1,9 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// The store talks to the Rust backend through Tauri IPC; mock the boundary.
-const invoke = vi.fn();
-vi.mock("@tauri-apps/api/core", () => ({
-  invoke: (...args: unknown[]) => invoke(...args),
+// The store talks to the Rust backend through src/lib/ipc; mock that boundary.
+const call = vi.fn();
+const subscribe = vi.fn<(event: string, handler: (payload: never) => void) => Promise<() => void>>(
+  () => Promise.resolve(() => {}),
+);
+vi.mock("../lib/ipc", () => ({
+  call: (...args: unknown[]) => call(...args),
+  subscribe: (event: string, handler: (payload: never) => void) => subscribe(event, handler),
 }));
 
 import { useMixerStore } from "./mixer";
@@ -26,8 +30,8 @@ const volumes = () =>
 
 beforeEach(() => {
   vi.useFakeTimers();
-  invoke.mockReset();
-  invoke.mockResolvedValue(undefined);
+  call.mockReset();
+  call.mockResolvedValue(undefined);
   useMixerStore.setState(initialState, true);
 });
 
@@ -113,14 +117,14 @@ describe("applyChatMix channel resolution", () => {
 
     expect(volumes()).toEqual({ sink_game: 100 });
     vi.advanceTimersByTime(200);
-    expect(invoke).not.toHaveBeenCalled();
+    expect(call).not.toHaveBeenCalled();
   });
 
   it("does nothing with no channels at all", () => {
     useMixerStore.getState().applyChatMix(40, 60);
 
     vi.advanceTimersByTime(200);
-    expect(invoke).not.toHaveBeenCalled();
+    expect(call).not.toHaveBeenCalled();
   });
 });
 
@@ -144,13 +148,13 @@ describe("applyChatMix values", () => {
   it("reaches the backend through the normal debounced volume path", () => {
     useMixerStore.getState().applyChatMix(25, 75);
 
-    expect(invoke).not.toHaveBeenCalled(); // still inside the debounce window
+    expect(call).not.toHaveBeenCalled(); // still inside the debounce window
     vi.advanceTimersByTime(100);
-    expect(invoke).toHaveBeenCalledWith("set_channel_volume", {
+    expect(call).toHaveBeenCalledWith("set_channel_volume", {
       sinkName: "sink_game",
       volume: 25,
     });
-    expect(invoke).toHaveBeenCalledWith("set_channel_volume", {
+    expect(call).toHaveBeenCalledWith("set_channel_volume", {
       sinkName: "sink_chat",
       volume: 75,
     });

@@ -1,6 +1,5 @@
 import { create } from "zustand";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { call, subscribe, type Command } from "../lib/ipc";
 import { createDebouncer } from "../lib/debounce";
 import { useMixerStore } from "./mixer";
 
@@ -179,8 +178,8 @@ export const useHeadset = create<HeadsetState>((set, get) => {
    * suppress a rejection - a disconnected headset would otherwise produce an
    * unhandled rejection and no feedback at all.
    */
-  const cmd = (name: string, args?: Record<string, unknown>): Promise<void> =>
-    invoke<void>(name, args).catch((e: unknown) => {
+  const cmd = (name: Command, args?: Record<string, unknown>): Promise<void> =>
+    call<void>(name, args).catch((e: unknown) => {
       set({ error: String(e) });
     });
 
@@ -200,7 +199,7 @@ export const useHeadset = create<HeadsetState>((set, get) => {
 
     applyEqPreset: async (name) => {
       try {
-        const bands = await invoke<number[]>("headset_apply_eq_preset", { name });
+        const bands = await call<number[]>("headset_apply_eq_preset", { name });
         get().scheduleSave();
         return bands;
       } catch (e) {
@@ -209,13 +208,13 @@ export const useHeadset = create<HeadsetState>((set, get) => {
       }
     },
 
-    scheduleSave: () => debounced("save", () => invoke("headset_save"), { ms: 800 }),
+    scheduleSave: () => debounced("save", () => call("headset_save"), { ms: 800 }),
 
     init: async () => {
       if (get()._initialized) return;
       set({ _initialized: true });
       try {
-        const snap = await invoke<HeadsetSnapshot>("get_headset_status");
+        const snap = await call<HeadsetSnapshot>("get_headset_status");
         set({
           connected: snap.connected,
           status: snap.status,
@@ -226,14 +225,14 @@ export const useHeadset = create<HeadsetState>((set, get) => {
         // Six independent reads: one round trip instead of six in series.
         const [clips, alsaHeadroom, notifyMirror, notifyDisplay, eqPresets, modes] =
           await Promise.all([
-            invoke<ClipEntry[]>("headset_oled_clips"),
-            invoke<boolean>("headset_get_alsa_headroom"),
-            invoke<boolean>("headset_get_notify_mirror"),
-            invoke<{ duration_secs: number; scroll: NotifyScroll }>(
+            call<ClipEntry[]>("headset_oled_clips"),
+            call<boolean>("headset_get_alsa_headroom"),
+            call<boolean>("headset_get_notify_mirror"),
+            call<{ duration_secs: number; scroll: NotifyScroll }>(
               "headset_get_notify_display",
             ),
-            invoke<EqPreset[]>("headset_eq_presets"),
-            invoke<ModeEntry[]>("headset_oled_modes"),
+            call<EqPreset[]>("headset_eq_presets"),
+            call<ModeEntry[]>("headset_oled_modes"),
           ]);
         set({
           clips,
@@ -247,46 +246,46 @@ export const useHeadset = create<HeadsetState>((set, get) => {
       } catch (e) {
         set({ error: String(e) });
       }
-      void listen<HeadsetStatus>("headset-status", (e) =>
-        set({ status: e.payload }),
+      void subscribe<HeadsetStatus>("headset-status", (status) =>
+        set({ status }),
       );
-      void listen<boolean>("headset-presence", (e) => {
+      void subscribe<boolean>("headset-presence", (connected) => {
         set((s) => ({
-          connected: e.payload,
-          status: e.payload ? s.status : emptyStatus,
-          model: e.payload ? s.model : null,
+          connected,
+          status: connected ? s.status : emptyStatus,
+          model: connected ? s.model : null,
         }));
         // A different model may have been plugged in; re-read its capabilities.
-        if (e.payload) {
-          void invoke<HeadsetSnapshot>("get_headset_status")
+        if (connected) {
+          void call<HeadsetSnapshot>("get_headset_status")
             .then((snap) => set({ model: snap.model, hasOled: snap.has_oled }))
             .catch((err: unknown) => set({ error: String(err) }));
         }
       });
       // Hardware ChatMix wheel -> software mix (moves the balance channels,
       // which in turn moves the BalanceBar since it derives from their volumes).
-      void listen<[number, number]>("headset-chatmix", (e) => {
-        const [game, chat] = e.payload;
+      void subscribe<[number, number]>("headset-chatmix", (mix) => {
+        const [game, chat] = mix;
         useMixerStore.getState().applyChatMix(game, chat);
       });
     },
 
     setSidetone: (level) => {
-      debounced("sidetone", () => invoke("headset_set_sidetone", { level }));
+      debounced("sidetone", () => call("headset_set_sidetone", { level }));
       get().scheduleSave();
     },
     setMicVolume: (level) => {
-      debounced("micvol", () => invoke("headset_set_mic_volume", { level }));
+      debounced("micvol", () => call("headset_set_mic_volume", { level }));
       get().scheduleSave();
     },
     setMicLed: (level) => {
-      debounced("micled", () => invoke("headset_set_mic_led", { level }));
+      debounced("micled", () => call("headset_set_mic_led", { level }));
       get().scheduleSave();
     },
     setAnc: (mode) => {
       const prev = get().status.anc;
       set((s) => ({ status: patch(s.status, { anc: mode }) }));
-      void invoke("headset_set_anc", { mode })
+      void call("headset_set_anc", { mode })
         .then(() => get().scheduleSave())
         .catch((e: unknown) =>
           fail(e, () => set((s) => ({ status: patch(s.status, { anc: prev }) }))),
@@ -294,13 +293,13 @@ export const useHeadset = create<HeadsetState>((set, get) => {
     },
     setTransparency: (level) => {
       set((s) => ({ status: patch(s.status, { transparency_level: level }) }));
-      debounced("transp", () => invoke("headset_set_transparency", { level }));
+      debounced("transp", () => call("headset_set_transparency", { level }));
       get().scheduleSave();
     },
     setAutoOff: (idx) => {
       const prev = get().status.auto_off_minutes;
       set((s) => ({ status: patch(s.status, { auto_off_minutes: AUTO_OFF_STEPS[idx] }) }));
-      void invoke("headset_set_auto_off", { idx })
+      void call("headset_set_auto_off", { idx })
         .then(() => get().scheduleSave())
         .catch((e: unknown) =>
           fail(e, () =>
@@ -310,14 +309,14 @@ export const useHeadset = create<HeadsetState>((set, get) => {
     },
     setGainHigh: (high) => {
       // No status field mirrors gain, so there is nothing to roll back.
-      void invoke("headset_set_gain_high", { high })
+      void call("headset_set_gain_high", { high })
         .then(() => get().scheduleSave())
         .catch((e: unknown) => fail(e));
     },
     setWirelessRange: (range) => {
       const prev = get().status.wireless_range_mode;
       set((s) => ({ status: patch(s.status, { wireless_range_mode: range }) }));
-      void invoke("headset_set_wireless_range", { range })
+      void call("headset_set_wireless_range", { range })
         .then(() => get().scheduleSave())
         .catch((e: unknown) =>
           fail(e, () =>
@@ -328,7 +327,7 @@ export const useHeadset = create<HeadsetState>((set, get) => {
     setLineOut: (mode) => {
       const prev = get().status.line_out;
       set((s) => ({ status: patch(s.status, { line_out: mode }) }));
-      void invoke("headset_set_line_out", { mode })
+      void call("headset_set_line_out", { mode })
         .then(() => get().scheduleSave())
         .catch((e: unknown) =>
           fail(e, () => set((s) => ({ status: patch(s.status, { line_out: prev }) }))),
@@ -336,16 +335,16 @@ export const useHeadset = create<HeadsetState>((set, get) => {
     },
     setLineOutVolumes: (left, right, aux) => {
       debounced("lineoutvol", () =>
-        invoke("headset_set_line_out_volumes", { left, right, aux }),
+        call("headset_set_line_out_volumes", { left, right, aux }),
       );
       get().scheduleSave();
     },
     setEqBands: (bands) => {
-      debounced("eqbands", () => invoke("headset_set_eq_bands", { bands }));
+      debounced("eqbands", () => call("headset_set_eq_bands", { bands }));
       get().scheduleSave();
     },
     setEqPreset: (preset) => {
-      void invoke("headset_set_eq_preset", { preset })
+      void call("headset_set_eq_preset", { preset })
         .then(() => get().scheduleSave())
         .catch((e: unknown) => fail(e));
     },
@@ -358,7 +357,7 @@ export const useHeadset = create<HeadsetState>((set, get) => {
     setNotifyMirror: async (enabled) => {
       set({ notifyMirror: enabled });
       try {
-        await invoke("headset_set_notify_mirror", { enabled });
+        await call("headset_set_notify_mirror", { enabled });
       } catch (e) {
         fail(e, () => set({ notifyMirror: !enabled }));
       }
@@ -369,7 +368,7 @@ export const useHeadset = create<HeadsetState>((set, get) => {
       const prev = { secs: get().notifyDurationSecs, scroll: get().notifyScroll };
       set({ notifyDurationSecs: durationSecs, notifyScroll: scroll });
       try {
-        await invoke("headset_set_notify_display", { durationSecs, scroll });
+        await call("headset_set_notify_display", { durationSecs, scroll });
       } catch (e) {
         fail(e, () => set({ notifyDurationSecs: prev.secs, notifyScroll: prev.scroll }));
       }
@@ -386,13 +385,13 @@ export const useHeadset = create<HeadsetState>((set, get) => {
     timerToggle: () => cmd("headset_timer_toggle"),
     timerReset: () => cmd("headset_timer_reset"),
     oledBrightness: (level) =>
-      debounced("brightness", () => invoke("headset_oled_brightness", { level })),
+      debounced("brightness", () => call("headset_oled_brightness", { level })),
     oledReturnUi: () => cmd("headset_oled_return_ui"),
 
     setAlsaHeadroom: async (enabled) => {
       set({ alsaHeadroom: enabled });
       try {
-        await invoke("headset_set_alsa_headroom", { enabled });
+        await call("headset_set_alsa_headroom", { enabled });
       } catch (e) {
         fail(e, () => set({ alsaHeadroom: !enabled }));
       }

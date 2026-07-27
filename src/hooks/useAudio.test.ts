@@ -2,19 +2,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook } from "@testing-library/react";
 
 // Same boundary mock as src/store/mixer.test.ts: the store talks to Rust
-// through Tauri IPC, and this hook additionally subscribes to Tauri events.
-const invoke = vi.fn();
-vi.mock("@tauri-apps/api/core", () => ({
-  invoke: (...args: unknown[]) => invoke(...args),
-}));
+// through src/lib/ipc, and this hook additionally subscribes to backend events.
+const call = vi.fn();
 
-type Handler = (event: { payload: never }) => void;
-const unlisten = vi.fn();
-const listen = vi.fn<(event: string, handler: Handler) => Promise<typeof unlisten>>(() =>
-  Promise.resolve(unlisten),
+type Handler = (payload: never) => void;
+const unsubscribe = vi.fn();
+const subscribe = vi.fn<(event: string, handler: Handler) => Promise<typeof unsubscribe>>(() =>
+  Promise.resolve(unsubscribe),
 );
-vi.mock("@tauri-apps/api/event", () => ({
-  listen: (event: string, handler: Handler) => listen(event, handler),
+vi.mock("../lib/ipc", () => ({
+  call: (...args: unknown[]) => call(...args),
+  subscribe: (event: string, handler: Handler) => subscribe(event, handler),
 }));
 
 import { useAudio } from "./useAudio";
@@ -55,22 +53,22 @@ let actions: ReturnType<typeof spyActions>;
 const pollCount = () => actions.fetchAppStreams.mock.calls.length;
 const seenCount = () => actions.fetchSeenApps.mock.calls.length;
 
-/** The handler registered for a Tauri event, by event name. */
+/** The handler registered for a backend event, by event name. */
 const handlerFor = (event: string) => {
-  const call = listen.mock.calls.find((c) => c[0] === event);
-  if (!call) throw new Error(`no listener for ${event}`);
-  return call[1];
+  const entry = subscribe.mock.calls.find((c) => c[0] === event);
+  if (!entry) throw new Error(`no listener for ${event}`);
+  return entry[1];
 };
 const fireGraphChanged = () =>
-  act(async () => handlerFor("graph-changed")({ payload: undefined as never }));
+  act(async () => handlerFor("graph-changed")(undefined as never));
 
 beforeEach(() => {
   vi.useFakeTimers();
   hidden = false;
-  invoke.mockReset();
-  invoke.mockResolvedValue(undefined);
-  listen.mockClear();
-  unlisten.mockClear();
+  call.mockReset();
+  call.mockResolvedValue(undefined);
+  subscribe.mockClear();
+  unsubscribe.mockClear();
   useMixerStore.setState(initialState, true);
   actions = spyActions();
   // Set before render: the poll effect keys on these identities.
@@ -255,22 +253,22 @@ describe("event subscriptions", () => {
   it("subscribes to every event and unsubscribes on unmount", async () => {
     const { unmount } = renderHook(() => useAudio());
 
-    expect(listen.mock.calls.map((c) => c[0])).toEqual([
+    expect(subscribe.mock.calls.map((c) => c[0])).toEqual([
       "graph-changed",
       "levels",
       "profile-changed",
     ]);
 
     unmount();
-    // The cleanups await the listen() promise before calling the unlisten fn.
+    // The cleanups await the subscribe() promise before calling the unsubscribe fn.
     await act(async () => {});
-    expect(unlisten).toHaveBeenCalledTimes(3);
+    expect(unsubscribe).toHaveBeenCalledTimes(3);
   });
 
   it("routes level events into the store", () => {
     renderHook(() => useAudio());
 
-    act(() => handlerFor("levels")({ payload: { sink_game: [0.5, 0.25] } as never }));
+    act(() => handlerFor("levels")({ sink_game: [0.5, 0.25] } as never));
 
     expect(useMixerStore.getState().levels["sink_game"]).toEqual([0.5, 0.25]);
   });
