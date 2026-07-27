@@ -10,12 +10,18 @@ use crate::state::AppState;
 pub struct BackendInfo {
     /// True = native PipeWire backend; false = pactl subprocess fallback.
     pub native: bool,
+    /// False when the backend's engine has stopped (the native PipeWire loop
+    /// thread left). Every audio request fails from here on and nothing but a
+    /// restart brings it back, so this is a distinct state from `native:
+    /// false` - the fallback works, a stopped engine does not.
+    pub engine_alive: bool,
 }
 
 #[tauri::command]
 pub fn get_backend_info(state: State<'_, AppState>) -> BackendInfo {
     BackendInfo {
         native: state.backend_native,
+        engine_alive: state.backend.is_engine_alive(),
     }
 }
 

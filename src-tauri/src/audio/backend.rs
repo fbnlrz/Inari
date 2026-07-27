@@ -89,4 +89,12 @@ pub trait AudioBackend: Send + Sync {
     /// Apply the Phase 3 mic chain configuration. Native-backend only; the
     /// pactl fallback reports it as unsupported.
     fn set_mic_config(&self, config: &MicConfig) -> Result<(), SinkError>;
+
+    /// False once the backend's engine has stopped serving requests - the
+    /// native backend's loop thread left and took every sink, link and EQ
+    /// chain with it. Backends that are just subprocess calls (pactl) have
+    /// no engine to lose and are always alive.
+    fn is_engine_alive(&self) -> bool {
+        true
+    }
 }

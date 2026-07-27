@@ -79,7 +79,10 @@ function DeviceRow({
   );
 }
 
-function engineDesc(native: boolean | null): string {
+// A stopped engine is its own state, not a kind of fallback: the fallback
+// still works, a stopped loop means audio control is gone until a restart.
+function engineDesc(native: boolean | null, alive: boolean): string {
+  if (!alive) return "Stopped - restart Inari to restore audio control";
   if (native === null) return "…";
   return native
     ? "Native PipeWire (pipewire-rs) - live metering, passive routing"
@@ -92,6 +95,7 @@ export function SettingsScreen() {
   const [autostart, setAutostart] = useState<boolean | null>(null);
   const [startMinimized, setStartMinimized] = useState(false);
   const [backendNative, setBackendNative] = useState<boolean | null>(null);
+  const [engineAlive, setEngineAlive] = useState(true);
   const [version, setVersion] = useState("");
   const [defaults, setDefaults] = useState<DefaultDevices>({ output: null, input: null });
   const [labelStyle, setLabelStyle] = useState<LabelStyle>("plain");
@@ -106,7 +110,10 @@ export function SettingsScreen() {
 
   useEffect(() => {
     void invoke<boolean>("get_autostart").then(setAutostart);
-    void invoke<{ native: boolean }>("get_backend_info").then((i) => setBackendNative(i.native));
+    void invoke<{ native: boolean; engine_alive: boolean }>("get_backend_info").then((i) => {
+      setBackendNative(i.native);
+      setEngineAlive(i.engine_alive);
+    });
     void invoke<DefaultDevices>("get_default_devices").then(setDefaults).catch(() => {});
     void invoke<{ device_label_style: LabelStyle; start_minimized: boolean }>("get_prefs")
       .then((p) => {
@@ -299,13 +306,17 @@ export function SettingsScreen() {
             <div className="rmain">
               <div className="rtitle">Audio engine</div>
               <div className="rsub">
-                {engineDesc(backendNative)}
+                {engineDesc(backendNative, engineAlive)}
               </div>
             </div>
-            {backendNative !== null && (
-              <span className={"tag" + (backendNative ? " live" : "")}>
-                {backendNative ? "native" : "fallback"}
-              </span>
+            {!engineAlive ? (
+              <span className="tag" role="status">stopped</span>
+            ) : (
+              backendNative !== null && (
+                <span className={"tag" + (backendNative ? " live" : "")}>
+                  {backendNative ? "native" : "fallback"}
+                </span>
+              )
             )}
           </div>
           <div className="row">
