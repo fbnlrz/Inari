@@ -7,41 +7,11 @@
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::os::unix::io::AsRawFd;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use super::protocol::{COMMAND_LEN, PRODUCT_IDS, VENDOR_ID};
-use super::protocol_apw;
+use crate::device::{self, DeviceClass, DeviceEntry};
 
-/// Which SteelSeries base-station family a node belongs to. They speak
-/// incompatible protocols, so everything downstream branches on this.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DeviceKind {
-    /// Arctis Nova Pro Wireless — report id 0x06, 64-byte reports, OLED.
-    NovaPro,
-    /// Arctis Pro Wireless (pre-Nova) — 0xAA-suffixed, 31-byte reports.
-    ArctisPro,
-}
-
-impl DeviceKind {
-    /// Padded length of a control/output report for this family.
-    pub fn command_len(self) -> usize {
-        match self {
-            DeviceKind::NovaPro => COMMAND_LEN,
-            DeviceKind::ArctisPro => protocol_apw::COMMAND_LEN,
-        }
-    }
-
-    /// Whether this family drives an OLED panel we know how to talk to.
-    pub fn has_oled(self) -> bool {
-        matches!(self, DeviceKind::NovaPro)
-    }
-}
-
-/// Opening bytes of the Nova Pro control interface's report descriptor:
-/// `Usage Page (0xFFC0)` in HID's long-item encoding. The device's other
-/// interface (consumer/media keys) starts with a different usage page, so this
-/// is what tells the two apart.
-const VENDOR_USAGE_PAGE: [u8; 3] = [0x06, 0xc0, 0xff];
+use super::protocol::COMMAND_LEN;
 
 /// `HIDIOCSFEATURE(len)` = `_IOC(_IOC_WRITE | _IOC_READ, 'H', 0x06, len)`.
 /// Encoded per the asm-generic ioctl layout (dir<<30 | size<<16 | type<<8 | nr).
@@ -53,81 +23,18 @@ fn hidiocsfeature(len: usize) -> libc::c_ulong {
         | 0x06) as libc::c_ulong
 }
 
-/// A resolved base-station control node plus how the kernel identified it.
-#[derive(Clone)]
-pub struct DevicePath {
-    pub dev: PathBuf,
-    pub product_id: u16,
-    pub kind: DeviceKind,
-}
-
-/// Locate a supported base station's control node.
-///
-/// Nova Pro exposes two HID interfaces; the control/OLED one is identified by
-/// its report descriptor starting with usage page `0xFFC0` (`06 c0 ff`), which
-/// separates it from the consumer/media-key interface. The Arctis Pro
-/// generation has a single control interface, so a product-id match suffices.
-///
-/// Nova Pro wins when both are somehow present, since it's the richer device.
-pub fn find_device() -> Option<DevicePath> {
-    let mut fallback: Option<DevicePath> = None;
-    let entries = std::fs::read_dir("/sys/class/hidraw").ok()?;
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if !name.starts_with("hidraw") {
-            continue;
-        }
-        let sys = Path::new("/sys/class/hidraw").join(&*name).join("device");
-        let Some((pid, kind)) = matching_product(&sys) else {
-            continue;
-        };
-        let dev = PathBuf::from("/dev").join(&*name);
-        match kind {
-            DeviceKind::NovaPro => {
-                // Only the vendor control collection can drive status + OLED.
-                let desc = std::fs::read(sys.join("report_descriptor")).unwrap_or_default();
-                if desc.starts_with(&VENDOR_USAGE_PAGE) {
-                    return Some(DevicePath { dev, product_id: pid, kind });
-                }
-            }
-            DeviceKind::ArctisPro => {
-                fallback.get_or_insert(DevicePath { dev, product_id: pid, kind });
-            }
-        }
-    }
-    fallback
-}
-
-/// Parse `HID_ID=0003:00001038:000012E0` from a hidraw device's uevent and
-/// classify it as one of the supported base-station families.
-fn matching_product(sys_device: &Path) -> Option<(u16, DeviceKind)> {
-    let uevent = std::fs::read_to_string(sys_device.join("uevent")).ok()?;
-    let hid_id = uevent
-        .lines()
-        .find_map(|l| l.strip_prefix("HID_ID="))?;
-    let mut parts = hid_id.split(':');
-    let _bus = parts.next()?;
-    let vendor = u16::from_str_radix(parts.next()?.trim(), 16).ok()?;
-    let product = u16::from_str_radix(parts.next()?.trim(), 16).ok()?;
-    if vendor != VENDOR_ID {
-        return None;
-    }
-    if PRODUCT_IDS.contains(&product) {
-        Some((product, DeviceKind::NovaPro))
-    } else if protocol_apw::PRODUCT_IDS.contains(&product) {
-        Some((product, DeviceKind::ArctisPro))
-    } else {
-        None
-    }
-}
+/// A resolved base-station control node plus the table entry that claimed it.
+/// Discovery itself lives in [`crate::device`], which knows the descriptor
+/// prefix that separates Nova Pro's control interface from its media-key one
+/// and the priority that lets Nova Pro win over the pre-Nova generation.
+pub type DevicePath = device::Found;
 
 /// A writable handle to the base station: output reports (commands) and
 /// feature reports (OLED). Cheap to clone the path; the file is the resource.
 pub struct HidDevice {
     file: File,
     pub product_id: u16,
-    pub kind: DeviceKind,
+    pub entry: &'static DeviceEntry,
     pub path: PathBuf,
 }
 
@@ -141,14 +48,14 @@ impl HidDevice {
         Ok(Self {
             file,
             product_id: path.product_id,
-            kind: path.kind,
+            entry: path.entry,
             path: path.dev.clone(),
         })
     }
 
     /// Discover and open the base station in one step.
     pub fn discover() -> io::Result<Self> {
-        let path = find_device().ok_or_else(|| {
+        let path = device::scan(DeviceClass::Headset).ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::NotFound,
                 "no Arctis Nova Pro Wireless base station found",
@@ -163,14 +70,14 @@ impl HidDevice {
         DevicePath {
             dev: self.path.clone(),
             product_id: self.product_id,
-            kind: self.kind,
+            entry: self.entry,
         }
     }
 
     /// Write a command as a HID **output** report, zero-padded to this
     /// family's report length (64 bytes on Nova Pro, 31 on Arctis Pro).
     pub fn write_command(&mut self, body: &[u8]) -> io::Result<()> {
-        let len = self.kind.command_len();
+        let len = self.entry.report_len;
         let mut report = vec![0u8; len];
         let n = body.len().min(len);
         report[..n].copy_from_slice(&body[..n]);

@@ -11,13 +11,13 @@ use log::{info, warn};
 use tauri::{AppHandle, Emitter};
 
 use crate::audio::pw_native::levels::LevelStore;
+use crate::device::{Caps, DeviceEntry, HeadsetOps};
 use crate::persistence::prefs::{NotifyScroll, Prefs};
 
-use super::hidraw::{DeviceKind, HidDevice};
+use super::hidraw::HidDevice;
 use super::media::OledFrame;
 use super::oled_controller::{self, AuxData, OledCommand, OledContent};
 use super::protocol::{self, HeadsetStatus};
-use super::protocol_apw::{self, ApwStatus};
 
 /// Event names emitted to the frontend.
 const EV_STATUS: &str = "headset-status";
@@ -33,8 +33,9 @@ pub struct HeadsetManager {
     /// Latest decoded status snapshot (Nova Pro shape; the Arctis Pro's
     /// smaller frame is folded into the same struct so the UI stays uniform).
     status: Mutex<HeadsetStatus>,
-    /// Which family is currently connected, if any.
-    kind: Mutex<Option<DeviceKind>>,
+    /// Table entry of the connected device, if any — the one place model,
+    /// capabilities and protocol behaviour are looked up from.
+    entry: Mutex<Option<&'static DeviceEntry>>,
     connected: AtomicBool,
     app: Mutex<Option<AppHandle>>,
     /// Running `dbus-monitor` child when notification mirroring is on.
@@ -52,7 +53,7 @@ impl Default for HeadsetManager {
             writer: Mutex::new(None),
             oled_tx: Mutex::new(None),
             status: Mutex::new(HeadsetStatus::default()),
-            kind: Mutex::new(None),
+            entry: Mutex::new(None),
             connected: AtomicBool::new(false),
             app: Mutex::new(None),
             notify_child: Mutex::new(None),
@@ -75,17 +76,25 @@ impl HeadsetManager {
         self.status.lock().map(|s| s.clone()).unwrap_or_default()
     }
 
-    /// Which device family is connected (None when nothing is).
-    pub fn kind(&self) -> Option<DeviceKind> {
-        self.kind.lock().ok().and_then(|k| *k)
+    /// Table entry of the connected device (None when nothing is).
+    pub fn entry(&self) -> Option<&'static DeviceEntry> {
+        self.entry.lock().ok().and_then(|e| *e)
     }
 
     /// Model name for the UI.
     pub fn model_name(&self) -> Option<&'static str> {
-        self.kind().map(|k| match k {
-            DeviceKind::NovaPro => "Arctis Nova Pro Wireless",
-            DeviceKind::ArctisPro => "Arctis Pro Wireless",
-        })
+        self.entry().map(|e| e.name)
+    }
+
+    /// What the connected device can do; empty while disconnected.
+    pub fn caps(&self) -> Caps {
+        self.entry().map(|e| e.caps).unwrap_or(Caps::NONE)
+    }
+
+    /// Protocol behaviour for the connected generation. Command handlers use
+    /// this instead of branching on the model themselves.
+    pub fn ops(&self) -> Option<&'static dyn HeadsetOps> {
+        self.entry().and_then(|e| e.ops)
     }
 
     /// Run a control command through the writer. Returns an error string
@@ -313,17 +322,24 @@ impl HeadsetManager {
                 }
             };
 
-            let kind = path.kind;
-            if let Ok(mut slot) = self.kind.lock() {
-                *slot = Some(kind);
+            let entry = path.entry;
+            // Every headset entry carries ops; the table guarantees it (and a
+            // test pins it). Bail out before touching state if one ever didn't.
+            let Some(ops) = entry.ops else {
+                warn!("headset {} has no protocol ops; ignoring", entry.name);
+                std::thread::sleep(Duration::from_secs(3));
+                continue;
+            };
+            if let Ok(mut slot) = self.entry.lock() {
+                *slot = Some(entry);
             }
 
-            // Only the Nova generation has an OLED we can drive. The handle is
-            // kept so teardown can wait for the thread: a detached one would
+            // Only devices with an OLED we can drive get a draw thread. The
+            // handle is kept so teardown can wait for it: a detached one would
             // still be pushing frames while a reconnect opened a second fd to
             // the same panel.
             let mut oled_thread = None;
-            if kind.has_oled() {
+            if entry.caps.has(Caps::OLED) {
                 let (oled_tx, oled_rx) = std::sync::mpsc::channel();
                 let path = path.clone();
                 let levels = self.levels.lock().ok().and_then(|l| l.clone());
@@ -342,15 +358,11 @@ impl HeadsetManager {
                 *slot = Some(Arc::clone(&writer));
             }
             self.emit_presence(true);
-            info!("headset connected: {kind:?} at {}", path.dev.display());
+            info!("headset connected: {} at {}", entry.name, path.dev.display());
 
             // Safe handshake: pull an initial snapshot (and, on Nova, enable
             // the event stream). Never writes user settings.
-            let init = match kind {
-                DeviceKind::NovaPro => protocol::init_safe(),
-                DeviceKind::ArctisPro => protocol_apw::init_safe(),
-            };
-            let _ = self.send_all(&init);
+            let _ = self.send_all(&ops.init_safe());
 
             // Resume notification mirroring if the user left it on.
             if crate::persistence::notify_mirror::is_enabled() {
@@ -362,21 +374,15 @@ impl HeadsetManager {
             let hb_writer = Arc::clone(&writer);
             let hb_stop = Arc::new(AtomicBool::new(false));
             let hb_stop2 = Arc::clone(&hb_stop);
+            // Built once: the packets are constant for the connected model.
+            let hb_packets = ops.heartbeat();
             let heartbeat = std::thread::spawn(move || {
                 while !hb_stop2.load(Ordering::Relaxed) {
                     std::thread::sleep(Duration::from_secs(2));
                     let ok = hb_writer
                         .lock()
                         .ok()
-                        .map(|mut d| match kind {
-                            DeviceKind::NovaPro => {
-                                d.write_command(&protocol::status_query()).is_ok()
-                                    && d.write_command(&protocol::volume_query()).is_ok()
-                            }
-                            DeviceKind::ArctisPro => {
-                                d.write_command(&protocol_apw::status_query()).is_ok()
-                            }
-                        })
+                        .map(|mut d| hb_packets.iter().all(|p| d.write_command(p).is_ok()))
                         .unwrap_or(false);
                     if !ok {
                         break;
@@ -389,42 +395,36 @@ impl HeadsetManager {
             loop {
                 match reader.read_report(&mut buf) {
                     Ok(0) | Err(_) => break,
-                    Ok(_) if kind == DeviceKind::ArctisPro => {
-                        // Pre-Nova frame: power state + battery only. Fold it
-                        // into the shared status shape the UI already renders.
-                        let mut apw = ApwStatus::default();
-                        if apw.apply_frame(&buf) {
-                            if let Ok(mut s) = self.status.lock() {
-                                s.present = true;
-                                s.headset_battery_percent = apw.battery_percent;
-                                s.power_status = Some(
-                                    if apw.online { "online" } else { "offline" }.to_string(),
-                                );
-                            }
-                            self.emit_status();
-                        }
-                    }
                     Ok(_) => {
                         // The hardware ChatMix wheel drives the software mix
                         // live via a dedicated event (kept out of the status
                         // snapshot so periodic heartbeats can't re-apply it).
-                        if let Some((game, chat)) = protocol::chatmix_from_frame(&buf) {
-                            if let Ok(app) = self.app.lock() {
-                                if let Some(app) = app.as_ref() {
-                                    let _ = app.emit(EV_CHATMIX, (game, chat));
+                        // Generations without the wheel never emit these frames.
+                        if entry.caps.has(Caps::CHATMIX) {
+                            if let Some((game, chat)) = protocol::chatmix_from_frame(&buf) {
+                                if let Ok(app) = self.app.lock() {
+                                    if let Some(app) = app.as_ref() {
+                                        let _ = app.emit(EV_CHATMIX, (game, chat));
+                                    }
                                 }
                             }
                         }
+                        // Each generation decodes its own frame shape into the
+                        // one status snapshot the UI renders.
                         let changed = self
                             .status
                             .lock()
-                            .map(|mut s| s.apply_frame(&buf))
+                            .map(|mut s| ops.apply_status_frame(&buf, &mut s))
                             .unwrap_or(false);
                         if changed {
                             self.emit_status();
                             // Feed the OLED dashboard/notifications the latest.
-                            let snapshot = self.status();
-                            let _ = self.oled(OledCommand::UpdateStatus(Box::new(snapshot)));
+                            // Skipped without a panel so a snapshot isn't
+                            // cloned for a send that has nowhere to go.
+                            if entry.caps.has(Caps::OLED) {
+                                let snapshot = self.status();
+                                let _ = self.oled(OledCommand::UpdateStatus(Box::new(snapshot)));
+                            }
                         }
                     }
                 }
@@ -447,14 +447,14 @@ impl HeadsetManager {
             if let Ok(mut slot) = self.writer.lock() {
                 *slot = None;
             }
-            if let Ok(mut slot) = self.kind.lock() {
+            if let Ok(mut slot) = self.entry.lock() {
                 *slot = None;
             }
             if let Ok(mut s) = self.status.lock() {
                 *s = HeadsetStatus::default();
             }
             self.emit_presence(false);
-            info!("headset disconnected: {kind:?}");
+            info!("headset disconnected: {}", entry.name);
         }
     }
 }

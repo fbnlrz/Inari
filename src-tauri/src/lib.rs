@@ -1,5 +1,6 @@
 mod audio;
 mod commands;
+mod device;
 mod error;
 mod headset;
 mod mixer;

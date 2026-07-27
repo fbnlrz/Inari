@@ -2,13 +2,14 @@
 
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
+
+use crate::device::{self, DeviceClass};
 
 use super::protocol::{self, MouseConfig};
 
@@ -25,81 +26,9 @@ pub struct MouseStatus {
     pub charging: bool,
 }
 
-/// A discovered mouse control node.
-#[derive(Clone)]
-struct MousePath {
-    dev: PathBuf,
-    product_id: u16,
-}
-
-/// Locate the Aerox's configuration interface (USB interface 3). The mouse
-/// exposes several HID interfaces; only that one accepts config commands.
-///
-/// Both the cable and the 2.4 GHz dongle can be plugged in at once, each
-/// enumerating its own node. The cable is preferred: when it's connected the
-/// mouse is physically on it, and the idle dongle just answers `0xff`.
-fn find_mouse() -> Option<MousePath> {
-    let entries = std::fs::read_dir("/sys/class/hidraw").ok()?;
-    let mut wireless: Option<MousePath> = None;
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if !name.starts_with("hidraw") {
-            continue;
-        }
-        let sys = Path::new("/sys/class/hidraw").join(&*name).join("device");
-        let Some(pid) = matching_product(&sys) else {
-            continue;
-        };
-        if interface_number(&sys) != Some(protocol::CONTROL_INTERFACE) {
-            continue;
-        }
-        let found = MousePath {
-            dev: PathBuf::from("/dev").join(&*name),
-            product_id: pid,
-        };
-        if protocol::is_wireless(pid) {
-            wireless.get_or_insert(found);
-        } else {
-            return Some(found);
-        }
-    }
-    wireless
-}
-
-fn matching_product(sys_device: &Path) -> Option<u16> {
-    let uevent = std::fs::read_to_string(sys_device.join("uevent")).ok()?;
-    let hid_id = uevent.lines().find_map(|l| l.strip_prefix("HID_ID="))?;
-    let mut parts = hid_id.split(':');
-    let _bus = parts.next()?;
-    let vendor = u16::from_str_radix(parts.next()?.trim(), 16).ok()?;
-    let product = u16::from_str_radix(parts.next()?.trim(), 16).ok()?;
-    if vendor == protocol::VENDOR_ID && protocol::PRODUCT_IDS.contains(&product) {
-        Some(product)
-    } else {
-        None
-    }
-}
-
-/// The USB interface number this HID node belongs to.
-///
-/// Read from `bInterfaceNumber` on the owning USB interface directory rather
-/// than parsed out of the path: the HID node's own directory name looks like
-/// `0003:1038:185A.0020`, whose trailing number is a HID device index, not an
-/// interface — reading that instead silently matches the wrong node.
-fn interface_number(sys_device: &Path) -> Option<u8> {
-    let real = std::fs::canonicalize(sys_device).ok()?;
-    // Walk up until a directory exposes bInterfaceNumber (usually the parent).
-    let mut dir = real.as_path();
-    for _ in 0..4 {
-        let candidate = dir.join("bInterfaceNumber");
-        if let Ok(raw) = std::fs::read_to_string(&candidate) {
-            return u8::from_str_radix(raw.trim(), 16).ok();
-        }
-        dir = dir.parent()?;
-    }
-    None
-}
+/// A discovered mouse control node. Discovery — the interface-3 probe and the
+/// cable-beats-dongle preference — lives in [`crate::device`].
+type MousePath = device::Found;
 
 pub struct MouseManager {
     dev: Mutex<Option<MousePath>>,
@@ -208,11 +137,12 @@ impl MouseManager {
     /// Poll for the mouse; while it's present, refresh battery periodically.
     fn supervise(self: Arc<Self>) {
         loop {
-            let found = find_mouse();
+            let found = device::scan(DeviceClass::Mouse);
             match found {
                 Some(path) => {
                     let wireless = protocol::is_wireless(path.product_id);
                     let first_time = !self.is_connected();
+                    let model = path.entry.name;
                     if let Ok(mut slot) = self.dev.lock() {
                         *slot = Some(path.clone());
                     }
@@ -220,7 +150,7 @@ impl MouseManager {
                         if let Ok(mut s) = self.status.lock() {
                             s.present = true;
                             s.wireless = wireless;
-                            s.model = Some("Aerox 9 Wireless".to_string());
+                            s.model = Some(model.to_string());
                         }
                         self.emit_presence(true);
                     }

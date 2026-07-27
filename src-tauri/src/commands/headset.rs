@@ -10,14 +10,17 @@ use std::time::Duration;
 use serde::Serialize;
 use tauri::State;
 
+use crate::device::Caps;
 use crate::headset::clips;
-use crate::headset::hidraw::DeviceKind;
 use crate::headset::media;
 use crate::headset::oled_controller::{OledCommand, OledContent};
 use crate::headset::oled_rotation::ModeId;
 use crate::headset::protocol::{self, AncMode, HeadsetStatus, LineOut};
-use crate::headset::protocol_apw;
 use crate::state::AppState;
+
+/// Error surfaced when a device-specific command arrives with nothing plugged
+/// in. Matches what the writer itself reports.
+const NO_DEVICE: &str = "no Arctis Nova Pro Wireless base station connected";
 
 /// Presence + latest decoded status, for the initial UI paint.
 #[derive(Serialize)]
@@ -40,24 +43,18 @@ pub fn get_headset_status(state: State<'_, AppState>) -> HeadsetSnapshot {
         status: state.headset.status(),
         video_supported: media::ffmpeg_available(),
         model: state.headset.model_name().map(str::to_owned),
-        has_oled: state.headset.kind().map(|k| k.has_oled()).unwrap_or(false),
+        has_oled: state.headset.caps().has(Caps::OLED),
     }
 }
 
 // --- device settings ----------------------------------------------------
 
-/// Sidetone. The UI works in the Nova generation's 0..3 steps; the Arctis Pro
-/// generation takes 0..9, so scale across when that model is connected.
+/// Sidetone, in the UI's 0..3 steps. Whatever a given generation wants on the
+/// wire is the device's business, not this layer's.
 #[tauri::command]
 pub fn headset_set_sidetone(state: State<'_, AppState>, level: u8) -> Result<(), String> {
-    match state.headset.kind() {
-        Some(DeviceKind::ArctisPro) => {
-            let scaled = (level.min(3) as u16 * 9 / 3) as u8;
-            state.headset.send(&protocol_apw::set_sidetone(scaled))?;
-            state.headset.send(&protocol_apw::save())
-        }
-        _ => state.headset.send(&protocol::set_sidetone(level)),
-    }
+    let ops = state.headset.ops().ok_or(NO_DEVICE)?;
+    state.headset.send_all(&ops.sidetone(level))
 }
 
 #[tauri::command]
@@ -86,19 +83,12 @@ pub fn headset_set_transparency(state: State<'_, AppState>, level: u8) -> Result
     state.headset.send(&protocol::set_transparency_level(level))
 }
 
-/// Auto shut-off. The UI passes the Nova generation's step index; the Arctis
-/// Pro generation wants minutes (in 10-minute units), so translate.
+/// Auto shut-off, as the UI's step index. Generations that want minutes
+/// instead translate it themselves.
 #[tauri::command]
 pub fn headset_set_auto_off(state: State<'_, AppState>, idx: u8) -> Result<(), String> {
-    match state.headset.kind() {
-        Some(DeviceKind::ArctisPro) => {
-            const STEP_MINUTES: [u16; 7] = [0, 1, 5, 10, 15, 30, 60];
-            let minutes = STEP_MINUTES[idx.min(6) as usize];
-            state.headset.send(&protocol_apw::set_auto_off(minutes))?;
-            state.headset.send(&protocol_apw::save())
-        }
-        _ => state.headset.send(&protocol::set_auto_off(idx)),
-    }
+    let ops = state.headset.ops().ok_or(NO_DEVICE)?;
+    state.headset.send_all(&ops.auto_off(idx))
 }
 
 #[tauri::command]

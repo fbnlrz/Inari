@@ -10,7 +10,9 @@
 
 use serde::Serialize;
 
-pub const VENDOR_ID: u16 = 0x1038;
+// The SteelSeries vendor id lives in `crate::device::VENDOR_ID`, once for all
+// families — it used to be duplicated here and in the mouse protocol.
+
 /// Nova Pro Wireless base stations (incl. the Xbox "X" variants).
 pub const PRODUCT_IDS: [u16; 3] = [0x12e0, 0x12e5, 0x225d];
 
