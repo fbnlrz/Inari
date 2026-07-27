@@ -1,6 +1,6 @@
 [package]
 name = "inari"
-version = "1.0.6"
+version = "1.0.7"
 description = "Linux-native audio routing and mixing for PipeWire, with SteelSeries device control"
 edition = "2021"
 rust-version = "1.77"
