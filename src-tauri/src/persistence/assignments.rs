@@ -1,10 +1,9 @@
-use std::fs;
-use std::path::PathBuf;
-
-use log::warn;
 use serde::{Deserialize, Serialize};
 
 use crate::error::SinkError;
+use crate::persistence::json::{self, Extra, Version};
+
+const FILE: &str = "assignments.json";
 
 /// One persistent routing assignment: streams whose PipeWire property
 /// `match_prop` equals `match_value` belong on `sink_name`.
@@ -16,46 +15,32 @@ pub struct Assignment {
     pub match_value: String,
     /// Target virtual sink, e.g. "sink_music".
     pub sink_name: String,
+    /// Per-entry fields a newer Inari added, kept so this one's autosaves
+    /// don't strip them back off.
+    #[serde(default, flatten)]
+    pub extra: Extra,
 }
 
 /// The set of saved app→channel assignments, stored as JSON at
 /// `$XDG_CONFIG_HOME/inari/assignments.json`.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Assignments {
+    #[serde(default)]
+    pub version: Version,
     pub assignments: Vec<Assignment>,
+    #[serde(default, flatten)]
+    pub extra: Extra,
 }
 
 impl Assignments {
-    pub fn config_path() -> Result<PathBuf, SinkError> {
-        let dir = dirs::config_dir()
-            .ok_or_else(|| SinkError::Config("cannot resolve the user config directory".into()))?;
-        Ok(dir.join("inari").join("assignments.json"))
-    }
-
     /// Load from disk; a missing or unreadable file yields the empty set
     /// (first run, or the user deleted their config).
     pub fn load() -> Self {
-        let Ok(path) = Self::config_path() else {
-            return Self::default();
-        };
-        match fs::read_to_string(&path) {
-            Ok(raw) => serde_json::from_str(&raw).unwrap_or_else(|e| {
-                warn!("ignoring malformed {}: {e}", path.display());
-                Self::default()
-            }),
-            Err(_) => Self::default(),
-        }
+        json::load(FILE)
     }
 
     pub fn save(&self) -> Result<(), SinkError> {
-        let path = Self::config_path()?;
-        if let Some(parent) = path.parent() {
-            crate::persistence::ensure_private_dir(parent)?;
-        }
-        let json = serde_json::to_string_pretty(self)
-            .map_err(|e| SinkError::Config(format!("serialize assignments: {e}")))?;
-        super::write_atomic(&path, &json)?;
-        Ok(())
+        json::save(FILE, self)
     }
 
     /// Insert or update the assignment for (`match_prop`, `match_value`).
@@ -70,6 +55,7 @@ impl Assignments {
                 match_prop: match_prop.to_string(),
                 match_value: match_value.to_string(),
                 sink_name: sink_name.to_string(),
+                extra: Extra::new(),
             }),
         }
     }
@@ -111,5 +97,28 @@ mod tests {
         let json = serde_json::to_string(&a).expect("serializes");
         let back: Assignments = serde_json::from_str(&json).expect("deserializes");
         assert_eq!(back.assignments, a.assignments);
+    }
+
+    #[test]
+    fn newer_file_round_trips_without_losing_fields() {
+        let raw = r#"{"version":9,"assignments":[
+            {"match_prop":"node.name","match_value":"x","sink_name":"sink_game","priority":3}
+        ],"rules":{"strict":true}}"#;
+        let a = json::parse_or_default::<Assignments>("assignments.json", raw);
+        assert_eq!(a.sink_for("node.name", "x"), Some("sink_game"));
+
+        let back: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&a).expect("serializes")).expect("value");
+        assert_eq!(back["version"], serde_json::json!(9));
+        assert_eq!(back["rules"]["strict"], serde_json::json!(true));
+        assert_eq!(back["assignments"][0]["priority"], serde_json::json!(3));
+    }
+
+    #[test]
+    fn corrupt_file_degrades_to_the_empty_set() {
+        assert_eq!(
+            json::parse_or_default::<Assignments>("assignments.json", "{ truncated"),
+            Assignments::default()
+        );
     }
 }

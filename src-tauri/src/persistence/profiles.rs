@@ -102,14 +102,7 @@ pub fn set_trigger(name: &str, trigger_device: Option<String>) -> Result<(), Sin
 }
 
 pub fn save(profile: &Profile) -> Result<(), SinkError> {
-    let path = profile_path(&profile.name)?;
-    if let Some(parent) = path.parent() {
-        crate::persistence::ensure_private_dir(parent)?;
-    }
-    let json = serde_json::to_string_pretty(profile)
-        .map_err(|e| SinkError::Config(format!("serialize profile: {e}")))?;
-    super::write_atomic(&path, &json)?;
-    Ok(())
+    crate::persistence::json::save_at(&profile_path(&profile.name)?, profile)
 }
 
 pub fn load(name: &str) -> Result<Profile, SinkError> {

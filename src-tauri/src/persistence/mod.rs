@@ -7,6 +7,7 @@ pub mod buses;
 pub mod channels;
 pub mod eq;
 pub mod eq_presets;
+pub mod json;
 pub mod mic;
 pub mod notify_mirror;
 pub mod outputs;

@@ -1,41 +1,29 @@
 use std::collections::HashMap;
-use std::fs;
-use std::path::PathBuf;
-
-use log::warn;
 use serde::{Deserialize, Serialize};
 
 use crate::audio::types::EqConfig;
 use crate::error::SinkError;
+use crate::persistence::json::{self, Extra, Version};
+
+const FILE: &str = "eq.json";
 
 /// Per-channel parametric EQ configs, stored as JSON at
 /// `$XDG_CONFIG_HOME/inari/eq.json`. A missing entry means "never touched" -
 /// the default (disabled, flat) config.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct ChannelEq {
+    #[serde(default)]
+    pub version: Version,
     /// `serde(default)` keeps pre-EQ profile files loading cleanly.
     #[serde(default)]
     pub configs: HashMap<String, EqConfig>,
+    #[serde(default, flatten)]
+    pub extra: Extra,
 }
 
 impl ChannelEq {
-    pub fn config_path() -> Result<PathBuf, SinkError> {
-        let dir = dirs::config_dir()
-            .ok_or_else(|| SinkError::Config("cannot resolve the user config directory".into()))?;
-        Ok(dir.join("inari").join("eq.json"))
-    }
-
     pub fn load() -> Self {
-        let Ok(path) = Self::config_path() else {
-            return Self::default();
-        };
-        let mut eq: Self = match fs::read_to_string(&path) {
-            Ok(raw) => serde_json::from_str(&raw).unwrap_or_else(|e| {
-                warn!("ignoring malformed {}: {e}", path.display());
-                Self::default()
-            }),
-            Err(_) => Self::default(),
-        };
+        let mut eq: Self = json::load(FILE);
         // Same sanitization the IPC setter applies (TD-050): a hand-edited or
         // torn eq.json otherwise pushes inf/NaN straight through the biquad
         // cascade onto the output device at init.
@@ -46,14 +34,7 @@ impl ChannelEq {
     }
 
     pub fn save(&self) -> Result<(), SinkError> {
-        let path = Self::config_path()?;
-        if let Some(parent) = path.parent() {
-            crate::persistence::ensure_private_dir(parent)?;
-        }
-        let json = serde_json::to_string_pretty(self)
-            .map_err(|e| SinkError::Config(format!("serialize eq: {e}")))?;
-        super::write_atomic(&path, &json)?;
-        Ok(())
+        json::save(FILE, self)
     }
 
     /// A channel's EQ, defaulting to disabled/flat when never configured.
@@ -106,6 +87,26 @@ mod tests {
         // A pre-EQ profile (or an empty file body) has no `configs` key.
         let eq: ChannelEq = serde_json::from_str("{}").expect("legacy loads");
         assert_eq!(eq, ChannelEq::default());
+    }
+
+    #[test]
+    fn newer_file_round_trips_without_losing_fields() {
+        // The EQ store carries real user work; a downgrade autosaving it
+        // must not drop what it could not read.
+        let raw = r#"{"version":9,"configs":{},"crossfeed":{"amount":0.4}}"#;
+        let eq = json::parse_or_default::<ChannelEq>("eq.json", raw);
+        assert_eq!(eq.version, Version(9));
+        let back: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&eq).expect("serializes")).expect("value");
+        assert_eq!(back["crossfeed"]["amount"], serde_json::json!(0.4));
+    }
+
+    #[test]
+    fn corrupt_file_degrades_to_default() {
+        assert_eq!(
+            json::parse_or_default::<ChannelEq>("eq.json", "{ truncated"),
+            ChannelEq::default()
+        );
     }
 
     #[test]
