@@ -17,7 +17,7 @@ The protocols were learned and cross-checked from
 - `src-tauri/src/headset/oled.rs`, `oled_controller.rs` — OLED framebuffer + redraw loop
 - `src-tauri/src/headset/hidraw.rs` — raw `/dev/hidraw` access & feature reports
 - `src-tauri/src/mouse/protocol.rs` — Aerox 9 commands
-- `packaging/udev/50-sink-steelseries.rules` — `uaccess` rule for vendor `0x1038`
+- `packaging/udev/60-inari.rules` — `uaccess` rule for vendor `0x1038`
 
 ## Arctis Nova Pro Wireless
 
