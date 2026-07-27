@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
+import { isTauri } from "../../lib/platform";
 import { Ms } from "../Icons";
 import { useHeadset } from "../../store/headset";
 
@@ -191,7 +192,9 @@ export function OledScreen() {
         ))}
       </section>
 
-      <section className="hs-card">
+      {/* Desktop only: this picks a path off the local disk, and the command
+          behind it is not reachable from the remote by design. */}
+      <section className="hs-card" hidden={!isTauri}>
         <div className="hs-card-head">
           <Ms name="upload" style={{ fontSize: 18 }} />
           <h2>Upload image · GIF · video</h2>
@@ -344,7 +347,10 @@ export function OledScreen() {
           <Ms name="notifications" style={{ fontSize: 18 }} />
           <h2>Notifications</h2>
         </div>
-        <div className="hs-row">
+        {/* Turning this on spawns a dbus-monitor process on the PC, which is
+            not something a tablet gets to do. The state is still readable, so
+            the remote shows the duration and scroll settings below. */}
+        <div className="hs-row" hidden={!isTauri}>
           <span>
             Mirror desktop notifications{" "}
             <span className="hs-hint" style={{ display: "block" }}>

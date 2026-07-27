@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { isTauri } from "../../lib/platform";
 import { useMixerStore } from "../../store/mixer";
 import type { VirtualSink } from "../../types";
 import { MAX_VOLUME } from "../../types";
@@ -71,7 +72,10 @@ export function ChannelStrip({
       onDragOver={onStripDragOver}
       onDrop={(e) => e.preventDefault()}
     >
-      {channelCount > 1 && (
+      {/* Reordering, deleting, renaming and re-iconing a channel all rebuild
+       * the board, which the remote deliberately cannot do. The strip still
+       * shows the same channel in the same place - it just isn't a handle. */}
+      {isTauri && channelCount > 1 && (
         <span
           className="strip-grip"
           draggable
@@ -82,7 +86,7 @@ export function ChannelStrip({
           <Ms name="drag_indicator" />
         </span>
       )}
-      {channelCount > 1 && (
+      {isTauri && channelCount > 1 && (
         <button
           type="button"
           className="strip-x"
@@ -95,40 +99,46 @@ export function ChannelStrip({
       )}
 
       <div className="strip-head">
-        <div style={{ position: "relative" }}>
-          <button
-            type="button"
-            className="strip-icon strip-icon-btn"
-            title="Change icon"
-            aria-label={`Change icon for ${channel.label}`}
-            onClick={() => setPickingIcon(true)}
-          >
+        {isTauri ? (
+          <div style={{ position: "relative" }}>
+            <button
+              type="button"
+              className="strip-icon strip-icon-btn"
+              title="Change icon"
+              aria-label={`Change icon for ${channel.label}`}
+              onClick={() => setPickingIcon(true)}
+            >
+              <Ms name={channelIcon(channel)} />
+            </button>
+            <Popover
+              open={pickingIcon}
+              onClose={() => setPickingIcon(false)}
+              side="bottom"
+              align="center"
+              style={{ minWidth: 196 }}
+            >
+              <div className="icon-grid">
+                {ICON_CHOICES.map((icon) => (
+                  <button
+                    type="button"
+                    key={icon}
+                    className={"icon-cell" + (channelIcon(channel) === icon ? " sel" : "")}
+                    onClick={() => {
+                      setPickingIcon(false);
+                      void setChannelIcon(channel.name, icon);
+                    }}
+                  >
+                    <Ms name={icon} />
+                  </button>
+                ))}
+              </div>
+            </Popover>
+          </div>
+        ) : (
+          <div className="strip-icon">
             <Ms name={channelIcon(channel)} />
-          </button>
-          <Popover
-            open={pickingIcon}
-            onClose={() => setPickingIcon(false)}
-            side="bottom"
-            align="center"
-            style={{ minWidth: 196 }}
-          >
-            <div className="icon-grid">
-              {ICON_CHOICES.map((icon) => (
-                <button
-                  type="button"
-                  key={icon}
-                  className={"icon-cell" + (channelIcon(channel) === icon ? " sel" : "")}
-                  onClick={() => {
-                    setPickingIcon(false);
-                    void setChannelIcon(channel.name, icon);
-                  }}
-                >
-                  <Ms name={icon} />
-                </button>
-              ))}
-            </div>
-          </Popover>
-        </div>
+          </div>
+        )}
         {editing ? (
           <input
             className="menu-input strip-name-input"
@@ -144,12 +154,16 @@ export function ChannelStrip({
           />
         ) : (
           <div
-            className="strip-name strip-name-editable"
-            title="Double-click to rename"
-            onDoubleClick={() => {
-              setDraft(channel.label);
-              setEditing(true);
-            }}
+            className={"strip-name" + (isTauri ? " strip-name-editable" : "")}
+            title={isTauri ? "Double-click to rename" : undefined}
+            onDoubleClick={
+              isTauri
+                ? () => {
+                    setDraft(channel.label);
+                    setEditing(true);
+                  }
+                : undefined
+            }
           >
             {channel.label}
           </div>

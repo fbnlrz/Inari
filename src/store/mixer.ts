@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { call, subscribe, type Command } from "../lib/ipc";
 import { createDebouncer } from "../lib/debounce";
+import { isTauri } from "../lib/platform";
 import type {
   AppStream,
   BusDef,
@@ -273,7 +274,12 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
   initialize: async () => {
     if (get().initialized) return;
     try {
-      await call("init_virtual_devices");
+      // Creating the virtual devices is the desktop instance's job, and the
+      // remote is not allowed to do it — tearing the audio chain up or down
+      // from a tablet is exactly what the allowlist exists to prevent. A
+      // remote client only ever attaches to an instance that is already
+      // running, so the devices are there by the time it connects.
+      if (isTauri) await call("init_virtual_devices");
       set({ initialized: true, error: null });
       subscribeExternalChanges();
       // Leaving backendNative null on failure would gate native-only features

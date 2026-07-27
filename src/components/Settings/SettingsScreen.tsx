@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { call } from "../../lib/ipc";
 import { getVersion } from "@tauri-apps/api/app";
+import { isTauri } from "../../lib/platform";
 import { useMixerStore } from "../../store/mixer";
 import { useTheme, THEMES } from "../../store/theme";
 import { useUpdate } from "../../store/update";
@@ -112,16 +113,20 @@ export function SettingsScreen() {
   const setBalanceVisible = useMixerStore((s) => s.setBalanceVisible);
 
   useEffect(() => {
-    void call<boolean>("get_autostart").then(setAutostart);
     void call<{ native: boolean }>("get_backend_info").then((i) => setBackendNative(i.native));
-    void call<DefaultDevices>("get_default_devices").then(setDefaults).catch(() => {});
-    void call<{ device_label_style: LabelStyle; start_minimized: boolean }>("get_prefs")
-      .then((p) => {
-        setLabelStyle(p.device_label_style);
-        setStartMinimized(p.start_minimized);
-      })
-      .catch(() => {});
-    void getVersion().then(setVersion);
+    // The rows these feed are desktop-only (see below), and the commands are
+    // off the remote, so asking from the browser would only produce failures.
+    if (isTauri) {
+      void call<boolean>("get_autostart").then(setAutostart);
+      void call<DefaultDevices>("get_default_devices").then(setDefaults).catch(() => {});
+      void call<{ device_label_style: LabelStyle; start_minimized: boolean }>("get_prefs")
+        .then((p) => {
+          setLabelStyle(p.device_label_style);
+          setStartMinimized(p.start_minimized);
+        })
+        .catch(() => {});
+      void getVersion().then(setVersion);
+    }
   }, []);
 
   const pickDefault = async (kind: "output" | "input", name: string) => {
@@ -214,52 +219,59 @@ export function SettingsScreen() {
 
         <div className="section-label">Preferences</div>
         <div className="card" style={{ padding: "var(--sp-2)" }}>
-          <div className="row">
-            <div className="ricon">
-              <Ms name="label" />
-            </div>
-            <div className="rmain">
-              <div className="rtitle">Device naming</div>
-              <div className="rsub">Naming scheme for Inari-managed devices</div>
-            </div>
-            <div style={{ position: "relative" }}>
-              <button type="button" className="select" onClick={() => setLabelStyleOpen((o) => !o)}>
-                <span>{LABEL_STYLES.find((s) => s.value === labelStyle)?.label}</span>
-                <Ms name="expand_more" />
-              </button>
-              <Popover open={labelStyleOpen} onClose={() => setLabelStyleOpen(false)} side="bottom" align="end">
-                {LABEL_STYLES.map((s) => (
-                  <MenuItem
-                    key={s.value}
-                    selected={s.value === labelStyle}
-                    showCheck
-                    onClick={() => {
-                      void pickLabelStyle(s.value);
-                      setLabelStyleOpen(false);
-                    }}
-                  >
-                    {s.example}
-                  </MenuItem>
-                ))}
-              </Popover>
-            </div>
-          </div>
-          <DeviceRow
-            icon="speaker"
-            title="Default output"
-            sub="Where channels set to “System default” play"
-            devices={outputDevices}
-            current={defaults.output}
-            onPick={(name) => void pickDefault("output", name)}
-          />
-          <DeviceRow
-            icon="mic"
-            title="Default input"
-            sub="The microphone the Inari mic chain captures"
-            devices={inputDevices}
-            current={defaults.input}
-            onPick={(name) => void pickDefault("input", name)}
-          />
+          {/* How this machine names its devices, and which of them the system
+           * falls back to, is a property of the PC - the remote neither shows
+           * it nor is allowed to change it. */}
+          {isTauri && (
+            <>
+              <div className="row">
+                <div className="ricon">
+                  <Ms name="label" />
+                </div>
+                <div className="rmain">
+                  <div className="rtitle">Device naming</div>
+                  <div className="rsub">Naming scheme for Inari-managed devices</div>
+                </div>
+                <div style={{ position: "relative" }}>
+                  <button type="button" className="select" onClick={() => setLabelStyleOpen((o) => !o)}>
+                    <span>{LABEL_STYLES.find((s) => s.value === labelStyle)?.label}</span>
+                    <Ms name="expand_more" />
+                  </button>
+                  <Popover open={labelStyleOpen} onClose={() => setLabelStyleOpen(false)} side="bottom" align="end">
+                    {LABEL_STYLES.map((s) => (
+                      <MenuItem
+                        key={s.value}
+                        selected={s.value === labelStyle}
+                        showCheck
+                        onClick={() => {
+                          void pickLabelStyle(s.value);
+                          setLabelStyleOpen(false);
+                        }}
+                      >
+                        {s.example}
+                      </MenuItem>
+                    ))}
+                  </Popover>
+                </div>
+              </div>
+              <DeviceRow
+                icon="speaker"
+                title="Default output"
+                sub="Where channels set to “System default” play"
+                devices={outputDevices}
+                current={defaults.output}
+                onPick={(name) => void pickDefault("output", name)}
+              />
+              <DeviceRow
+                icon="mic"
+                title="Default input"
+                sub="The microphone the Inari mic chain captures"
+                devices={inputDevices}
+                current={defaults.input}
+                onPick={(name) => void pickDefault("input", name)}
+              />
+            </>
+          )}
           <div className="row">
             <div className="ricon">
               <Ms name="balance" />
@@ -270,36 +282,45 @@ export function SettingsScreen() {
             </div>
             <Toggle on={showBalance} onClick={() => void setBalanceVisible(!showBalance)} />
           </div>
-          <div className="row">
-            <div className="ricon">
-              <Ms name="rocket_launch" />
-            </div>
-            <div className="rmain">
-              <div className="rtitle">Start at login</div>
-              <div className="rsub">systemd user service, starts with your desktop session</div>
-            </div>
-            {autostart !== null && <Toggle on={autostart} onClick={() => void toggleAutostart()} />}
-          </div>
-          {autostart && (
-            <div className="row row-sub">
-              <div className="ricon">
-                <Ms name="dock_to_bottom" />
+          {/* What starts with the desktop session, and how, only means
+           * something where that session is. */}
+          {isTauri && (
+            <>
+              <div className="row">
+                <div className="ricon">
+                  <Ms name="rocket_launch" />
+                </div>
+                <div className="rmain">
+                  <div className="rtitle">Start at login</div>
+                  <div className="rsub">systemd user service, starts with your desktop session</div>
+                </div>
+                {autostart !== null && <Toggle on={autostart} onClick={() => void toggleAutostart()} />}
               </div>
-              <div className="rmain">
-                <div className="rtitle">Start minimized</div>
-                <div className="rsub">Boot to the tray instead of opening the window</div>
-              </div>
-              <Toggle
-                on={startMinimized}
-                onClick={() => void toggleStartMinimized()}
-              />
-            </div>
+              {autostart && (
+                <div className="row row-sub">
+                  <div className="ricon">
+                    <Ms name="dock_to_bottom" />
+                  </div>
+                  <div className="rmain">
+                    <div className="rtitle">Start minimized</div>
+                    <div className="rsub">Boot to the tray instead of opening the window</div>
+                  </div>
+                  <Toggle
+                    on={startMinimized}
+                    onClick={() => void toggleStartMinimized()}
+                  />
+                </div>
+              )}
+            </>
           )}
         </div>
 
-        <HotkeysSection />
+        {/* Global hotkeys are grabbed by the PC's session, and the remote
+         * configures neither its own nor the PC's. */}
+        {isTauri && <HotkeysSection />}
 
-        <RemoteSection />
+        {/* A tablet is a client of the remote, not the thing that sets it up. */}
+        {isTauri && <RemoteSection />}
 
         <div className="section-label">About</div>
         <div className="card" style={{ padding: "var(--sp-2)" }}>
@@ -332,54 +353,61 @@ export function SettingsScreen() {
               <div className="rsub">GPL-3.0 · config in ~/.config/inari</div>
             </div>
           </div>
-          <div className="row">
-            <div className="ricon">
-              <Ms name="system_update" />
-            </div>
-            <div className="rmain">
-              <div className="rtitle">Updates</div>
-              <div className="rsub">{updateSub}</div>
-            </div>
-            {update.info?.available && update.info.can_self_install ? (
-              <button
-                type="button"
-                className="select"
-                disabled={update.applying}
-                onClick={() => void update.apply()}
-              >
-                <span>{update.applying ? "Installing…" : "Update"}</span>
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="select"
-                disabled={update.checking}
-                onClick={() => void update.check()}
-              >
-                <span>{update.checking ? "Checking…" : "Check now"}</span>
-              </button>
-            )}
-          </div>
-          <div className="row">
-            <div className="ricon">
-              <Ms name="description" />
-            </div>
-            <div className="rmain">
-              <div className="rtitle">Logs</div>
-              <div className="rsub">
-                Open the log folder to attach a file to a bug report
+          {/* Installing a new Inari runs `pkexec apt-get install` on the PC,
+           * and the log folder opens in the PC's file manager. Both are the
+           * desktop's job, so neither row travels. */}
+          {isTauri && (
+            <>
+              <div className="row">
+                <div className="ricon">
+                  <Ms name="system_update" />
+                </div>
+                <div className="rmain">
+                  <div className="rtitle">Updates</div>
+                  <div className="rsub">{updateSub}</div>
+                </div>
+                {update.info?.available && update.info.can_self_install ? (
+                  <button
+                    type="button"
+                    className="select"
+                    disabled={update.applying}
+                    onClick={() => void update.apply()}
+                  >
+                    <span>{update.applying ? "Installing…" : "Update"}</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="select"
+                    disabled={update.checking}
+                    onClick={() => void update.check()}
+                  >
+                    <span>{update.checking ? "Checking…" : "Check now"}</span>
+                  </button>
+                )}
               </div>
-            </div>
-            <button
-              type="button"
-              className="select"
-              onClick={() =>
-                void call("open_log_dir").catch((e) => setError(String(e)))
-              }
-            >
-              <span>Open</span>
-            </button>
-          </div>
+              <div className="row">
+                <div className="ricon">
+                  <Ms name="description" />
+                </div>
+                <div className="rmain">
+                  <div className="rtitle">Logs</div>
+                  <div className="rsub">
+                    Open the log folder to attach a file to a bug report
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="select"
+                  onClick={() =>
+                    void call("open_log_dir").catch((e) => setError(String(e)))
+                  }
+                >
+                  <span>Open</span>
+                </button>
+              </div>
+            </>
+          )}
           <div className="row">
             <div className="ricon">
               <Ms name="school" />
@@ -392,20 +420,24 @@ export function SettingsScreen() {
               <span>Replay</span>
             </button>
           </div>
-          <div className="row">
-            <div className="ricon">
-              <Ms name="restart_alt" />
-            </div>
-            <div className="rmain">
-              <div className="rtitle">Reset Inari</div>
-              <div className="rsub">
-                Erase all channels, mixes, profiles, app history and preferences
+          {/* Wiping the config directory from a touchscreen is the single
+           * worst mis-tap in the app; the remote does not get the chance. */}
+          {isTauri && (
+            <div className="row">
+              <div className="ricon">
+                <Ms name="restart_alt" />
               </div>
+              <div className="rmain">
+                <div className="rtitle">Reset Inari</div>
+                <div className="rsub">
+                  Erase all channels, mixes, profiles, app history and preferences
+                </div>
+              </div>
+              <button type="button" className="select" onClick={() => setConfirmingReset(true)}>
+                <span>Reset…</span>
+              </button>
             </div>
-            <button type="button" className="select" onClick={() => setConfirmingReset(true)}>
-              <span>Reset…</span>
-            </button>
-          </div>
+          )}
         </div>
       </div>
 

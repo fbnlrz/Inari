@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { isTauri } from "../../lib/platform";
 import { useMixerStore } from "../../store/mixer";
 import type { BusDef } from "../../types";
 import { busMembers, MASTER_BUS, MAX_VOLUME } from "../../types";
@@ -70,7 +71,10 @@ export function BusStrip({ bus }: Readonly<{ bus: BusDef }>) {
 
   return (
     <div className={"strip bus-strip" + (muted ? " muted" : "")}>
-      {!isMaster && (
+      {/* Deleting a mix cuts whatever a recorder is capturing right now, and
+       * the name is the device name OBS was pointed at - both are structural,
+       * so the remote adjusts what a mix carries but never what it is. */}
+      {isTauri && !isMaster && (
         <button
           type="button"
           className="strip-x"
@@ -101,12 +105,16 @@ export function BusStrip({ bus }: Readonly<{ bus: BusDef }>) {
           />
         ) : (
           <div
-            className="strip-name strip-name-editable"
-            title='Double-click to rename - recorders see this name'
-            onDoubleClick={() => {
-              setDraft(bus.label);
-              setEditing(true);
-            }}
+            className={"strip-name" + (isTauri ? " strip-name-editable" : "")}
+            title={isTauri ? "Double-click to rename - recorders see this name" : undefined}
+            onDoubleClick={
+              isTauri
+                ? () => {
+                    setDraft(bus.label);
+                    setEditing(true);
+                  }
+                : undefined
+            }
           >
             {bus.label}
           </div>

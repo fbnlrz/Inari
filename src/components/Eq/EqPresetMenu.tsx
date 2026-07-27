@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { call } from "../../lib/ipc";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { isTauri } from "../../lib/platform";
 import type { EqConfig } from "../../types";
 import { Ms } from "../Icons";
 import { Popover } from "../Popover";
@@ -270,15 +271,17 @@ export function EqPresetMenu({ sinkName, config, onApply, onError }: Readonly<Eq
             <Ms name="content_paste" style={{ fontSize: 15 }} />
             <span>Import</span>
           </button>
-          <button
-            type="button"
-            className="select eqm-io-btn"
-            title="Export this curve to a JSON file"
-            onClick={() => void exportToFile()}
-          >
-            <Ms name="download" style={{ fontSize: 15 }} />
-            <span>Export</span>
-          </button>
+          {isTauri && (
+            <button
+              type="button"
+              className="select eqm-io-btn"
+              title="Export this curve to a JSON file"
+              onClick={() => void exportToFile()}
+            >
+              <Ms name="download" style={{ fontSize: 15 }} />
+              <span>Export</span>
+            </button>
+          )}
         </div>
         {importing && (
           <div className="eqm-import">
@@ -298,9 +301,11 @@ export function EqPresetMenu({ sinkName, config, onApply, onError }: Readonly<Eq
               >
                 Apply pasted
               </button>
-              <button type="button" className="select" onClick={() => void importFromFile()}>
-                From file…
-              </button>
+              {isTauri && (
+                <button type="button" className="select" onClick={() => void importFromFile()}>
+                  From file…
+                </button>
+              )}
             </div>
           </div>
         )}

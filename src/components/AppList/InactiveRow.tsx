@@ -1,3 +1,4 @@
+import { isTauri } from "../../lib/platform";
 import { useMixerStore } from "../../store/mixer";
 import type { SeenApp } from "../../types";
 import { relativeTime } from "../../lib/format";
@@ -51,13 +52,17 @@ export function InactiveRow({ app, ignored }: Readonly<{ app: SeenApp; ignored?:
             onClick={() => void setAppIgnored(app, true)}
           />
         )}
-        <IconButton
-          reveal
-          icon="delete"
-          title="Forget - erase from history (and its routing/alias)"
-          label={`Forget ${app.display_name}`}
-          onClick={() => void forgetApp(app)}
-        />
+        {/* Forgetting drops the app's saved routing along with the row.
+         * Ignoring is reversible and stays; erasing history does not. */}
+        {isTauri && (
+          <IconButton
+            reveal
+            icon="delete"
+            title="Forget - erase from history (and its routing/alias)"
+            label={`Forget ${app.display_name}`}
+            onClick={() => void forgetApp(app)}
+          />
+        )}
       </div>
     </div>
   );

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { isTauri } from "../../lib/platform";
 import { useRemote, type RemoteInterface } from "../../store/remote";
 import { Ms } from "../Icons";
 import { ConfirmModal } from "../ConfirmModal";
@@ -308,14 +309,16 @@ function RemoteControls() {
  * The section exists only inside the Tauri window. A paired tablet is talking
  * *through* this server, so switching it off or re-keying it from there is
  * only ever a way to lock itself out - and the decision to expose a machine to
- * the network belongs at that machine. The check reads the global Tauri
- * injects before any of our script runs, the same signal main.tsx picks the
- * transport with; the URL says nothing, since both sides can be on localhost.
+ * the network belongs at that machine. `isTauri` is the same signal main.tsx
+ * picks the transport with; the URL says nothing, since both sides can be on
+ * localhost.
  *
- * This is convenience, not the defence. What a remote client may invoke is
+ * The caller in Settings already leaves the section out over the remote. This
+ * guard stays because the answer must not depend on who renders it - and it is
+ * convenience either way, not the defence: what a remote client may invoke is
  * decided by the allowlist in Rust, which nothing here can widen.
  */
 export function RemoteSection() {
-  if (!("__TAURI_INTERNALS__" in window)) return null;
+  if (!isTauri) return null;
   return <RemoteControls />;
 }

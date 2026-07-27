@@ -8,6 +8,15 @@ vi.mock("../../lib/ipc", () => ({
   subscribe: () => Promise.resolve(() => {}),
 }));
 
+// Which shell the section thinks it is in. A getter, because the component
+// reads it at render time and both answers have to come from one module graph.
+let desktop = true;
+vi.mock("../../lib/platform", () => ({
+  get isTauri() {
+    return desktop;
+  },
+}));
+
 import { RemoteSection } from "./RemoteSection";
 import { useRemote, type RemotePairing, type RemoteStatus } from "../../store/remote";
 
@@ -75,19 +84,14 @@ const mount = async () => {
 const exposureSwitch = () =>
   within(screen.getByRole("group", { name: "Inari Remote" })).getByRole("button");
 
-/** The section renders only inside the Tauri window - fake the global it keys off. */
-const asDesktop = () => {
-  (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
-};
-
 beforeEach(() => {
   call.mockReset();
   useRemote.setState(initialState, true);
-  asDesktop();
+  desktop = true;
 });
 
 afterEach(() => {
-  delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
+  desktop = true;
 });
 
 describe("exposure", () => {
@@ -100,7 +104,7 @@ describe("exposure", () => {
   });
 
   it("is absent on a remote client, which must not re-key its own connection", async () => {
-    delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
+    desktop = false;
     backend(status({ enabled: true }));
     await mount();
 

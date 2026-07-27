@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useMixerStore } from "../../store/mixer";
+import { isTauri } from "../../lib/platform";
 import { Ms, InariMark } from "../Icons";
 import { BalanceBar } from "../MixerBoard/BalanceBar";
 import { ProfileMenu } from "./ProfileMenu";
@@ -9,9 +10,14 @@ import { ProfileMenu } from "./ProfileMenu";
  * Frameless headerbar: brand, current screen, engine status, window
  * controls. The close button triggers the normal close-requested flow,
  * which the Rust side intercepts to hide to tray.
+ *
+ * The window controls only exist in the desktop shell. `getCurrentWindow()`
+ * reads Tauri internals and throws in a browser — during render, so it takes
+ * the whole app down rather than just the buttons. The remote gets a header
+ * without them, which is what a tablet wants anyway.
  */
 export function TitleBar({ screen }: Readonly<{ screen: string }>) {
-  const win = getCurrentWindow();
+  const win = isTauri ? getCurrentWindow() : null;
   const error = useMixerStore((s) => s.error);
   const initialized = useMixerStore((s) => s.initialized);
   const engineAlive = useMixerStore((s) => s.engineAlive);
@@ -55,28 +61,30 @@ export function TitleBar({ screen }: Readonly<{ screen: string }>) {
         <span className="dot" />
         {status}
       </div>
-      <div className="wctl">
-        <button type="button" className="wbtn" aria-label="Minimize" onClick={() => void win.minimize()}>
-          <Ms name="remove" />
-        </button>
-        <button
-          type="button"
-          className="wbtn"
-          aria-label="Maximize"
-          onClick={() => void win.toggleMaximize()}
-        >
-          <Ms name="crop_square" style={{ fontSize: 13 }} />
-        </button>
-        <button
-          type="button"
-          className="wbtn close"
-          aria-label="Close (hide to tray)"
-          title="Hides to tray - quit from the tray menu"
-          onClick={() => void win.close()}
-        >
-          <Ms name="close" />
-        </button>
-      </div>
+      {win && (
+        <div className="wctl">
+          <button type="button" className="wbtn" aria-label="Minimize" onClick={() => void win.minimize()}>
+            <Ms name="remove" />
+          </button>
+          <button
+            type="button"
+            className="wbtn"
+            aria-label="Maximize"
+            onClick={() => void win.toggleMaximize()}
+          >
+            <Ms name="crop_square" style={{ fontSize: 13 }} />
+          </button>
+          <button
+            type="button"
+            className="wbtn close"
+            aria-label="Close (hide to tray)"
+            title="Hides to tray - quit from the tray menu"
+            onClick={() => void win.close()}
+          >
+            <Ms name="close" />
+          </button>
+        </div>
+      )}
     </header>
   );
 }
