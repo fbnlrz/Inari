@@ -40,6 +40,22 @@ pub fn run() {
     let app_state = AppState::new(backend, backend_native);
 
     let result = tauri::Builder::default()
+        // Must be the FIRST plugin. When a second instance is launched (KDE
+        // session-restore firing alongside our systemd autostart unit, or the
+        // user relaunching from the menu), this callback runs in the ALREADY
+        // running instance and the new process exits — no duplicate. We reveal
+        // the existing window unless the relaunch asked to stay in the tray
+        // (`--minimized`), so a menu relaunch brings Inari to the front.
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            if argv.iter().any(|a| a == "--minimized") {
+                return;
+            }
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_dialog::init())
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![
