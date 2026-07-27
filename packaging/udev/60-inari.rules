@@ -1,0 +1,17 @@
+# Inari — access to SteelSeries Arctis / Aerox HID control interfaces.
+#
+# Grants the active desktop session user read/write on the vendor HID nodes so
+# Inari can read headset/mouse status and drive the OLED without running as root.
+# `uaccess` hands access to whoever is logged in on the seat (via systemd-logind),
+# which is cleaner than a fixed group.
+#
+# A package owns this rule under /usr/lib/udev/rules.d/ (the release .deb ships it
+# there via tauri.conf.json; install.sh installs it there too). /etc/udev/rules.d/
+# is deliberately left free so an admin can drop in an override. After first
+# install, reload and re-trigger the HID devices (no reboot needed):
+#   sudo udevadm control --reload-rules
+#   sudo udevadm trigger --action=add --subsystem-match=hidraw
+#
+# Covers every SteelSeries device (vendor 0x1038): Arctis Nova Pro Wireless
+# base station (0x12e0/0x12e5/0x225d), Aerox 9 Wireless (0x1858/0x185a), etc.
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", MODE="0660", TAG+="uaccess"
