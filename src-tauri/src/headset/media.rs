@@ -87,6 +87,17 @@ fn load_gif_frames(path: &Path) -> Result<Vec<OledFrame>, String> {
 /// Video → frames via ffmpeg, which emits raw 8-bit gray 128x64 frames on
 /// stdout (already scaled+padded), one every 1/VIDEO_FPS s.
 fn load_video_frames(path: &Path) -> Result<Vec<OledFrame>, String> {
+    // `ffmpeg -i` resolves its input as a URL, so "http://host/x.mp4" would be
+    // fetched and "concat:"/"subfile:" would read files of ffmpeg's choosing —
+    // the extension check in load_media() stops neither. Canonicalising first
+    // rejects anything that is not an existing regular file, and the whitelist
+    // stops the pseudo-protocols even if a path somehow slips through.
+    let path = path
+        .canonicalize()
+        .map_err(|e| format!("cannot open video: {e}"))?;
+    if !path.is_file() {
+        return Err("not a regular file".into());
+    }
     let vf = format!(
         "fps={fps},scale={w}:{h}:force_original_aspect_ratio=decrease,\
          pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black,format=gray",
@@ -94,17 +105,24 @@ fn load_video_frames(path: &Path) -> Result<Vec<OledFrame>, String> {
         w = WIDTH,
         h = HEIGHT
     );
+    let frames = MAX_VIDEO_FRAMES.to_string();
     let output = Command::new("ffmpeg")
         .args([
             "-hide_banner",
             "-loglevel",
             "error",
+            "-protocol_whitelist",
+            "file,crypto,data",
             "-i",
-            &path.to_string_lossy(),
+        ])
+        // Passed as an OsStr: a lossy conversion would mangle a non-UTF-8 path
+        // into one that points somewhere else.
+        .arg(&path)
+        .args([
             "-vf",
-            &vf,
+            vf.as_str(),
             "-frames:v",
-            &MAX_VIDEO_FRAMES.to_string(),
+            frames.as_str(),
             "-f",
             "rawvideo",
             "-pix_fmt",
