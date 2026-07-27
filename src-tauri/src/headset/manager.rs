@@ -37,6 +37,8 @@ pub struct HeadsetManager {
     /// capabilities and protocol behaviour are looked up from.
     entry: Mutex<Option<&'static DeviceEntry>>,
     connected: AtomicBool,
+    /// Whether the welcome splash has already played this launch.
+    welcomed: AtomicBool,
     app: Mutex<Option<AppHandle>>,
     /// Running `dbus-monitor` child when notification mirroring is on.
     notify_child: Mutex<Option<std::process::Child>>,
@@ -55,6 +57,7 @@ impl Default for HeadsetManager {
             status: Mutex::new(HeadsetStatus::default()),
             entry: Mutex::new(None),
             connected: AtomicBool::new(false),
+            welcomed: AtomicBool::new(false),
             app: Mutex::new(None),
             notify_child: Mutex::new(None),
             notify_duration: AtomicU64::new(Prefs::load().notify_duration_secs.clamp(1, 60)),
@@ -351,6 +354,13 @@ impl HeadsetManager {
                 }
                 // Apply the persisted notification scroll style to the new thread.
                 let _ = self.oled(OledCommand::SetNotifyScroll(Prefs::load().notify_scroll));
+                // Greet once per launch, not on every reconnect — a base
+                // station that drops out mid-session shouldn't replay it.
+                if !self.welcomed.swap(true, Ordering::Relaxed) {
+                    if let Some(frames) = super::clips::generate_cached("welcome") {
+                        let _ = self.oled(OledCommand::Splash(frames));
+                    }
+                }
             }
 
             let writer = Arc::new(Mutex::new(writer));
