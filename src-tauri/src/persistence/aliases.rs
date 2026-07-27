@@ -1,10 +1,9 @@
-use std::fs;
-use std::path::PathBuf;
-
-use log::warn;
 use serde::{Deserialize, Serialize};
 
 use crate::error::SinkError;
+use crate::persistence::json::{self, Extra, Version};
+
+const FILE: &str = "aliases.json";
 
 /// A user-chosen display name for a discovered app, keyed by the same
 /// stream identity used for routing assignments (e.g. apps like Spotify
@@ -14,43 +13,29 @@ pub struct AliasEntry {
     pub match_prop: String,
     pub match_value: String,
     pub alias: String,
+    /// Per-entry fields a newer Inari added, kept so this one's autosaves
+    /// don't strip them back off.
+    #[serde(default, flatten)]
+    pub extra: Extra,
 }
 
 /// All saved aliases, stored as JSON at `$XDG_CONFIG_HOME/inari/aliases.json`.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Aliases {
+    #[serde(default)]
+    pub version: Version,
     pub aliases: Vec<AliasEntry>,
+    #[serde(default, flatten)]
+    pub extra: Extra,
 }
 
 impl Aliases {
-    pub fn config_path() -> Result<PathBuf, SinkError> {
-        let dir = dirs::config_dir()
-            .ok_or_else(|| SinkError::Config("cannot resolve the user config directory".into()))?;
-        Ok(dir.join("inari").join("aliases.json"))
-    }
-
     pub fn load() -> Self {
-        let Ok(path) = Self::config_path() else {
-            return Self::default();
-        };
-        match fs::read_to_string(&path) {
-            Ok(raw) => serde_json::from_str(&raw).unwrap_or_else(|e| {
-                warn!("ignoring malformed {}: {e}", path.display());
-                Self::default()
-            }),
-            Err(_) => Self::default(),
-        }
+        json::load(FILE)
     }
 
     pub fn save(&self) -> Result<(), SinkError> {
-        let path = Self::config_path()?;
-        if let Some(parent) = path.parent() {
-            crate::persistence::ensure_private_dir(parent)?;
-        }
-        let json = serde_json::to_string_pretty(self)
-            .map_err(|e| SinkError::Config(format!("serialize aliases: {e}")))?;
-        super::write_atomic(&path, &json)?;
-        Ok(())
+        json::save(FILE, self)
     }
 
     /// Set the alias for an identity; an empty alias removes it.
@@ -71,6 +56,7 @@ impl Aliases {
                 match_prop: match_prop.to_string(),
                 match_value: match_value.to_string(),
                 alias: alias.to_string(),
+                extra: Extra::new(),
             }),
         }
     }
@@ -100,5 +86,34 @@ mod tests {
         a.set("media.name", "audio-src", "   ");
         assert!(a.get("media.name", "audio-src").is_none());
         assert!(a.aliases.is_empty());
+    }
+
+    #[test]
+    fn newer_file_round_trips_without_losing_fields() {
+        // What a downgrade does: load a file from a newer Inari, then
+        // autosave it. Both the top-level and the per-entry additions have
+        // to come back out unchanged.
+        let raw = r#"{"version":9,"aliases":[
+            {"match_prop":"media.name","match_value":"audio-src","alias":"Spotify","color":"magenta"}
+        ],"groups":["music"]}"#;
+        let a = json::parse_or_default::<Aliases>("aliases.json", raw);
+        assert_eq!(a.get("media.name", "audio-src"), Some("Spotify"));
+
+        let back: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&a).expect("serializes")).expect("value");
+        assert_eq!(back["version"], serde_json::json!(9));
+        assert_eq!(back["groups"], serde_json::json!(["music"]));
+        assert_eq!(back["aliases"][0]["color"], serde_json::json!("magenta"));
+    }
+
+    #[test]
+    fn corrupt_file_degrades_to_the_empty_set() {
+        assert_eq!(
+            json::parse_or_default::<Aliases>("aliases.json", "{ truncated"),
+            Aliases::default()
+        );
+        // A file without the version key is stamped as the current schema.
+        let a = json::parse_or_default::<Aliases>("aliases.json", r#"{"aliases":[]}"#);
+        assert_eq!(a.version, Version::default());
     }
 }

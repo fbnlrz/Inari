@@ -114,6 +114,14 @@ pub fn toggle_channel_mute(
     Ok(())
 }
 
+/// Monitoring is scoped to our own nodes: a channel, a mix bus, or the mic
+/// (TD-050) - not any arbitrary session sink.
+fn monitor_target_known(mixer: &crate::mixer::state::MixerState, sink_name: &str) -> bool {
+    sink_name == "sink_mic"
+        || mixer.channel_defs.channels.iter().any(|c| c.name == sink_name)
+        || mixer.buses.buses.iter().any(|b| b.name == sink_name)
+}
+
 /// Listen to a channel/mix/mic on the default output (session scoped -
 /// not persisted, cleared on restart).
 #[tauri::command]
@@ -122,14 +130,9 @@ pub fn set_monitor(
     sink_name: String,
     enabled: bool,
 ) -> Result<(), String> {
-    // Monitoring is scoped to our own nodes: a channel, a mix bus, or the mic
-    // (TD-050) - not any arbitrary session sink.
     {
         let mixer = state.lock_mixer()?;
-        let known = sink_name == "sink_mic"
-            || mixer.channel_defs.channels.iter().any(|c| c.name == sink_name)
-            || mixer.buses.buses.iter().any(|b| b.name == sink_name);
-        if !known {
+        if !monitor_target_known(&mixer, &sink_name) {
             return Err(format!("unknown monitor target: {sink_name}"));
         }
     }
@@ -167,4 +170,33 @@ pub fn set_app_volume(
         .backend
         .set_app_volume(stream_index, volume.min(MAX_VOLUME))
         .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mixer::state::MixerState;
+
+    #[test]
+    fn volume_and_mute_only_reach_our_own_channels() {
+        // The gate `set_channel_volume` / `toggle_channel_mute` apply, so a
+        // compromised webview can't drive arbitrary session sinks (TD-050).
+        assert!(is_virtual_sink("sink_game"));
+        assert!(!is_virtual_sink("sink_mic"), "the mic chain, not a channel");
+        assert!(!is_virtual_sink("sink_stream"), "a mix bus, not a channel");
+        assert!(!is_virtual_sink("alsa_output.usb-SteelSeries-00.analog-stereo"));
+        assert!(!is_virtual_sink("ink_game"), "the prefix is required");
+        assert!(!is_virtual_sink(""));
+    }
+
+    #[test]
+    fn monitoring_accepts_channels_mixes_and_the_mic_only() {
+        let mixer = MixerState::default();
+        assert!(monitor_target_known(&mixer, "sink_game"), "a channel");
+        assert!(monitor_target_known(&mixer, "sink_mic"));
+        assert!(monitor_target_known(&mixer, "sink_stream"), "the master mix");
+        assert!(!monitor_target_known(&mixer, "alsa_output.pci-0000_00_1f.3"));
+        assert!(!monitor_target_known(&mixer, "sink_game_evil"));
+        assert!(!monitor_target_known(&mixer, ""));
+    }
 }

@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use super::media::OledFrame;
 use super::oled::{Framebuffer, HEIGHT, WIDTH};
-use super::oled_draw::{circle, line};
+use super::oled_draw::{circle, disc, line};
 
 /// Tiny deterministic PRNG (xorshift32) so clips look the same every run
 /// without pulling in the `rand` crate.
@@ -70,6 +70,8 @@ pub const BUILTIN_CLIPS: &[ClipInfo] = &[
     ClipInfo { id: "scope",     label: "Oscilloscope",  category: "Demos" },
     ClipInfo { id: "ekg",       label: "Heartbeat",     category: "Demos" },
     ClipInfo { id: "pong",      label: "Pong",          category: "Demos" },
+    // Also the startup splash; listed so it can be replayed without relaunching.
+    ClipInfo { id: "welcome",   label: "Welcome",       category: "Japan" },
 ];
 
 /// Generate a built-in clip by id, or `None` if unknown.
@@ -106,8 +108,193 @@ pub fn generate(name: &str) -> Option<Vec<OledFrame>> {
         "scope" => Some(oscilloscope(120)),
         "ekg" => Some(ekg(120)),
         "pong" => Some(pong(180)),
+        "welcome" => Some(welcome()),
         _ => None,
     }
+}
+
+// --- welcome splash -----------------------------------------------------
+
+/// Panel geometry for the torii. Laid out directly at 128x64 rather than
+/// scaled from the SVG icon: at this size the beam thicknesses have to be
+/// whole pixels or the gate turns to mush.
+const BASE_Y: isize = 44;
+const SUN: (isize, isize) = (64, 32);
+
+/// The torii as its own mask, so it can be knocked out of whatever is behind
+/// it. `build` (0..1) reveals it bottom-up: pillars rise from the base, then
+/// the nuki, the shimaki with its strut, and finally the swept kasagi.
+fn torii_mask(build: f32) -> Vec<bool> {
+    let mut m = vec![false; WIDTH * HEIGHT];
+    let mut set = |x: isize, y: isize| {
+        if (0..WIDTH as isize).contains(&x) && (0..HEIGHT as isize).contains(&y) {
+            m[y as usize * WIDTH + x as usize] = true;
+        }
+    };
+    let mut bar = |x0: isize, x1: isize, y0: isize, y1: isize| {
+        for y in y0..=y1 {
+            for x in x0..=x1 {
+                set(x, y);
+            }
+        }
+    };
+
+    // Pillars, splaying slightly outward towards the base like the icon's.
+    const TOP_Y: isize = 12;
+    let p = (build / 0.55).min(1.0);
+    if p > 0.0 {
+        let h = ((BASE_Y - TOP_Y) as f32 * p) as isize;
+        for y in (BASE_Y - h)..=BASE_Y {
+            let t = (BASE_Y - y) as f32 / (BASE_Y - TOP_Y) as f32;
+            let spread = (2.0 * (1.0 - t)).round() as isize;
+            let lx = 45 - spread;
+            bar(lx, lx + 5, y, y);
+            bar(WIDTH as isize - 1 - lx - 5, WIDTH as isize - 1 - lx, y, y);
+        }
+    }
+    if build > 0.55 {
+        let f = ((build - 0.55) / 0.15).min(1.0);
+        let half = (26.0 * f) as isize;
+        bar(64 - half, 64 + half, 18, 21); // nuki
+    }
+    if build > 0.70 {
+        let f = ((build - 0.70) / 0.15).min(1.0);
+        let half = (28.0 * f) as isize;
+        bar(64 - half, 64 + half, 10, 12); // shimaki
+        bar(62, 65, 12, 18); // gakuzuka strut
+    }
+    if build > 0.85 {
+        let f = ((build - 0.85) / 0.15).min(1.0);
+        let half = (32.0 * f) as isize;
+        for x in (64 - half)..=(64 + half) {
+            let t = (x - 64).abs() as f32 / 32.0;
+            let lift = (2.0 * t * t).round() as isize; // kasagi sweep
+            bar(x, x, 5 - lift, 8 - lift);
+        }
+    }
+    m
+}
+
+/// Draw a mask with a one-pixel knockout, so the shape keeps a clean edge
+/// against the sun and rays behind it instead of merging into them.
+fn stamp(fb: &mut Framebuffer, mask: &[bool]) {
+    for y in 0..HEIGHT as isize {
+        for x in 0..WIDTH as isize {
+            if mask[y as usize * WIDTH + x as usize] {
+                for dy in -1..=1 {
+                    for dx in -1..=1 {
+                        fb.set(x + dx, y + dy, false);
+                    }
+                }
+            }
+        }
+    }
+    for y in 0..HEIGHT as isize {
+        for x in 0..WIDTH as isize {
+            if mask[y as usize * WIDTH + x as usize] {
+                fb.set(x, y, true);
+            }
+        }
+    }
+}
+
+/// Startup splash: the sun rises behind the gate from the app icon, the gate
+/// assembles itself, the wordmark wipes in, sakura drift through. Runs once
+/// per launch; [`crate::headset::oled_controller`] plays it as an overlay and
+/// hands the panel straight back if the user picks anything.
+pub fn welcome() -> Vec<OledFrame> {
+    const PHASE_SUN: usize = 14;
+    const PHASE_GATE: usize = 20;
+    const PHASE_WORD: usize = 12;
+    const PHASE_HOLD: usize = 24;
+    const TOTAL: usize = PHASE_SUN + PHASE_GATE + PHASE_WORD + PHASE_HOLD;
+
+    let mut rng = Rng(0x5eed_1a21);
+    // (x, y, fall speed, sway phase, sway amount)
+    let mut petals: Vec<(f32, f32, f32, f32, f32)> = (0..14)
+        .map(|_| {
+            (
+                rng.frac() * WIDTH as f32,
+                -20.0 + rng.frac() * 20.0,
+                0.35 + rng.frac() * 0.45,
+                rng.frac() * std::f32::consts::TAU,
+                0.4 + rng.frac() * 0.7,
+            )
+        })
+        .collect();
+
+    let mut out = Vec::with_capacity(TOTAL);
+    for i in 0..TOTAL {
+        let mut fb = Framebuffer::new();
+        let (cx, cy) = SUN;
+
+        // Sun and rays: grow through the first phase, then hold and turn
+        // slowly so the frame never sits perfectly still.
+        let f = if i < PHASE_SUN {
+            (i + 1) as f32 / PHASE_SUN as f32
+        } else {
+            1.0
+        };
+        let r = (10.0 * f) as isize;
+        for k in 0..16 {
+            let a = std::f32::consts::TAU * k as f32 / 16.0 + i as f32 * 0.010;
+            let (s, c) = (a.sin(), a.cos());
+            let r0 = (r + 3) as f32;
+            let r1 = r0 + 26.0 * f;
+            line(
+                &mut fb,
+                cx + (r0 * c) as isize,
+                cy + (r0 * s) as isize,
+                cx + (r1 * c) as isize,
+                cy + (r1 * s) as isize,
+            );
+        }
+        if r > 2 {
+            disc(&mut fb, cx, cy, r);
+        }
+
+        // The gate builds on top of the sun, framing it in its main opening.
+        if i >= PHASE_SUN {
+            let b = ((i - PHASE_SUN + 1) as f32 / PHASE_GATE as f32).min(1.0);
+            stamp(&mut fb, &torii_mask(b));
+        }
+
+        // Wordmark, wiped in left to right on a cleared band so the rays
+        // never fight the glyphs.
+        if i >= PHASE_SUN + PHASE_GATE {
+            let c = ((i - PHASE_SUN - PHASE_GATE + 1) as f32 / PHASE_WORD as f32).min(1.0);
+            let w = Framebuffer::text_width("INARI", 2) as isize;
+            let x = (WIDTH as isize - w) / 2;
+            let y = 48;
+            fb.fill_rect(0, y - 2, WIDTH, 18, false);
+            let cut = x + (w as f32 * c) as isize + 1;
+            fb.draw_text_clip(x, y, "INARI", 2, x, y, cut, y + 14);
+            for px in x..cut.min(x + w) {
+                fb.set(px, y + 15, true);
+            }
+        }
+
+        // Petals drift the whole time, thickening once the gate is up.
+        let active = if i >= PHASE_SUN + PHASE_GATE {
+            petals.len()
+        } else {
+            i / 2
+        };
+        for (px, py, vy, ph, sw) in petals.iter_mut().take(active) {
+            *py += *vy;
+            *px += (i as f32 * 0.18 + *ph).sin() * *sw * 0.5;
+            if *py > HEIGHT as f32 + 2.0 {
+                *py = -2.0;
+            }
+            let (x, y) = (*px as isize, *py as isize);
+            fb.set(x, y, true);
+            fb.set(x + 1, y, true);
+            fb.set(x, y + 1, true);
+        }
+
+        out.push(OledFrame { fb, delay_ms: 40 });
+    }
+    out
 }
 
 /// Memoised clips, keyed by the same name [`generate`] takes.
@@ -1170,4 +1357,56 @@ fn pong(frames: usize) -> Vec<OledFrame> {
         out.push(OledFrame { fb, delay_ms: 35 });
     }
     out
+}
+
+
+#[cfg(test)]
+mod welcome_tests {
+    use super::*;
+
+    fn lit(fb: &Framebuffer) -> usize {
+        (0..HEIGHT).flat_map(|y| (0..WIDTH).map(move |x| (x, y)))
+            .filter(|(x, y)| fb.get(*x, *y))
+            .count()
+    }
+
+    #[test]
+    fn welcome_runs_at_the_panel_tick_and_is_bounded() {
+        let fs = welcome();
+        assert_eq!(fs.len(), 70);
+        // 40 ms is the OLED redraw tick; a different delay would make the
+        // splash stutter against the controller's own cadence.
+        assert!(fs.iter().all(|f| f.delay_ms == 40));
+        let total: u32 = fs.iter().map(|f| f.delay_ms as u32).sum();
+        assert_eq!(total, 2800);
+    }
+
+    #[test]
+    fn welcome_builds_up_and_never_blanks() {
+        let fs = welcome();
+        // Every frame draws something — a blank frame mid-splash would read
+        // as the panel dropping out.
+        assert!(fs.iter().all(|f| lit(&f.fb) > 0));
+        // The gate and wordmark accumulate, so the end is busier than the start.
+        assert!(lit(&fs[0].fb) < lit(&fs[fs.len() - 1].fb));
+    }
+
+    #[test]
+    fn welcome_ends_on_the_wordmark_and_the_gate() {
+        let last = &welcome()[69].fb;
+        // Wordmark band: "INARI" at scale 2 sits at y 48..62 with a rule under it.
+        let band = (46..64).flat_map(|y| (0..WIDTH).map(move |x| (x, y)))
+            .filter(|(x, y)| last.get(*x, *y))
+            .count();
+        assert!(band > 120, "wordmark band looks empty: {band} px");
+        // Both pillars are standing at the base line.
+        assert!(last.get(46, BASE_Y as usize));
+        assert!(last.get(WIDTH - 47, BASE_Y as usize));
+    }
+
+    #[test]
+    fn welcome_is_reachable_as_a_clip() {
+        assert!(generate("welcome").is_some());
+        assert!(BUILTIN_CLIPS.iter().any(|c| c.id == "welcome"));
+    }
 }

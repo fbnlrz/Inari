@@ -117,6 +117,17 @@ pub fn remove_bus(state: State<'_, AppState>, name: String) -> Result<(), String
     defs.save().map_err(|e| e.to_string())
 }
 
+/// What gets persisted for a mix given what the user checked. Auto-include
+/// ("exclude") mixes store the complement, so channels created later join by
+/// themselves; manual mixes store the selection verbatim.
+fn stored_members(all: &[String], checked: &[String], exclude: bool) -> Vec<String> {
+    if exclude {
+        all.iter().filter(|c| !checked.contains(c)).cloned().collect()
+    } else {
+        checked.to_vec()
+    }
+}
+
 /// Replace the channel set a mix carries. `channels` is what the user
 /// sees checked; for auto-include mixes the complement (the unchecked
 /// set) is what gets stored, so future channels keep flowing in.
@@ -137,14 +148,8 @@ pub fn set_bus_members(
         let Some(def) = mixer.buses.get(&name) else {
             return Err("unknown mix".to_string());
         };
-        if def.exclude {
-            channel_names(&mixer)
-                .into_iter()
-                .filter(|c| !channels.contains(c))
-                .collect()
-        } else {
-            channels.clone()
-        }
+        let exclude = def.exclude;
+        stored_members(&channel_names(&mixer), &channels, exclude)
     };
     state
         .backend
@@ -239,4 +244,38 @@ pub fn set_bus_mute(state: State<'_, AppState>, name: String, muted: bool) -> Re
 /// The current channel sink names (the "all channels" set for mixes).
 pub(crate) fn channel_names(mixer: &crate::mixer::state::MixerState) -> Vec<String> {
     mixer.channels.iter().map(|c| c.name.clone()).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn names(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn manual_mixes_store_exactly_what_was_checked() {
+        let all = names(&["sink_game", "sink_music", "sink_chat"]);
+        assert_eq!(
+            stored_members(&all, &names(&["sink_game"]), false),
+            names(&["sink_game"])
+        );
+    }
+
+    #[test]
+    fn auto_include_mixes_store_the_complement_so_new_channels_join() {
+        let all = names(&["sink_game", "sink_music", "sink_chat"]);
+        let stored = stored_members(&all, &names(&["sink_game", "sink_chat"]), true);
+        // What is persisted is what the user *unchecked*, so a channel added
+        // later isn't in the set and `effective_members` carries it anyway.
+        assert_eq!(stored, names(&["sink_music"]));
+        assert!(!stored.contains(&"sink_browser".to_string()));
+    }
+
+    #[test]
+    fn unchecking_every_channel_on_an_auto_include_mix_excludes_them_all() {
+        let all = names(&["sink_game", "sink_music"]);
+        assert_eq!(stored_members(&all, &[], true), all);
+    }
 }

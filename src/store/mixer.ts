@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { createDebouncer } from "../lib/debounce";
 import type {
   AppStream,
@@ -25,6 +26,29 @@ function debouncedInvoke(key: string, cmd: string, args: Record<string, unknown>
 
 /** Per-sink [left, right] peak amplitudes (0-1), streamed from the native backend. */
 export type Levels = Record<string, [number, number]>;
+
+/**
+ * Channel and mic state can move without the UI asking: the tray's mute rows,
+ * a global hotkey, `inari mute chat` from a terminal. The backend emits
+ * `state-changed` after each of those; re-read the two stores they touch.
+ *
+ * Subscribed from `initialize` (once per session) rather than at module scope
+ * so importing the store never depends on a Tauri runtime being present.
+ */
+let externalSubscribed = false;
+function subscribeExternalChanges() {
+  if (externalSubscribed) return;
+  externalSubscribed = true;
+  void listen("state-changed", () => {
+    const s = useMixerStore.getState();
+    void s.fetchChannels();
+    void s.fetchMic();
+  }).catch(() => {
+    // No event bridge (tests, or a webview that failed to boot): the poll and
+    // the next screen change still refresh everything.
+    externalSubscribed = false;
+  });
+}
 
 interface MixerStore {
   channels: VirtualSink[];
@@ -114,6 +138,12 @@ interface MixerStore {
   /** True on the native PipeWire backend; false on the pactl fallback
    * (mixes/mic/monitoring unavailable). Null until known. */
   backendNative: boolean | null;
+  /** False once the PipeWire loop thread has died. Distinct from the pactl
+   * fallback: that one still works, a stopped engine means no audio control
+   * until a restart. */
+  engineAlive: boolean;
+  /** Re-read the engine's liveness. Cheap, so any failed command can ask. */
+  checkEngine: () => Promise<void>;
   /** First-run tutorial visible. */
   showOnboarding: boolean;
   /** True when the tutorial was reopened from Settings (no setup choice). */
@@ -182,6 +212,15 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
   clearError: () => set({ error: null }),
   initialized: false,
   backendNative: null,
+  engineAlive: true,
+  checkEngine: async () => {
+    try {
+      const i = await invoke<{ native: boolean; engine_alive: boolean }>("get_backend_info");
+      set({ backendNative: i.native, engineAlive: i.engine_alive });
+    } catch {
+      // The check itself failing tells us nothing new; leave the last state.
+    }
+  },
   showOnboarding: false,
   onboardingReplay: false,
 
@@ -237,10 +276,11 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
     try {
       await invoke("init_virtual_devices");
       set({ initialized: true, error: null });
+      subscribeExternalChanges();
       // Leaving backendNative null on failure would gate native-only features
       // on an unknown, so say it failed instead of swallowing it.
-      void invoke<{ native: boolean }>("get_backend_info")
-        .then((i) => set({ backendNative: i.native }))
+      void invoke<{ native: boolean; engine_alive: boolean }>("get_backend_info")
+        .then((i) => set({ backendNative: i.native, engineAlive: i.engine_alive }))
         .catch((e: unknown) => set({ error: String(e) }));
       void invoke<{
         onboarded: boolean;

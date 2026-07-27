@@ -53,11 +53,7 @@ pub fn save(preset: &EqPreset) -> Result<(), SinkError> {
         return Err(SinkError::Config("a preset needs at least one band".into()));
     }
     let dir = presets_dir()?;
-    crate::persistence::ensure_private_dir(&dir)?;
-    let json = serde_json::to_string_pretty(preset)
-        .map_err(|e| SinkError::Config(format!("serialize eq preset: {e}")))?;
-    super::write_atomic(&dir.join(format!("{name}.json")), &json)?;
-    Ok(())
+    crate::persistence::json::save_at(&dir.join(format!("{name}.json")), preset)
 }
 
 pub fn delete(name: &str) -> Result<(), SinkError> {

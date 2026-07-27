@@ -1,17 +1,18 @@
 use std::collections::{HashMap, HashSet};
-use std::fs;
-use std::path::PathBuf;
-
-use log::warn;
 use serde::{Deserialize, Serialize};
 
 use crate::error::SinkError;
+use crate::persistence::json::{self, Extra, Version};
+
+const FILE: &str = "outputs.json";
 
 /// Per-channel output device choices (Phase 4), stored as JSON at
 /// `$XDG_CONFIG_HOME/inari/outputs.json`. `None` = follow the system default
 /// output (with automatic failover, Sonar-style).
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct ChannelOutputs {
+    #[serde(default)]
+    pub version: Version,
     pub outputs: HashMap<String, Option<String>>,
     /// Channels with auto-failover turned off: they route only to their chosen
     /// device (or the exact system default) and stay silent when it's gone,
@@ -21,37 +22,17 @@ pub struct ChannelOutputs {
     /// written before this field, loading cleanly.
     #[serde(default)]
     pub no_failover: HashSet<String>,
+    #[serde(default, flatten)]
+    pub extra: Extra,
 }
 
 impl ChannelOutputs {
-    pub fn config_path() -> Result<PathBuf, SinkError> {
-        let dir = dirs::config_dir()
-            .ok_or_else(|| SinkError::Config("cannot resolve the user config directory".into()))?;
-        Ok(dir.join("inari").join("outputs.json"))
-    }
-
     pub fn load() -> Self {
-        let Ok(path) = Self::config_path() else {
-            return Self::default();
-        };
-        match fs::read_to_string(&path) {
-            Ok(raw) => serde_json::from_str(&raw).unwrap_or_else(|e| {
-                warn!("ignoring malformed {}: {e}", path.display());
-                Self::default()
-            }),
-            Err(_) => Self::default(),
-        }
+        json::load(FILE)
     }
 
     pub fn save(&self) -> Result<(), SinkError> {
-        let path = Self::config_path()?;
-        if let Some(parent) = path.parent() {
-            crate::persistence::ensure_private_dir(parent)?;
-        }
-        let json = serde_json::to_string_pretty(self)
-            .map_err(|e| SinkError::Config(format!("serialize outputs: {e}")))?;
-        super::write_atomic(&path, &json)?;
-        Ok(())
+        json::save(FILE, self)
     }
 
     pub fn set(&mut self, sink_name: &str, output: Option<String>) {
@@ -121,6 +102,25 @@ mod tests {
         let o: ChannelOutputs = serde_json::from_str(legacy).expect("legacy loads");
         assert!(o.failover("sink_game"), "missing field means failover on");
         assert_eq!(o.get("sink_game"), Some("dev"));
+    }
+
+    #[test]
+    fn newer_file_round_trips_without_losing_fields() {
+        let raw = r#"{"version":9,"outputs":{"sink_game":"dev"},"latency":{"sink_game":12}}"#;
+        let o = json::parse_or_default::<ChannelOutputs>("outputs.json", raw);
+        assert_eq!(o.get("sink_game"), Some("dev"));
+        assert_eq!(o.version, Version(9));
+        let back: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&o).expect("serializes")).expect("value");
+        assert_eq!(back["latency"]["sink_game"], serde_json::json!(12));
+    }
+
+    #[test]
+    fn corrupt_file_degrades_to_default() {
+        assert_eq!(
+            json::parse_or_default::<ChannelOutputs>("outputs.json", "{ truncated"),
+            ChannelOutputs::default()
+        );
     }
 
     #[test]

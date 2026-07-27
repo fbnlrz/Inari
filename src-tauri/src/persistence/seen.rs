@@ -1,10 +1,9 @@
-use std::fs;
-use std::path::PathBuf;
-
-use log::warn;
 use serde::{Deserialize, Serialize};
 
 use crate::error::SinkError;
+use crate::persistence::json::{self, Extra, Version};
+
+const FILE: &str = "seen_apps.json";
 
 /// How long an app the user never touched stays in the history before it is
 /// forgotten. Entries carrying user intent (an assignment, an alias, or the
@@ -24,53 +23,36 @@ pub struct SeenEntry {
     /// Ignored apps are hidden from the app list and never auto-routed.
     #[serde(default)]
     pub ignored: bool,
+    /// Per-entry fields a newer Inari added, kept so this one's autosaves
+    /// don't strip them back off.
+    #[serde(default, flatten)]
+    pub extra: Extra,
 }
 
 /// Registry of every app identity ever seen, stored as JSON at
 /// `$XDG_CONFIG_HOME/inari/seen_apps.json`. Powers the inactive-apps list
 /// and the ignore feature.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct SeenApps {
+    #[serde(default)]
+    pub version: Version,
     pub apps: Vec<SeenEntry>,
+    #[serde(default, flatten)]
+    pub extra: Extra,
 }
 
 impl SeenApps {
-    pub fn config_path() -> Result<PathBuf, SinkError> {
-        let dir = dirs::config_dir()
-            .ok_or_else(|| SinkError::Config("cannot resolve the user config directory".into()))?;
-        Ok(dir.join("inari").join("seen_apps.json"))
-    }
-
     pub fn load() -> Self {
-        let Ok(path) = Self::config_path() else {
-            return Self::default();
-        };
-        match fs::read_to_string(&path) {
-            Ok(raw) => {
-                let mut seen: Self = serde_json::from_str(&raw).unwrap_or_else(|e| {
-                    warn!("ignoring malformed {}: {e}", path.display());
-                    Self::default()
-                });
-                // Scrub nameless entries recorded before empty property
-                // values were filtered out of identity resolution.
-                seen.apps.retain(|a| {
-                    !a.display_name.trim().is_empty() && !a.match_value.trim().is_empty()
-                });
-                seen
-            }
-            Err(_) => Self::default(),
-        }
+        let mut seen: Self = json::load(FILE);
+        // Scrub nameless entries recorded before empty property values were
+        // filtered out of identity resolution.
+        seen.apps
+            .retain(|a| !a.display_name.trim().is_empty() && !a.match_value.trim().is_empty());
+        seen
     }
 
     pub fn save(&self) -> Result<(), SinkError> {
-        let path = Self::config_path()?;
-        if let Some(parent) = path.parent() {
-            crate::persistence::ensure_private_dir(parent)?;
-        }
-        let json = serde_json::to_string_pretty(self)
-            .map_err(|e| SinkError::Config(format!("serialize seen apps: {e}")))?;
-        super::write_atomic(&path, &json)?;
-        Ok(())
+        json::save(FILE, self)
     }
 
     fn entry_mut(&mut self, match_prop: &str, match_value: &str) -> Option<&mut SeenEntry> {
@@ -113,6 +95,7 @@ impl SeenApps {
                 icon_name: icon_name.map(str::to_string),
                 last_seen: now,
                 ignored: false,
+                extra: Extra::new(),
             });
             true
         }
@@ -204,6 +187,30 @@ mod tests {
 
         // Nothing left to drop - the caller shouldn't be told to save.
         assert!(!seen.prune(now, MAX_SEEN_AGE_SECS, routed));
+    }
+
+    #[test]
+    fn newer_file_round_trips_without_losing_fields() {
+        let raw = r#"{"version":9,"apps":[
+            {"match_prop":"application.name","match_value":"Firefox","display_name":"Firefox",
+             "icon_name":null,"last_seen":42,"pinned":true}
+        ],"quota":100}"#;
+        let seen = json::parse_or_default::<SeenApps>("seen_apps.json", raw);
+        assert_eq!(seen.get("application.name", "Firefox").expect("entry").last_seen, 42);
+
+        let back: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&seen).expect("serializes")).expect("value");
+        assert_eq!(back["version"], serde_json::json!(9));
+        assert_eq!(back["quota"], serde_json::json!(100));
+        assert_eq!(back["apps"][0]["pinned"], serde_json::json!(true));
+    }
+
+    #[test]
+    fn corrupt_file_degrades_to_the_empty_registry() {
+        assert_eq!(
+            json::parse_or_default::<SeenApps>("seen_apps.json", "{ truncated"),
+            SeenApps::default()
+        );
     }
 
     #[test]

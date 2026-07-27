@@ -1,10 +1,10 @@
-use std::fs;
-use std::path::PathBuf;
-
 use log::warn;
 use serde::{Deserialize, Serialize};
 
 use crate::error::SinkError;
+use crate::persistence::json;
+
+const FILE: &str = "channels.json";
 
 /// Sink node names reserved by Sink itself (not user channels).
 pub const RESERVED_SINK_NAMES: [&str; 2] = ["sink_mic", "sink_stream"];
@@ -74,48 +74,32 @@ fn slugify(label: &str) -> String {
 }
 
 impl Channels {
-    pub fn config_path() -> Result<PathBuf, SinkError> {
-        let dir = dirs::config_dir()
-            .ok_or_else(|| SinkError::Config("cannot resolve the user config directory".into()))?;
-        Ok(dir.join("inari").join("channels.json"))
-    }
-
     pub fn load() -> Self {
-        let Ok(path) = Self::config_path() else {
+        // A missing file is first run (silent default); a present-but-broken
+        // one is a torn or hand-edited write the shared loader logs rather
+        // than honours - it hands back the default, which sanitizes to the
+        // classic four.
+        let Some(raw) = json::read(FILE) else {
             return Self::default();
         };
-        // A missing file is first run (silent default); a present-but-broken
-        // one is a torn or hand-edited write we log rather than honour.
-        let raw = match fs::read_to_string(&path) {
-            Ok(raw) => raw,
-            Err(_) => return Self::default(),
-        };
-        match Self::parse(&raw) {
-            Some(c) if !c.channels.is_empty() => c,
-            Some(_) => {
-                warn!("channels.json held no valid channels; using defaults");
-                Self::default()
-            }
-            None => {
-                warn!("channels.json is unreadable (corrupt?); using defaults");
-                Self::default()
-            }
+        let channels = json::parse_or_default::<Self>(FILE, &raw).sanitized();
+        if channels.channels.is_empty() {
+            warn!("channels.json held no valid channels; using defaults");
+            return Self::default();
         }
+        channels
     }
 
-    /// Parse and sanitize the channel set from JSON. Entries that break the
-    /// invariants `add()` guarantees - a reserved name, a missing `sink_`
-    /// prefix, or a duplicate - are dropped: a hand-edited or foreign-tool
-    /// file would otherwise collide with the mic/stream service nodes, or make
-    /// `is_virtual_sink` reject a channel and abort `init_virtual_devices`.
-    /// The set is capped at `MAX_CHANNELS` so it can't exhaust the level-meter
-    /// slots. Returns `None` only when the text isn't valid JSON, so `load`
-    /// can tell a corrupt file from a merely empty one.
-    fn parse(raw: &str) -> Option<Self> {
-        let parsed: Self = serde_json::from_str(raw).ok()?;
+    /// Sanitize the channel set. Entries that break the invariants `add()`
+    /// guarantees (a reserved name, a missing `sink_` prefix, or a duplicate)
+    /// are dropped: a hand-edited or foreign-tool file would otherwise collide
+    /// with the mic/stream service nodes, or make `is_virtual_sink` reject a
+    /// channel and abort `init_virtual_devices`. The set is capped at
+    /// `MAX_CHANNELS` so it can't exhaust the level-meter slots.
+    fn sanitized(self) -> Self {
         let mut seen = std::collections::HashSet::new();
         let mut channels = Vec::new();
-        for def in parsed.channels {
+        for def in self.channels {
             let name = def.name.as_str();
             let valid = name.starts_with("sink_")
                 && !RESERVED_SINK_NAMES.contains(&name)
@@ -126,18 +110,11 @@ impl Channels {
                 warn!("dropping invalid channel '{}' from channels.json", def.name);
             }
         }
-        Some(Self { channels })
+        Self { channels }
     }
 
     pub fn save(&self) -> Result<(), SinkError> {
-        let path = Self::config_path()?;
-        if let Some(parent) = path.parent() {
-            crate::persistence::ensure_private_dir(parent)?;
-        }
-        let json = serde_json::to_string_pretty(self)
-            .map_err(|e| SinkError::Config(format!("serialize channels: {e}")))?;
-        super::write_atomic(&path, &json)?;
-        Ok(())
+        json::save(FILE, self)
     }
 
     pub fn get(&self, name: &str) -> Option<&ChannelDef> {
@@ -303,6 +280,11 @@ mod tests {
         assert!(c.rename("sink_nope", "X").is_err());
     }
 
+    /// What `load` does to a file body, minus the filesystem.
+    fn parse(raw: &str) -> Channels {
+        json::parse_or_default::<Channels>(FILE, raw).sanitized()
+    }
+
     #[test]
     fn parse_keeps_valid_and_fills_serde_defaults() {
         // Old-shape entries (pre-Phase-4: no icon / stream_mix) must still
@@ -311,7 +293,7 @@ mod tests {
             {"name":"sink_game","label":"Game"},
             {"name":"sink_music","label":"Music","icon":"music_note","stream_mix":false}
         ]}"#;
-        let c = Channels::parse(raw).expect("valid json");
+        let c = parse(raw);
         assert_eq!(c.channels.len(), 2);
         assert_eq!(c.channels[0].icon, None);
         assert!(c.channels[0].stream_mix, "missing stream_mix defaults true");
@@ -327,12 +309,7 @@ mod tests {
             {"name":"nope","label":"NoPrefix"},
             {"name":"sink_ok","label":"Fine"}
         ]}"#;
-        let names: Vec<String> = Channels::parse(raw)
-            .expect("valid json")
-            .channels
-            .into_iter()
-            .map(|d| d.name)
-            .collect();
+        let names: Vec<String> = parse(raw).channels.into_iter().map(|d| d.name).collect();
         assert_eq!(names, ["sink_game", "sink_ok"]);
     }
 
@@ -343,23 +320,22 @@ mod tests {
             items.push(format!(r#"{{"name":"sink_c{i}","label":"C{i}"}}"#));
         }
         let raw = format!(r#"{{"channels":[{}]}}"#, items.join(","));
-        assert_eq!(
-            Channels::parse(&raw).expect("valid json").channels.len(),
-            MAX_CHANNELS
-        );
+        assert_eq!(parse(&raw).channels.len(), MAX_CHANNELS);
     }
 
     #[test]
-    fn parse_rejects_corrupt_or_empty_text() {
-        assert!(Channels::parse("{ truncated").is_none());
-        assert!(Channels::parse("").is_none());
+    fn corrupt_or_empty_text_degrades_to_defaults() {
+        // The shared loader logs and hands back the default set, which
+        // sanitizes to itself - so a torn file lands on the classic four.
+        assert_eq!(parse("{ truncated"), Channels::default());
+        assert_eq!(parse(""), Channels::default());
     }
 
     #[test]
-    fn parse_all_invalid_yields_empty_set() {
-        // load() turns this into defaults; parse itself reports the empty set
-        // so load can distinguish it from a corrupt (None) file.
+    fn all_invalid_yields_empty_set() {
+        // load() turns this into defaults; sanitization itself reports the
+        // empty set so load can log why it fell back.
         let raw = r#"{"channels":[{"name":"sink_mic","label":"x"},{"name":"bad","label":"y"}]}"#;
-        assert!(Channels::parse(raw).expect("valid json").channels.is_empty());
+        assert!(parse(raw).channels.is_empty());
     }
 }

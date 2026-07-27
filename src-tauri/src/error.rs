@@ -19,6 +19,12 @@ pub enum SinkError {
     #[error("unknown virtual sink: {0}")]
     UnknownSink(String),
 
+    /// The native PipeWire loop thread left (server restart, fatal error).
+    /// Everything it owned - sinks, links, EQ chains - went with it, so the
+    /// only honest answer to any further request is "restart".
+    #[error("the audio engine stopped. Restart Inari to restore audio control.")]
+    EngineStopped,
+
     #[error("config error: {0}")]
     Config(String),
 

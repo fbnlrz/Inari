@@ -81,6 +81,25 @@ fn expected_sha(sums: &str, basename: &str) -> Option<String> {
     })
 }
 
+/// The refusal gate in front of `pkexec apt-get`: the URL the UI passed must
+/// match the one we resolved ourselves, that URL must be an amd64 `.deb` on an
+/// allowed host, and the release must be strictly newer. Split out from
+/// [`apply_blocking`] so the refusals can be exercised without a network call.
+fn vet_asset(requested: &str, deb_url: &str, available: bool) -> Result<(), String> {
+    if !requested.is_empty() && requested != deb_url {
+        return Err("refusing to install an unexpected asset".into());
+    }
+    if !host_allowed(deb_url) || !deb_url.ends_with("_amd64.deb") {
+        return Err("refusing to install an unexpected asset".into());
+    }
+    // Forward only. A stale or spoofed "latest" would otherwise be a way to
+    // reinstall a known-bad older build over the running one.
+    if !available {
+        return Err("the latest release is not newer than the installed version".into());
+    }
+    Ok(())
+}
+
 fn file_sha256(path: &std::path::Path) -> Result<String, String> {
     use sha2::{Digest, Sha256};
     let mut file = std::fs::File::open(path).map_err(|e| format!("reading the download: {e}"))?;
@@ -182,17 +201,7 @@ fn apply_blocking(requested: String) -> Result<(), String> {
         .deb_url
         .clone()
         .ok_or_else(|| "the latest release ships no .deb package".to_string())?;
-    if !requested.is_empty() && requested != deb_url {
-        return Err("refusing to install an unexpected asset".into());
-    }
-    if !host_allowed(&deb_url) || !deb_url.ends_with("_amd64.deb") {
-        return Err("refusing to install an unexpected asset".into());
-    }
-    // Forward only. A stale or spoofed "latest" would otherwise be a way to
-    // reinstall a known-bad older build over the running one.
-    if !info.available {
-        return Err("the latest release is not newer than the installed version".into());
-    }
+    vet_asset(&requested, &deb_url, info.available)?;
 
     // Fetch the release's checksum list before the package, so a mismatch
     // costs nothing but the listing.
@@ -298,6 +307,15 @@ pub async fn apply_update(deb_url: String) -> Result<(), String> {
         .map_err(|e| format!("update install failed to run: {e}"))?
 }
 
+/// The command handed to the detached relauncher: the stale `" (deleted)"`
+/// suffix stripped, and the path single-quoted so spaces (or a quote) in it
+/// survive `sh -c`.
+fn relaunch_script(exe: &str) -> String {
+    let real = exe.strip_suffix(" (deleted)").unwrap_or(exe);
+    let quoted = format!("'{}'", real.replace('\'', r"'\''"));
+    format!("sleep 2; exec {quoted}")
+}
+
 /// Relaunch the app so the freshly installed version takes over.
 ///
 /// Tauri's own `restart()` re-execs `current_exe()`, but after an in-place
@@ -309,10 +327,7 @@ pub async fn apply_update(deb_url: String) -> Result<(), String> {
 #[tauri::command]
 pub fn restart_app(app: tauri::AppHandle) {
     if let Ok(exe) = std::env::current_exe() {
-        let p = exe.to_string_lossy();
-        let real = p.strip_suffix(" (deleted)").unwrap_or(&p);
-        let quoted = format!("'{}'", real.replace('\'', r"'\''"));
-        let script = format!("sleep 2; exec {quoted}");
+        let script = relaunch_script(&exe.to_string_lossy());
         // setsid detaches the relauncher into its own session so it survives our
         // exit; fall back to a plain detached shell if setsid is unavailable.
         let spawned = Command::new("setsid")
@@ -343,6 +358,67 @@ pub fn open_url(url: String) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    /// A well-formed asset URL, as the GitHub API hands it to us.
+    const DEB: &str =
+        "https://github.com/fbnlrz/Inari/releases/download/v1.0.9/inari_1.0.9_amd64.deb";
+
+    // --- version comparison (decides whether a root install happens) -----
+
+    #[test]
+    fn semver_compares_numerically_not_lexically() {
+        assert!(semver("1.0.10") > semver("1.0.9"), "lexically 10 < 9");
+        assert!(semver("1.10.0") > semver("1.9.9"));
+        assert_eq!(semver("v1.0.8"), (1, 0, 8));
+        assert_eq!(semver("  1.0.8  "), (1, 0, 8));
+        // Missing or unparsable components read as zero rather than failing.
+        assert_eq!(semver("1.2"), (1, 2, 0));
+        assert_eq!(semver(""), (0, 0, 0));
+        assert_eq!(semver("not-a-version"), (0, 0, 0));
+    }
+
+    #[test]
+    fn a_prerelease_of_the_running_version_is_not_an_update() {
+        // Trailing text is dropped per component, and `available` is a strict
+        // `>` - so v1.0.8-rc1 never offers itself to a 1.0.8 install.
+        assert_eq!(semver("1.0.8-rc1"), semver("1.0.8"));
+        assert!(semver("1.0.8-rc1") <= semver("1.0.8"));
+    }
+
+    // --- the gate in front of `pkexec apt-get` ---------------------------
+
+    #[test]
+    fn vet_asset_accepts_what_we_resolved_ourselves() {
+        assert!(vet_asset(DEB, DEB, true).is_ok());
+        // The url is only cross-checked, so an empty one from the UI is fine.
+        assert!(vet_asset("", DEB, true).is_ok());
+    }
+
+    #[test]
+    fn vet_asset_refuses_a_url_the_webview_made_up() {
+        assert!(vet_asset("https://github.com/o/r/other_amd64.deb", DEB, true).is_err());
+    }
+
+    #[test]
+    fn vet_asset_refuses_assets_off_the_allowlist_or_of_the_wrong_kind() {
+        assert!(vet_asset("", "https://evil.example/inari_1.0.9_amd64.deb", true).is_err());
+        assert!(
+            vet_asset("", "https://github.com@evil.example/inari_1.0.9_amd64.deb", true).is_err(),
+            "userinfo"
+        );
+        assert!(
+            vet_asset("", "https://github.com/o/r/download/v1/install.sh", true).is_err(),
+            "not a package"
+        );
+    }
+
+    #[test]
+    fn vet_asset_never_installs_backwards() {
+        let err = vet_asset(DEB, DEB, false).expect_err("older release");
+        assert!(err.contains("not newer"), "{err}");
+    }
+
+    // --- asset resolution -------------------------------------------------
+
     #[test]
     fn host_allowlist_rejects_lookalikes() {
         assert!(host_allowed("https://github.com/fbnlrz/Inari/releases/download/v1/a.deb"));
@@ -370,5 +446,52 @@ mod tests {
             Some("bbbb")
         );
         assert!(expected_sha(sums, "inari_9.9.9_amd64.deb").is_none());
+    }
+
+    #[test]
+    fn sums_url_needs_a_directory_to_derive_from() {
+        assert_eq!(sums_url("inari_1.0.7_amd64.deb"), None);
+    }
+
+    #[test]
+    fn expected_sha_tolerates_crlf_and_skips_junk_lines() {
+        // A SHA256SUMS produced on, or served through, something that adds
+        // CRs must still match - otherwise every install fails closed.
+        let sums = "# a comment\r\nAAAA  inari_1.0.7_amd64.deb\r\n";
+        assert_eq!(
+            expected_sha(sums, "inari_1.0.7_amd64.deb").as_deref(),
+            Some("aaaa")
+        );
+    }
+
+    // --- the remaining refusal paths --------------------------------------
+
+    #[test]
+    fn open_url_refuses_non_https_schemes() {
+        // These all return before anything is spawned.
+        assert!(open_url("http://example.com".into()).is_err());
+        assert!(open_url("file:///etc/shadow".into()).is_err());
+        assert!(open_url("javascript:alert(1)".into()).is_err());
+    }
+
+    #[test]
+    fn relaunch_script_drops_the_deleted_suffix_an_upgrade_leaves() {
+        assert_eq!(
+            relaunch_script("/usr/bin/inari (deleted)"),
+            "sleep 2; exec '/usr/bin/inari'"
+        );
+    }
+
+    #[test]
+    fn relaunch_script_quotes_paths_that_would_otherwise_break_sh() {
+        assert_eq!(
+            relaunch_script("/opt/my apps/inari"),
+            "sleep 2; exec '/opt/my apps/inari'"
+        );
+        // A quote closes and reopens the literal instead of ending it.
+        assert_eq!(
+            relaunch_script("/opt/it's/inari"),
+            r"sleep 2; exec '/opt/it'\''s/inari'"
+        );
     }
 }

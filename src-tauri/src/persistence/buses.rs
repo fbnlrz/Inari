@@ -1,10 +1,10 @@
-use std::fs;
-use std::path::PathBuf;
-
 use log::warn;
 use serde::{Deserialize, Serialize};
 
 use crate::error::SinkError;
+use crate::persistence::json::{self, Extra, Version};
+
+const FILE: &str = "buses.json";
 
 /// Node-name prefix for user-created mixes (the seeded default keeps the
 /// historical "sink_stream" name so existing OBS setups keep working).
@@ -46,6 +46,10 @@ pub struct BusDef {
     /// Muted for recorders (they hear silence). Persisted like the volume.
     #[serde(default)]
     pub muted: bool,
+    /// Per-mix fields a newer Inari added, kept so this one's autosaves
+    /// don't strip them back off.
+    #[serde(default, flatten)]
+    pub extra: Extra,
 }
 
 fn default_volume() -> u8 {
@@ -70,21 +74,34 @@ impl BusDef {
 /// The user's mixes, stored at `$XDG_CONFIG_HOME/inari/buses.json`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Buses {
+    #[serde(default)]
+    pub version: Version,
     pub buses: Vec<BusDef>,
+    #[serde(default, flatten)]
+    pub extra: Extra,
 }
 
 impl Default for Buses {
     fn default() -> Self {
         Self {
-            buses: vec![BusDef {
-                name: DEFAULT_BUS_NODE.to_string(),
-                label: "Master Mix".to_string(),
-                channels: Vec::new(),
-                exclude: false,
-                volume_percent: 100,
-                muted: false,
-            }],
+            version: Version::default(),
+            buses: vec![master_def()],
+            extra: Extra::new(),
         }
+    }
+}
+
+/// The master mix as created from scratch (first run, or after it was
+/// deleted out of a hand-edited file).
+fn master_def() -> BusDef {
+    BusDef {
+        name: DEFAULT_BUS_NODE.to_string(),
+        label: "Master Mix".to_string(),
+        channels: Vec::new(),
+        exclude: false,
+        volume_percent: 100,
+        muted: false,
+        extra: Extra::new(),
     }
 }
 
@@ -106,56 +123,42 @@ fn slugify(label: &str) -> String {
 }
 
 impl Buses {
-    pub fn config_path() -> Result<PathBuf, SinkError> {
-        let dir = dirs::config_dir()
-            .ok_or_else(|| SinkError::Config("cannot resolve the user config directory".into()))?;
-        Ok(dir.join("inari").join("buses.json"))
-    }
-
     /// Load from disk. On first run (no file), the default Stream Mix bus
     /// inherits membership from the legacy per-channel `stream_mix` flags.
     pub fn load(legacy_channels: &crate::persistence::channels::Channels) -> Self {
-        let path = match Self::config_path() {
-            Ok(p) => p,
-            Err(_) => return Self::default(),
+        let Some(raw) = json::read(FILE) else {
+            let mut buses = Self::default();
+            buses.buses[0].channels = legacy_channels
+                .channels
+                .iter()
+                .filter(|c| c.stream_mix)
+                .map(|c| c.name.clone())
+                .collect();
+            return buses;
         };
-        match fs::read_to_string(&path) {
-            // A corrupt file, or one where nothing survived sanitization, falls
-            // back to the master mix alone - sync_master refills it from the
-            // live channel set at init and on every profile load.
-            Ok(raw) => match Self::parse(&raw) {
-                Some(buses) if !buses.buses.is_empty() => buses,
-                _ => Self::default(),
-            },
-            Err(_) => {
-                let mut buses = Self::default();
-                buses.buses[0].channels = legacy_channels
-                    .channels
-                    .iter()
-                    .filter(|c| c.stream_mix)
-                    .map(|c| c.name.clone())
-                    .collect();
-                buses
-            }
+        // A corrupt file (logged by the shared loader), or one where nothing
+        // survived sanitization, falls back to the master mix alone -
+        // sync_master refills it from the live channel set at init and on
+        // every profile load.
+        let buses = json::parse_or_default::<Self>(FILE, &raw).sanitized();
+        if buses.buses.is_empty() {
+            return Self::default();
         }
+        buses
     }
 
-    /// Parse and sanitize the mix set from JSON, mirroring what `add()`
-    /// guarantees. Entries whose node name falls outside the mix namespace are
-    /// dropped: a hand-edited "sink_game" would collide with a channel node,
-    /// and `set_bus_volume`/`set_bus_mute` reject it anyway, so it could only
-    /// ever be a ghost mix. Duplicates go too, and the user set is capped at
-    /// `MAX_BUSES` so a foreign file can't exhaust the bus slots. Returns
-    /// `None` only when the text isn't valid JSON, so `load` can tell a corrupt
-    /// file from a merely empty one.
-    fn parse(raw: &str) -> Option<Self> {
-        let parsed: Self = serde_json::from_str(raw)
-            .map_err(|e| warn!("ignoring malformed buses.json: {e}"))
-            .ok()?;
+    /// Sanitize the mix set, mirroring what `add()` guarantees. Entries whose
+    /// node name falls outside the mix namespace are dropped: a hand-edited
+    /// "sink_game" would collide with a channel node, and
+    /// `set_bus_volume`/`set_bus_mute` reject it anyway, so it could only ever
+    /// be a ghost mix. Duplicates go too, and the user set is capped at
+    /// `MAX_BUSES` so a foreign file can't exhaust the bus slots.
+    fn sanitized(self) -> Self {
+        let Self { version, buses: parsed, extra } = self;
         let mut seen = std::collections::HashSet::new();
         let mut buses = Vec::new();
         let mut user = 0usize;
-        for def in parsed.buses {
+        for def in parsed {
             // The master doesn't count against the user's mix budget.
             let room = is_master(&def.name) || user < MAX_BUSES;
             if is_bus_name(&def.name) && seen.insert(def.name.clone()) && room {
@@ -165,18 +168,11 @@ impl Buses {
                 warn!("dropping invalid mix '{}' from buses.json", def.name);
             }
         }
-        Some(Self { buses })
+        Self { version, buses, extra }
     }
 
     pub fn save(&self) -> Result<(), SinkError> {
-        let path = Self::config_path()?;
-        if let Some(parent) = path.parent() {
-            crate::persistence::ensure_private_dir(parent)?;
-        }
-        let json = serde_json::to_string_pretty(self)
-            .map_err(|e| SinkError::Config(format!("serialize buses: {e}")))?;
-        super::write_atomic(&path, &json)?;
-        Ok(())
+        json::save(FILE, self)
     }
 
     pub fn get(&self, name: &str) -> Option<&BusDef> {
@@ -188,14 +184,7 @@ impl Buses {
     pub fn sync_master(&mut self, channels: &[String]) {
         let mut def = match self.buses.iter().position(|b| is_master(&b.name)) {
             Some(i) => self.buses.remove(i),
-            None => BusDef {
-                name: DEFAULT_BUS_NODE.to_string(),
-                label: "Master Mix".to_string(),
-                channels: Vec::new(),
-                exclude: false,
-                volume_percent: 100,
-                muted: false,
-            },
+            None => master_def(),
         };
         def.channels = channels.to_vec();
         def.exclude = false;
@@ -267,6 +256,7 @@ impl Buses {
             exclude: true,
             volume_percent: 100,
             muted: false,
+            extra: Extra::new(),
         };
         self.buses.push(def.clone());
         Ok(def)
@@ -344,6 +334,11 @@ impl Buses {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What `load` does to a file body, minus the filesystem.
+    fn parse(raw: &str) -> Buses {
+        json::parse_or_default::<Buses>(FILE, raw).sanitized()
+    }
 
     #[test]
     fn default_is_master_mix() {
@@ -482,12 +477,7 @@ mod tests {
             {"name":"sink_game","label":"Channel Collision","channels":[],"exclude":false},
             {"name":"sink_bus_ok","label":"Fine","channels":[],"exclude":false}
         ]}"#;
-        let names: Vec<String> = Buses::parse(raw)
-            .expect("valid json")
-            .buses
-            .into_iter()
-            .map(|b| b.name)
-            .collect();
+        let names: Vec<String> = parse(raw).buses.into_iter().map(|b| b.name).collect();
         assert_eq!(names, ["sink_stream", "sink_bus_ok"]);
     }
 
@@ -501,8 +491,32 @@ mod tests {
         }
         let raw = format!(r#"{{"buses":[{}]}}"#, items.join(","));
         // Master plus the capped user set.
-        assert_eq!(Buses::parse(&raw).expect("valid json").buses.len(), MAX_BUSES + 1);
-        assert!(Buses::parse("{ truncated").is_none());
+        assert_eq!(parse(&raw).buses.len(), MAX_BUSES + 1);
+        // Corruption used to be the one case this store handled its own way;
+        // it now degrades exactly like every other file - to the default.
+        assert_eq!(parse("{ truncated"), Buses::default());
+        assert_eq!(parse(""), Buses::default());
+    }
+
+    #[test]
+    fn newer_file_round_trips_without_losing_fields() {
+        let raw = r#"{"version":9,"buses":[
+            {"name":"sink_stream","label":"M","channels":[],"exclude":false,"tint":"blue"}
+        ],"routing":{"mode":"strict"}}"#;
+        let b = parse(raw);
+        assert_eq!(b.buses.len(), 1);
+
+        let back: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&b).expect("serializes")).expect("value");
+        assert_eq!(back["version"], serde_json::json!(9));
+        assert_eq!(back["routing"]["mode"], serde_json::json!("strict"));
+        assert_eq!(back["buses"][0]["tint"], serde_json::json!("blue"));
+    }
+
+    #[test]
+    fn version_defaults_for_files_written_before_it_existed() {
+        let b = parse(r#"{"buses":[{"name":"sink_stream","label":"M","channels":[],"exclude":false}]}"#);
+        assert_eq!(b.version, Version::default());
     }
 
     #[test]

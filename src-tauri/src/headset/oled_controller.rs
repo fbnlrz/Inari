@@ -77,6 +77,10 @@ pub enum OledCommand {
     ConfigureRotation { modes: Vec<ModeId>, secs: u64 },
     /// Choose how over-long notifications scroll (vertical vs. horizontal).
     SetNotifyScroll(NotifyScroll),
+    /// Play frames once as an overlay, then fall back to whatever was on
+    /// screen. Used for the startup welcome; any `Set` or `Notify` cancels it
+    /// so a splash never delays the user.
+    Splash(Arc<Vec<OledFrame>>),
     /// Timer control for the Timer mode.
     TimerCountdown(u64),
     TimerStopwatch,
@@ -200,6 +204,9 @@ pub fn run(path: DevicePath, rx: Receiver<OledCommand>, levels: Option<Arc<Level
     let mut frame_idx = 0usize;
     let mut frame_started = Instant::now();
 
+    // One-shot splash overlay: (frames, cursor, frame shown at).
+    let mut splash: Option<(Arc<Vec<OledFrame>>, usize, Instant)> = None;
+
     // Notification overlay state: (lines, shown_at, expires_at).
     let mut notify: Option<(Vec<String>, Instant, Instant)> = None;
     let mut notify_scroll = NotifyScroll::default();
@@ -213,7 +220,7 @@ pub fn run(path: DevicePath, rx: Receiver<OledCommand>, levels: Option<Arc<Level
     let mut send_failures = 0u32;
 
     loop {
-        let idle = matches!(content, OledContent::Ui) && notify.is_none();
+        let idle = matches!(content, OledContent::Ui) && notify.is_none() && splash.is_none();
         let wait = if idle { Duration::from_millis(250) } else { TICK };
         match rx.recv_timeout(wait) {
             Ok(cmd) => match cmd {
@@ -236,7 +243,13 @@ pub fn run(path: DevicePath, rx: Receiver<OledCommand>, levels: Option<Arc<Level
                 OledCommand::TimerStopwatch => modes.timer.start_stopwatch(),
                 OledCommand::TimerToggle => modes.timer.toggle_pause(),
                 OledCommand::TimerReset => modes.timer.reset(),
+                OledCommand::Splash(frames) => {
+                    splash = Some((frames, 0, Instant::now()));
+                    ui_handed_back = false;
+                }
                 OledCommand::Notify { lines, duration } => {
+                    // A real notification outranks the splash.
+                    splash = None;
                     if saved.is_none() {
                         saved = Some(content.clone());
                     }
@@ -245,6 +258,8 @@ pub fn run(path: DevicePath, rx: Receiver<OledCommand>, levels: Option<Arc<Level
                     ui_handed_back = false;
                 }
                 OledCommand::Set(c) => {
+                    // Whatever the user just asked for wins over the splash.
+                    splash = None;
                     // Leaving the spectrum shuts its capture down.
                     if !matches!(c, OledContent::Mode(ModeId::Spectrum)) {
                         modes.release_spectrum();
@@ -283,8 +298,28 @@ pub fn run(path: DevicePath, rx: Receiver<OledCommand>, levels: Option<Arc<Level
             }
         }
 
+        // Advance the splash. It owns the panel until its last frame, then
+        // clears itself so the normal content below takes over on the next
+        // tick without any explicit hand-off.
+        let mut splash_ended = false;
+        let splash_fb = splash.as_mut().and_then(|(frames, idx, started)| {
+            let cur = frames.get(*idx)?;
+            let fb = cur.fb.clone();
+            if started.elapsed() >= Duration::from_millis(cur.delay_ms.max(1) as u64) {
+                *started = Instant::now();
+                *idx += 1;
+                splash_ended = *idx >= frames.len();
+            }
+            Some(fb)
+        });
+        if splash_ended || splash.as_ref().is_some_and(|(f, ..)| f.is_empty()) {
+            splash = None;
+        }
+
         // Decide what to paint this tick.
-        let fb = if let Some((lines, shown_at, _)) = &notify {
+        let fb = if let Some(fb) = splash_fb {
+            Some(fb)
+        } else if let Some((lines, shown_at, _)) = &notify {
             Some(render_notification(lines, shown_at.elapsed(), notify_scroll))
         } else {
             match &content {

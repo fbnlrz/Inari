@@ -1,9 +1,11 @@
 pub mod apps;
 pub mod buses;
 pub mod channels;
+pub mod cli;
 pub mod devices;
 pub mod eq;
 pub mod headset;
+pub mod hotkeys;
 pub mod mic;
 pub mod mouse;
 pub mod profiles;

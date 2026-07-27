@@ -64,7 +64,7 @@ impl Framebuffer {
     }
 
     #[inline]
-    fn get(&self, x: usize, y: usize) -> bool {
+    pub(crate) fn get(&self, x: usize, y: usize) -> bool {
         (self.buf[y * STRIDE + (x >> 3)] >> (7 - (x & 7))) & 1 != 0
     }
 

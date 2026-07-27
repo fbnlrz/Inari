@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="paper" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#faf6ee"/>
+      <stop offset="1" stop-color="#ece3d3"/>
+    </linearGradient>
+    <linearGradient id="vm" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ec5138"/>
+      <stop offset="1" stop-color="#cf3620"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="512" height="512" rx="112" fill="url(#paper)"/>
+
+  <g fill="url(#vm)">
+    <!-- kasagi (top swept lintel) -->
+    <path d="M74 128 Q256 172 438 128 L438 166 Q256 210 74 166 Z"/>
+    <!-- shimaki (second top beam) -->
+    <path d="M104 176 Q256 212 408 176 L408 202 Q256 238 104 202 Z"/>
+    <!-- gakuzuka (central strut) -->
+    <rect x="244" y="200" width="24" height="60"/>
+    <!-- nuki (lower beam, extends past pillars) -->
+    <path d="M116 250 L396 250 L396 288 L116 288 Z"/>
+    <!-- pillars (tapered, leaning inward) -->
+    <path d="M158 200 L196 200 L204 412 L150 412 Z"/>
+    <path d="M354 200 L316 200 L308 412 L362 412 Z"/>
+  </g>
+
+  <!-- soundwave along the base (the approach path) -->
+  <g fill="#2f2a37">
+    <rect x="150" y="438" width="12" height="20" rx="6"/>
+    <rect x="172" y="428" width="12" height="40" rx="6"/>
+    <rect x="194" y="418" width="12" height="60" rx="6"/>
+    <rect x="216" y="432" width="12" height="32" rx="6"/>
+    <rect x="238" y="422" width="12" height="52" rx="6"/>
+    <rect x="260" y="414" width="12" height="68" rx="6"/>
+    <rect x="282" y="424" width="12" height="48" rx="6"/>
+    <rect x="304" y="432" width="12" height="32" rx="6"/>
+    <rect x="326" y="418" width="12" height="60" rx="6"/>
+    <rect x="348" y="428" width="12" height="40" rx="6"/>
+  </g>
+</svg>

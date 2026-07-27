@@ -1,6 +1,6 @@
 [package]
 name = "inari"
-version = "1.0.7"
+version = "1.0.8"
 description = "Linux-native audio routing and mixing for PipeWire, with SteelSeries device control"
 edition = "2021"
 rust-version = "1.77"
@@ -23,6 +23,10 @@ tauri-plugin-dialog = "2"
 # would otherwise spawn a duplicate that fights over the same virtual sinks.
 # The plugin hands the launch to the running instance instead.
 tauri-plugin-single-instance = "2"
+# System-wide hotkeys (mute the mic while a game has focus). Nothing is bound
+# out of the box - see `commands::hotkeys` for why, and for how a failed grab
+# (the normal outcome under Wayland) is reported instead of swallowed.
+tauri-plugin-global-shortcut = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"

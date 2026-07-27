@@ -10,7 +10,9 @@
 
 use serde::{Deserialize, Serialize};
 
-pub const VENDOR_ID: u16 = 0x1038;
+// The SteelSeries vendor id lives in `crate::device::VENDOR_ID`, once for all
+// families — it used to be duplicated here and in the headset protocol.
+
 /// 2.4 GHz dongle (wireless opcode encoding).
 pub const PID_WIRELESS: u16 = 0x1858;
 /// Wired / USB (base opcode encoding).
@@ -19,7 +21,11 @@ pub const PID_WIRED: u16 = 0x185a;
 pub const PID_WIRELESS_WOW: u16 = 0x1874;
 pub const PID_WIRED_WOW: u16 = 0x1876;
 
-pub const PRODUCT_IDS: [u16; 4] = [PID_WIRELESS, PID_WIRED, PID_WIRELESS_WOW, PID_WIRED_WOW];
+/// The two transports get their own device-table entries (the cable is
+/// preferred), so the product ids are grouped the same way [`is_wireless`]
+/// splits them.
+pub const PRODUCT_IDS_WIRED: [u16; 2] = [PID_WIRED, PID_WIRED_WOW];
+pub const PRODUCT_IDS_WIRELESS: [u16; 2] = [PID_WIRELESS, PID_WIRELESS_WOW];
 
 /// The USB interface carrying the configuration collection.
 pub const CONTROL_INTERFACE: u8 = 3;
@@ -253,6 +259,15 @@ mod tests {
         assert_eq!(wired[1], 0x2b);
         assert_eq!(wireless[1], 0x6b);
         assert_eq!(wired[2], wireless[2]); // payload unchanged
+    }
+
+    #[test]
+    fn the_pid_split_agrees_with_the_bit6_quirk() {
+        // The device table picks the cable entry over the dongle entry using
+        // these lists; the opcode quirk uses `is_wireless`. If the two ever
+        // disagreed, a dongle would get wired opcodes (or the reverse).
+        assert!(PRODUCT_IDS_WIRED.iter().all(|p| !is_wireless(*p)));
+        assert!(PRODUCT_IDS_WIRELESS.iter().all(|p| is_wireless(*p)));
     }
 
     #[test]
