@@ -89,13 +89,16 @@ jobs:
             release=false; force=false; pending=false
           else
             pending=true
-            # New version. Only cut a release if real app source changed since
-            # the last release — a docs/website/.github-only bump is not worth an
-            # app release. These paths are never touched by the version bump.
+            # New version. Only cut a release if something that changes the
+            # shipped artifact changed since the last release — a
+            # docs/website/.github-only bump is not worth an app release. The
+            # watched paths (frontend, Rust source, icons, and packaging/ which
+            # owns the bundled udev rule + install hooks) are never touched by
+            # the version bump, so a pure bump still counts as "no change".
             last=$(git tag -l 'v*' --sort=-v:refname | head -1)
             if [ -z "$last" ]; then
               release=true; force=false   # first release ever
-            elif git diff --quiet "$last"..HEAD -- src src-tauri/src src-tauri/icons; then
+            elif git diff --quiet "$last"..HEAD -- src src-tauri/src src-tauri/icons packaging; then
               echo "::notice::no app source changed since $last - skipping release (docs/meta only)"
               release=false; force=false
             else
