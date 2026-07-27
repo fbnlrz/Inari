@@ -6,6 +6,7 @@ pub mod devices;
 pub mod eq;
 pub mod headset;
 pub mod hotkeys;
+pub mod media;
 pub mod mic;
 pub mod mouse;
 pub mod profiles;

@@ -130,6 +130,17 @@ sync_table! {
     // and whether to show it at all. Prefs carry no secret.
     get_prefs => |app, _| ok(commands::settings::get_prefs(app.state())?),
     get_active_profile => |app, _| ok(commands::profiles::get_active_profile(app.state())?),
+    // Media transport. Safe over the network because none of it takes a path:
+    // the cover is resolved and re-encoded by the backend and comes back as an
+    // image, so there is no parameter a file path could travel through.
+    media_players => |_, _| ok(commands::media::media_players()),
+    media_status => |_, a| ok(commands::media::media_status(a.get("player").unwrap_or(None))),
+    media_art => |_, a| ok(commands::media::media_art(a.get("player").unwrap_or(None))),
+    media_play_pause => |_, a| ok(commands::media::media_play_pause(a.get("player").unwrap_or(None))?),
+    media_next => |_, a| ok(commands::media::media_next(a.get("player").unwrap_or(None))?),
+    media_previous => |_, a| ok(commands::media::media_previous(a.get("player").unwrap_or(None))?),
+    media_seek => |_, a| ok(commands::media::media_seek(
+        a.get("player").unwrap_or(None), a.get("position_us")?)?),
     get_backend_info => |app, _| ok(commands::settings::get_backend_info(app.state())),
 
     // -- mixer writes ------------------------------------------------------

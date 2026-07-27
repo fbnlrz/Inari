@@ -4,6 +4,7 @@ import { isTauri } from "./lib/platform";
 import { TitleBar } from "./components/TitleBar/TitleBar";
 import { MixerBoard } from "./components/MixerBoard/MixerBoard";
 import { AppList } from "./components/AppList/AppList";
+import { MediaScreen } from "./components/Media/MediaScreen";
 import { MicScreen } from "./components/Mic/MicScreen";
 import { HeadsetScreen } from "./components/Headset/HeadsetScreen";
 import { OledScreen } from "./components/Oled/OledScreen";
@@ -21,6 +22,10 @@ import { useUpdate } from "./store/update";
 const NAV = [
   { id: "mixer", icon: "graphic_eq", label: "Mixer" },
   { id: "apps", icon: "grid_view", label: "Apps" },
+  // Playback, not hardware: it sits with the mixer and the apps whose sound it
+  // is, above the row of devices. Reachable from the remote too - a tablet
+  // next to the keyboard is exactly where you skip a track from.
+  { id: "media", icon: "play_circle", label: "Media" },
   { id: "mic", icon: "mic", label: "Mic" },
   { id: "headset", icon: "headphones", label: "Headset" },
   { id: "oled", icon: "tv_gen", label: "OLED" },
@@ -88,6 +93,7 @@ export default function App() {
 
   let screen;
   if (active === "apps") screen = <AppList />;
+  else if (active === "media") screen = <MediaScreen />;
   else if (active === "mic") screen = <MicScreen />;
   else if (active === "headset") screen = <HeadsetScreen />;
   else if (active === "oled") screen = <OledScreen />;

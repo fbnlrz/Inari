@@ -2674,6 +2674,139 @@ input[type="range"]::-webkit-slider-thumb:hover { background: var(--accent-hover
 .hs-empty-sub { color: var(--fg-muted); font-size: var(--fs-caption); line-height: 1.6; }
 
 /* ============================================================
+   Media - now playing and its transport
+   ============================================================ */
+.media-card { gap: var(--sp-5); }
+.media-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  min-width: 0;
+}
+.media-art {
+  flex: 0 0 auto;
+  width: 116px;
+  height: 116px;
+  border-radius: var(--r-lg);
+  object-fit: cover;
+  background: var(--bg-main);
+  border: 1px solid var(--border);
+}
+/* No cover: a quiet plate rather than a broken image. */
+.media-art-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg-muted);
+}
+.media-meta {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.media-title {
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--fg-primary);
+  /* Track titles run long; the full text stays in the title attribute. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.media-sub {
+  font-size: var(--fs-meta);
+  color: var(--fg-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.media-album {
+  font-size: var(--fs-caption);
+  color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.media-seek { display: flex; flex-direction: column; gap: 6px; }
+.media-seek-track {
+  /* Without this a touch drag becomes a scroll gesture: the browser cancels
+     the pointer stream, so the tablet could only tap a position, never
+     scrub to one. Same reason as .hs-track and .fader-track. */
+  touch-action: none;
+  position: relative;
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--bg-active);
+  cursor: pointer;
+}
+.media-seek-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: var(--accent);
+  border-radius: var(--r-pill);
+}
+.media-seek-cap {
+  position: absolute;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--fg-primary);
+  transform: translate(-50%, -50%);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+  cursor: grab;
+}
+.media-times {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--fs-caption);
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+.media-times-live { align-items: center; }
+
+.media-transport {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-4);
+}
+.media-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--bg-active);
+  border: 1px solid var(--border);
+  color: var(--fg-primary);
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.media-btn:hover { background: var(--bg-surface-hover); border-color: var(--accent); }
+.media-btn.primary {
+  width: 56px;
+  height: 56px;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+.media-btn.primary:hover { background: var(--accent-hover); }
+
+/* The cover and the transport stop sharing a row once the column is narrow -
+   a tablet in portrait is the common case. */
+@media (max-width: 560px) {
+  .media-head { flex-direction: column; align-items: flex-start; }
+  .media-art { width: 100%; height: auto; aspect-ratio: 1; }
+  .media-meta { width: 100%; }
+}
+
+/* ============================================================
    Theme: Tokyo Night (opt-in via <html data-theme="tokyo-night">)
    Original theme stays the default under :root.
    ============================================================ */
@@ -2925,6 +3058,7 @@ input[type="range"]::-webkit-slider-thumb:hover { background: var(--accent-hover
    --accent, so ring in the lighter hover tone and stand it well clear. */
 .fader-track:focus-visible,
 .hs-track:focus-visible,
+.media-seek-track:focus-visible,
 .bal-track:focus-visible {
   outline: 2px solid var(--accent-hover);
   outline-offset: 4px;
