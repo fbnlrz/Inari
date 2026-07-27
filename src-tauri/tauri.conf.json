@@ -56,7 +56,8 @@
         "files": {
           "/usr/lib/udev/rules.d/60-inari.rules": "../packaging/udev/60-inari.rules"
         },
-        "postInstallScript": "../packaging/deb/postinst"
+        "postInstallScript": "../packaging/deb/postinst",
+        "postRemoveScript": "../packaging/deb/postrm"
       },
       "rpm": {
         "depends": [

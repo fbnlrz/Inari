@@ -1,0 +1,11 @@
+#!/bin/sh
+# The package manager has already removed 60-inari.rules from
+# /usr/lib/udev/rules.d; reload udev so the rule stops applying without needing
+# a reboot. Shared by the .deb and .rpm packages.
+set -e
+
+if command -v udevadm >/dev/null 2>&1; then
+    udevadm control --reload-rules || true
+fi
+
+exit 0
