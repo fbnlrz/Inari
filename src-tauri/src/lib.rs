@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use log::{error, info, warn};
 use tauri::menu::{CheckMenuItem, Menu, MenuItem}; // CheckMenuItem: profile rows
 use tauri::tray::TrayIconBuilder;
 use tauri::{Emitter, Manager, WindowEvent};
@@ -21,10 +22,57 @@ use audio::pw_native::levels::LevelStore;
 use audio::pw_native::PipeWireBackend;
 use state::AppState;
 
+/// Global level for the logger. Info by default: lifecycle events only, since
+/// the OLED draw loop (25 Hz) and the audio poll log at debug/trace and would
+/// otherwise churn through the rotating file in minutes. `RUST_LOG=debug`
+/// raises it for a bug report.
+fn log_level() -> log::LevelFilter {
+    let Ok(spec) = std::env::var("RUST_LOG") else {
+        return log::LevelFilter::Info;
+    };
+    // Accept a bare level ("debug") as well as env_logger-style directives
+    // ("inari_lib=debug", "info,inari_lib=trace"); the last level named wins.
+    // We deliberately don't implement per-module filtering here - the plugin's
+    // `level_for` is compile-time and nobody has asked for it.
+    spec.rsplit([',', '='])
+        .find_map(|part| part.trim().parse().ok())
+        .unwrap_or(log::LevelFilter::Info)
+}
+
+/// The logger: stderr for `cargo tauri dev` and terminal launches, plus a
+/// small rotating file so a user who started Inari from the app menu or the
+/// systemd autostart unit still has something to attach to a bug report.
+fn log_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
+    use tauri_plugin_log::{Target, TargetKind, TimezoneStrategy};
+
+    tauri_plugin_log::Builder::new()
+        .level(log_level())
+        // The webview/windowing stack is chatty at debug and none of it is
+        // about us; it would drown the app's own lines under `RUST_LOG=debug`.
+        .level_for("tao", log::LevelFilter::Warn)
+        .level_for("wry", log::LevelFilter::Warn)
+        .clear_targets()
+        .targets([
+            Target::new(TargetKind::Stderr),
+            Target::new(TargetKind::LogDir {
+                file_name: Some("inari".into()),
+            }),
+        ])
+        // Desktop app, not a server: one capped file (the default rotation
+        // strategy drops the previous one), so sitting in the tray for a week
+        // can't grow the log without bound.
+        .max_file_size(512 * 1024)
+        // Timestamps a user can line up with "it broke around 21:40".
+        .timezone_strategy(TimezoneStrategy::UseLocal)
+        .build()
+}
+
 pub fn run() {
     // Prefer the native PipeWire backend (Phase 2); fall back to pactl
     // subprocess calls if the native loop can't come up. Levels (real VU
-    // metering) are native-only.
+    // metering) are native-only. This runs before the logger exists, so the
+    // outcome is logged from `setup` below instead.
+    let mut backend_fallback: Option<String> = None;
     let (backend, levels): (Arc<dyn AudioBackend>, Option<Arc<LevelStore>>) =
         match PipeWireBackend::new() {
             Ok(backend) => {
@@ -32,7 +80,7 @@ pub fn run() {
                 (Arc::new(backend), Some(levels))
             }
             Err(e) => {
-                eprintln!("sink: native PipeWire backend unavailable ({e}); using pactl fallback");
+                backend_fallback = Some(e.to_string());
                 (Arc::new(PactlBackend::new()), None)
             }
         };
@@ -56,6 +104,7 @@ pub fn run() {
                 let _ = window.set_focus();
             }
         }))
+        .plugin(log_plugin())
         .plugin(tauri_plugin_dialog::init())
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![
@@ -123,6 +172,7 @@ pub fn run() {
             commands::settings::set_balance_visible,
             commands::settings::set_start_minimized,
             commands::settings::reset_app,
+            commands::settings::open_log_dir,
             commands::headset::get_headset_status,
             commands::headset::headset_set_sidetone,
             commands::headset::headset_set_mic_volume,
@@ -178,6 +228,12 @@ pub fn run() {
             commands::update::open_url,
         ])
         .setup(move |app| {
+            // First lines in the log: the two facts every bug report needs.
+            info!("Inari {} starting", env!("CARGO_PKG_VERSION"));
+            match &backend_fallback {
+                Some(e) => warn!("native PipeWire backend unavailable ({e}); using pactl fallback"),
+                None => info!("audio backend: native PipeWire"),
+            }
             build_tray(app)?;
             // The window starts hidden (config) to avoid a flash; show it
             // now unless launched with --minimized (autostart-to-tray).
@@ -210,14 +266,17 @@ pub fn run() {
             if let WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 if let Err(e) = window.hide() {
-                    eprintln!("sink: failed to hide window: {e}");
+                    error!("failed to hide window: {e}");
                 }
             }
         })
         .run(tauri::generate_context!());
 
     if let Err(e) = result {
-        eprintln!("sink: fatal error while running tauri application: {e}");
+        // Also on stderr: this can fire before the log plugin is initialized,
+        // in which case the macro below goes nowhere.
+        eprintln!("fatal error while running tauri application: {e}");
+        error!("fatal error while running tauri application: {e}");
         std::process::exit(1);
     }
 }
@@ -338,10 +397,10 @@ pub(crate) fn refresh_tray(app: &tauri::AppHandle) {
         match build_tray_menu(app) {
             Ok(menu) => {
                 if let Err(e) = tray.set_menu(Some(menu)) {
-                    eprintln!("sink: tray menu refresh failed: {e}");
+                    error!("tray menu refresh failed: {e}");
                 }
             }
-            Err(e) => eprintln!("sink: tray menu rebuild failed: {e}"),
+            Err(e) => error!("tray menu rebuild failed: {e}"),
         }
     }
 }
@@ -370,7 +429,7 @@ fn build_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                     Ok(()) => {
                         let _ = app.emit("profile-changed", name);
                     }
-                    Err(e) => eprintln!("sink: tray profile switch failed: {e}"),
+                    Err(e) => error!("tray profile switch failed: {e}"),
                 }
                 return;
             }
@@ -386,7 +445,7 @@ fn build_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                     // log failures but never block quitting.
                     let state = app.state::<AppState>();
                     for err in state.teardown_virtual_sinks() {
-                        eprintln!("sink: teardown: {err}");
+                        warn!("teardown of virtual sinks: {err}");
                     }
                     app.exit(0);
                 }

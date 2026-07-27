@@ -59,3 +59,29 @@ Leftover files from an old source install can be cleared with
 ## Videos won't play on the OLED
 
 Install `ffmpeg` — it's optional and only needed for OLED video playback.
+
+## Collecting logs for a bug report
+
+Inari logs to a small rotating file, so you don't have to reproduce the problem
+to report it — the run it happened in is already on disk:
+
+```
+~/.local/share/com.fbnlrz.inari/logs/inari.log
+```
+
+Started by the autostart unit, the same lines also land in the journal:
+
+```bash
+journalctl --user -u inari -n 200
+```
+
+The default level records startup, device connect/disconnect, profile switches
+and every warning or error. For more detail, quit Inari and start it from a
+terminal with the level raised — this affects the log file too:
+
+```bash
+RUST_LOG=debug inari
+```
+
+Attach the log to your [issue](https://github.com/fbnlrz/Inari/issues/new/choose).
+It contains device and audio-node names, no credentials.
