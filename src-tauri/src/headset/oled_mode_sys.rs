@@ -4,9 +4,10 @@
 //! The dashboard in [`super::oled_controller`] only ever shows *now*, so it can
 //! re-read its numbers whenever it likes. These screens need a time series
 //! instead, which is why [`SysMonitor`] owns its own sampler: it advances a set
-//! of ring buffers at most once a second (the expensive part — `nvidia-smi` —
-//! must not run per frame) while the render methods stay cheap enough for the
-//! ~24 fps OLED loop.
+//! of ring buffers at most once a second while the render methods stay cheap
+//! enough for the ~24 fps OLED loop. The GPU read is expensive enough that even
+//! once a second is too often on the render thread, so [`super::sysinfo`] keeps
+//! it on a thread of its own and hands out the last sample.
 //!
 //! Data sources come from [`super::sysinfo`]; only what it does not provide
 //! (network byte counters, uptime, load average, core count) is read here.
@@ -15,6 +16,7 @@ use std::fs;
 use std::time::{Duration, Instant};
 
 use super::oled::{Framebuffer, HEIGHT, WIDTH};
+use super::oled_draw::{line_styled, plot};
 use super::sysinfo::{self, CpuSampler};
 
 /// Samples kept per series — one per second, so ~2 minutes of history, and
@@ -366,44 +368,13 @@ fn trace(fb: &mut Framebuffer, x0: isize, w: usize, pts: &[Option<isize>], dashe
         match p {
             Some(y) => {
                 match prev {
-                    Some((px, py)) => line(fb, px, py, x, *y, dashed),
+                    Some((px, py)) => line_styled(fb, px, py, x, *y, dashed),
                     // A lone sample still deserves a pixel.
                     None => plot(fb, x, *y, dashed),
                 }
                 prev = Some((x, *y));
             }
             None => prev = None,
-        }
-    }
-}
-
-/// Set one pixel; dashed traces use a checkerboard so they stay legible
-/// against solid traces and filled bars at any slope.
-#[inline]
-fn plot(fb: &mut Framebuffer, x: isize, y: isize, dashed: bool) {
-    if !dashed || (x + y) % 2 == 0 {
-        fb.set(x, y, true);
-    }
-}
-
-/// Bresenham line (clips.rs has its own private copy; this one dashes).
-fn line(fb: &mut Framebuffer, x0: isize, y0: isize, x1: isize, y1: isize, dashed: bool) {
-    let (dx, dy) = ((x1 - x0).abs(), -(y1 - y0).abs());
-    let (sx, sy) = (if x0 < x1 { 1 } else { -1 }, if y0 < y1 { 1 } else { -1 });
-    let (mut x, mut y, mut err) = (x0, y0, dx + dy);
-    loop {
-        plot(fb, x, y, dashed);
-        if x == x1 && y == y1 {
-            break;
-        }
-        let e2 = 2 * err;
-        if e2 >= dy {
-            err += dy;
-            x += sx;
-        }
-        if e2 <= dx {
-            err += dx;
-            y += sy;
         }
     }
 }

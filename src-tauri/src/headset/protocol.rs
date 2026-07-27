@@ -38,6 +38,17 @@ const CMD_MIC_LED: u8 = 0xbf;
 const CMD_LINE_OUT: u8 = 0x43;
 const CMD_LINE_OUT_VOL: u8 = 0x47;
 const CMD_CHATMIX: u8 = 0x49;
+/// Two opcodes replayed verbatim from the vendor software's connect sequence.
+/// Neither appears in any of the reverse-engineering write-ups, and the station
+/// only starts pushing unsolicited events once both have been sent — so they
+/// are named for their place in the handshake rather than for an effect we
+/// could claim to know.
+const CMD_HANDSHAKE_A: u8 = 0x8d;
+const CMD_HANDSHAKE_B: u8 = 0xb7;
+
+/// Raw station volume runs 0 (loudest) .. 56 (silent) — the byte counts
+/// attenuation steps, not loudness.
+const VOLUME_RAW_MAX: u8 = 56;
 
 /// 0 dB baseline for a hardware EQ band; each unit is 0.5 dB.
 const EQ_BASELINE: u8 = 0x14;
@@ -133,9 +144,9 @@ fn auto_off_minutes(idx: u8) -> u16 {
 /// connecting never clobbers the headset's saved ANC/sidetone/EQ/etc.
 pub fn init_safe() -> Vec<Vec<u8>> {
     vec![
-        vec![REPORT_ID, 0x8d, 0x01],
+        vec![REPORT_ID, CMD_HANDSHAKE_A, 0x01],
         set_chatmix_enabled(true),
-        vec![REPORT_ID, 0xb7, 0x00],
+        vec![REPORT_ID, CMD_HANDSHAKE_B, 0x00],
         status_query(),
         volume_query(),
     ]
@@ -251,6 +262,11 @@ fn pct(raw: u8, max: u8) -> u8 {
     ((raw.min(max) as u16 * 100) / max as u16) as u8
 }
 
+/// Raw volume byte as a 0..100 percentage. Inverted: raw 0 is full volume.
+fn volume_percent(raw: u8) -> u8 {
+    pct(VOLUME_RAW_MAX - raw.min(VOLUME_RAW_MAX), VOLUME_RAW_MAX)
+}
+
 impl HeadsetStatus {
     /// Merge a raw 64-byte HID report into this status. Returns true if the
     /// frame was recognised (and something may have changed).
@@ -277,16 +293,14 @@ impl HeadsetStatus {
                     Some(serde_json_str(&PowerStatus::from_raw(buf[15])));
                 true
             }
-            // Station volume: raw 56 -> 0%, raw 0 -> 100%.
+            // Station volume change event.
             (EVENT_REPORT_ID, 0x25) => {
-                let raw = buf[2].min(56);
-                self.volume_percent = Some(((56 - raw) as u16 * 100 / 56) as u8);
+                self.volume_percent = Some(volume_percent(buf[2]));
                 true
             }
             // Reply to the 0x20 volume query: raw volume sits in byte 3.
             (_, CMD_VOLUME_QUERY) if buf.len() >= 4 => {
-                let raw = buf[3].min(56);
-                self.volume_percent = Some(((56 - raw) as u16 * 100 / 56) as u8);
+                self.volume_percent = Some(volume_percent(buf[3]));
                 true
             }
             // ChatMix game/chat balance.

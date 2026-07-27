@@ -22,7 +22,10 @@ const STRIP_WIDTH: usize = 64;
 pub const CHAR_ADVANCE: usize = GLYPH_W + 1;
 
 /// A 1bpp row-major (MSB-first) 128x64 framebuffer.
-#[derive(Clone)]
+///
+/// `PartialEq` is a plain 1 KB compare, which the draw loop uses to skip
+/// re-encoding a frame that hasn't changed since the last tick.
+#[derive(Clone, PartialEq, Eq)]
 pub struct Framebuffer {
     buf: [u8; STRIDE * HEIGHT],
 }
@@ -124,14 +127,22 @@ impl Framebuffer {
         cx
     }
 
-    /// Pixel width a string will occupy at a given scale.
+    /// Pixel width a string will occupy at a given scale, i.e. how far
+    /// [`Self::draw_text`] advances — including the gap after the last glyph.
     pub fn text_width(text: &str, scale: usize) -> usize {
         text.chars().count() * CHAR_ADVANCE * scale.max(1)
     }
 
+    /// Width of the *ink* only: [`Self::text_width`] minus the trailing
+    /// inter-character gap. Centring on the advance instead pushes text up to
+    /// one scale unit (4 px at scale 4) left of true centre.
+    pub fn ink_width(text: &str, scale: usize) -> usize {
+        Self::text_width(text, scale).saturating_sub(scale.max(1))
+    }
+
     /// Draw a string centred horizontally at row `y`.
     pub fn draw_text_centered(&mut self, y: isize, text: &str, scale: usize) {
-        let w = Self::text_width(text, scale) as isize;
+        let w = Self::ink_width(text, scale) as isize;
         self.draw_text((WIDTH as isize - w) / 2, y, text, scale);
     }
 
@@ -286,5 +297,9 @@ mod tests {
     fn text_width_matches_advance() {
         assert_eq!(Framebuffer::text_width("AB", 1), 12);
         assert_eq!(Framebuffer::text_width("A", 2), 12);
+        // Ink drops exactly one trailing gap, whatever the scale.
+        assert_eq!(Framebuffer::ink_width("AB", 1), 11);
+        assert_eq!(Framebuffer::ink_width("A", 2), 10);
+        assert_eq!(Framebuffer::ink_width("", 3), 0);
     }
 }

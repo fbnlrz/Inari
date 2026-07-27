@@ -3,10 +3,14 @@
 //! best-effort GPU read (NVIDIA via `nvidia-smi`, AMD via amdgpu sysfs).
 //!
 //! Deliberately dependency-free — plain `/proc` and `/sys` reads plus one
-//! optional subprocess for NVIDIA.
+//! optional subprocess for NVIDIA. That subprocess is the one thing here that
+//! is far too slow for a caller on the render thread, so it lives on a sampler
+//! thread of its own (see [`gpu`]).
 
 use std::fs;
 use std::process::Command;
+use std::sync::{Mutex, Once};
+use std::time::Duration;
 
 /// Rolling CPU sampler: percentage needs two `/proc/stat` reads over time.
 #[derive(Default)]
@@ -136,6 +140,7 @@ pub fn now_playing() -> Option<(String, String, bool)> {
 }
 
 /// A GPU reading (best effort). Any field may be absent depending on vendor.
+#[derive(Clone, Copy)]
 pub struct GpuStat {
     pub util: u8,
     #[allow(dead_code)] // parsed from nvidia-smi/sysfs but not shown on the OLED yet
@@ -143,9 +148,53 @@ pub struct GpuStat {
     pub temp: Option<u8>,
 }
 
-/// Read GPU stats: NVIDIA via `nvidia-smi`, else AMD via amdgpu sysfs.
+/// How often the sampler thread re-probes the GPU.
+const GPU_INTERVAL: Duration = Duration::from_secs(1);
+/// Consecutive failed probes after which the sampler gives up for good: there
+/// is no vendor tool on this machine, and retrying only costs a fork a second
+/// forever. A couple of misses are tolerated first because a GPU can be
+/// momentarily unreachable (driver reload, runtime power management).
+const GPU_MAX_MISSES: u32 = 3;
+
+/// Last sample published by the sampler thread; `None` until the first probe
+/// lands, and again once the sampler has given up.
+static GPU_LATEST: Mutex<Option<GpuStat>> = Mutex::new(None);
+static GPU_SAMPLER: Once = Once::new();
+
+/// Latest GPU stats, or `None` if nothing has been sampled (yet).
+///
+/// This never probes the hardware itself. `nvidia-smi` takes 50–250 ms, which
+/// is several OLED redraw ticks — calling it from a render path stalled the
+/// panel long enough for the base-station firmware to reclaim it, which the
+/// user saw as flicker. The first call starts a 1 Hz sampler thread instead and
+/// every call, including that one, only reads the last value.
 pub fn gpu() -> Option<GpuStat> {
-    nvidia().or_else(amd)
+    GPU_SAMPLER.call_once(|| {
+        // Detached: a background thread doesn't hold the process open, and the
+        // loop ends by itself on a machine with no GPU tool at all.
+        let _ = std::thread::Builder::new()
+            .name("sink-gpu-sample".into())
+            .spawn(gpu_sample_loop);
+    });
+    *lock_gpu()
+}
+
+fn lock_gpu() -> std::sync::MutexGuard<'static, Option<GpuStat>> {
+    GPU_LATEST.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Probe loop: NVIDIA via `nvidia-smi`, else AMD via amdgpu sysfs.
+fn gpu_sample_loop() {
+    let mut misses = 0u32;
+    loop {
+        let sample = nvidia().or_else(amd);
+        misses = if sample.is_some() { 0 } else { misses + 1 };
+        *lock_gpu() = sample;
+        if misses >= GPU_MAX_MISSES {
+            return;
+        }
+        std::thread::sleep(GPU_INTERVAL);
+    }
 }
 
 fn nvidia() -> Option<GpuStat> {

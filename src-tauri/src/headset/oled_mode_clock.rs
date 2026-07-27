@@ -14,6 +14,7 @@
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use super::oled::{Framebuffer, HEIGHT, WIDTH};
+use super::oled_draw::{centred_x, circle, line};
 
 const WEEKDAYS: [&str; 7] = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
 const MONTHS: [&str; 12] = [
@@ -185,54 +186,11 @@ fn probe_utc_offset() -> Option<i64> {
 
 // ===================== drawing helpers =====================
 
-/// Bresenham line — the hands of the analog face and the tick marks.
-fn line(fb: &mut Framebuffer, x0: isize, y0: isize, x1: isize, y1: isize) {
-    let (dx, dy) = ((x1 - x0).abs(), -(y1 - y0).abs());
-    let (sx, sy) = (if x0 < x1 { 1 } else { -1 }, if y0 < y1 { 1 } else { -1 });
-    let (mut x, mut y, mut err) = (x0, y0, dx + dy);
-    loop {
-        fb.set(x, y, true);
-        if x == x1 && y == y1 {
-            break;
-        }
-        let e2 = 2 * err;
-        if e2 >= dy {
-            err += dy;
-            x += sx;
-        }
-        if e2 <= dx {
-            err += dx;
-            y += sy;
-        }
-    }
-}
-
-fn circle(fb: &mut Framebuffer, cx: isize, cy: isize, r: isize, fill: bool) {
-    for dy in -r..=r {
-        for dx in -r..=r {
-            let d2 = dx * dx + dy * dy;
-            let on = if fill { d2 <= r * r } else { (d2 - r * r).abs() <= r };
-            if on {
-                fb.set(cx + dx, cy + dy, true);
-            }
-        }
-    }
-}
-
-/// Left edge that centres `text` by its *ink* width. `text_width` counts the
-/// trailing inter-character gap, which pushes text a pixel or two left of true
-/// centre at large scales.
-fn centred_x(text: &str, scale: usize) -> isize {
-    let scale = scale.max(1);
-    let ink = Framebuffer::text_width(text, scale).saturating_sub(scale);
-    (WIDTH as isize - ink as isize) / 2
-}
-
 /// Largest scale (capped at `max_scale`) whose ink fits in `max_w`.
 fn fit_scale(text: &str, max_w: usize, max_scale: usize) -> usize {
     (1..=max_scale.max(1))
         .rev()
-        .find(|s| Framebuffer::text_width(text, *s).saturating_sub(*s) <= max_w)
+        .find(|s| Framebuffer::ink_width(text, *s) <= max_w)
         .unwrap_or(1)
 }
 
@@ -271,8 +229,8 @@ impl Clock {
         let hm = t.hh_mm(t.blink());
         let ss = format!("{:02}", t.second);
         // Centre the (big time + small seconds) group as a whole.
-        let hm_ink = Framebuffer::text_width(&hm, 3).saturating_sub(3) as isize;
-        let ss_ink = Framebuffer::text_width(&ss, 2).saturating_sub(2) as isize;
+        let hm_ink = Framebuffer::ink_width(&hm, 3) as isize;
+        let ss_ink = Framebuffer::ink_width(&ss, 2) as isize;
         let x0 = (WIDTH as isize - (hm_ink + 4 + ss_ink)) / 2;
         fb.draw_text(x0, 11, &hm, 3);
         // Seconds sit on the same baseline as the big digits.
@@ -302,8 +260,8 @@ impl Clock {
 
         let hm = t.hh_mm(t.blink());
         let ss = format!("{:02}", t.second);
-        let hm_ink = Framebuffer::text_width(&hm, 3).saturating_sub(3) as isize;
-        let ss_ink = Framebuffer::text_width(&ss, 1).saturating_sub(1) as isize;
+        let hm_ink = Framebuffer::ink_width(&hm, 3) as isize;
+        let ss_ink = Framebuffer::ink_width(&ss, 1) as isize;
         let x0 = (WIDTH as isize - (hm_ink + 3 + ss_ink)) / 2;
         fb.draw_text(x0, 3, &hm, 3);
         fb.draw_text(x0 + hm_ink + 3, 3 + 21 - 7, &ss, 1);
@@ -359,7 +317,7 @@ impl Clock {
         fb.draw_text(9, 34, &format!("{:02}", t.day), 1);
         fb.draw_text(WIDTH as isize - 21, 22, t.month_name(), 1);
         let hm = t.hh_mm(true);
-        let hm_ink = Framebuffer::text_width(&hm, 1).saturating_sub(1) as isize;
+        let hm_ink = Framebuffer::ink_width(&hm, 1) as isize;
         fb.draw_text(WIDTH as isize - hm_ink - 2, 34, &hm, 1);
         fb
     }
@@ -564,7 +522,7 @@ mod tests {
     fn big_time_always_fits_the_panel() {
         for text in ["00:00", "59:59", "9:59:59"] {
             let scale = fit_scale(text, WIDTH - 4, 4);
-            assert!(Framebuffer::text_width(text, scale) - scale <= WIDTH - 4);
+            assert!(Framebuffer::ink_width(text, scale) <= WIDTH - 4);
         }
     }
 

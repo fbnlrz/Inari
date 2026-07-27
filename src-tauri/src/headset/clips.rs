@@ -4,8 +4,12 @@
 //! third-party media. Copyrighted clips (Bad Apple, Rickroll, DOOM footage,
 //! …) are loaded from the user's own files via [`super::media`] instead.
 
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
+
 use super::media::OledFrame;
 use super::oled::{Framebuffer, HEIGHT, WIDTH};
+use super::oled_draw::{circle, line};
 
 /// Tiny deterministic PRNG (xorshift32) so clips look the same every run
 /// without pulling in the `rand` crate.
@@ -106,44 +110,37 @@ pub fn generate(name: &str) -> Option<Vec<OledFrame>> {
     }
 }
 
+/// Memoised clips, keyed by the same name [`generate`] takes.
+///
+/// A clip is ~140 dithered 1 KB frames, so re-selecting one from the UI would
+/// otherwise re-render the whole animation. The 28 built-ins cap the cache at
+/// a few megabytes, which is why nothing is ever evicted.
+fn cache() -> &'static Mutex<HashMap<String, Arc<Vec<OledFrame>>>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, Arc<Vec<OledFrame>>>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// [`generate`], memoised. A poisoned cache degrades to plain generation
+/// rather than taking the caller down.
+pub fn generate_cached(name: &str) -> Option<Arc<Vec<OledFrame>>> {
+    if let Ok(map) = cache().lock() {
+        if let Some(hit) = map.get(name) {
+            return Some(Arc::clone(hit));
+        }
+    }
+    // Generate outside the lock: a cold clip takes long enough that holding it
+    // would stall every other selection.
+    let frames = Arc::new(generate(name)?);
+    if let Ok(mut map) = cache().lock() {
+        map.insert(name.to_string(), Arc::clone(&frames));
+    }
+    Some(frames)
+}
+
 fn frame_from_gray(gray: &[u8]) -> OledFrame {
     let mut fb = Framebuffer::new();
     fb.blit_gray_dithered(gray);
     OledFrame { fb, delay_ms: 40 }
-}
-
-/// Bresenham line, used by the wireframe/vector clips.
-fn line(fb: &mut Framebuffer, x0: isize, y0: isize, x1: isize, y1: isize) {
-    let (dx, dy) = ((x1 - x0).abs(), -(y1 - y0).abs());
-    let (sx, sy) = (if x0 < x1 { 1 } else { -1 }, if y0 < y1 { 1 } else { -1 });
-    let (mut x, mut y, mut err) = (x0, y0, dx + dy);
-    loop {
-        fb.set(x, y, true);
-        if x == x1 && y == y1 {
-            break;
-        }
-        let e2 = 2 * err;
-        if e2 >= dy {
-            err += dy;
-            x += sx;
-        }
-        if e2 <= dx {
-            err += dx;
-            y += sy;
-        }
-    }
-}
-
-fn circle(fb: &mut Framebuffer, cx: isize, cy: isize, r: isize, fill: bool) {
-    for dy in -r..=r {
-        for dx in -r..=r {
-            let d2 = dx * dx + dy * dy;
-            let on = if fill { d2 <= r * r } else { (d2 - r * r).abs() <= r };
-            if on {
-                fb.set(cx + dx, cy + dy, true);
-            }
-        }
-    }
 }
 
 // ===================== Japan =====================

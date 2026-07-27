@@ -14,6 +14,8 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use log::{error, warn};
+
 use crate::audio::pw_native::levels::LevelStore;
 use crate::persistence::prefs::NotifyScroll;
 
@@ -85,6 +87,13 @@ pub enum OledCommand {
 
 /// Frame cadence when repainting to fight the firmware's own repaint.
 const TICK: Duration = Duration::from_millis(40);
+/// Consecutive ticks whose frame push failed before the panel is declared gone.
+/// One failure is a USB hiccup worth retrying; a dozen in a row means the fd is
+/// dead, and without this the loop would fire ~25 failing ioctls a second at it
+/// forever.
+const MAX_SEND_FAILURES: u32 = 12;
+/// Pause after a failed push, so a device on its way out isn't hammered.
+const SEND_BACKOFF: Duration = Duration::from_millis(100);
 
 /// Everything the loop keeps alive between frames.
 struct Modes {
@@ -174,7 +183,7 @@ pub fn run(path: DevicePath, rx: Receiver<OledCommand>, levels: Option<Arc<Level
     let mut dev = match HidDevice::open(&path) {
         Ok(d) => d,
         Err(e) => {
-            eprintln!("sink: OLED thread could not open device: {e}");
+            error!("OLED thread could not open device: {e}");
             return;
         }
     };
@@ -198,6 +207,10 @@ pub fn run(path: DevicePath, rx: Receiver<OledCommand>, levels: Option<Arc<Level
 
     // `Ui` means "stop drawing"; send return-to-ui once then idle.
     let mut ui_handed_back = false;
+
+    // Last frame and its encoding, so an unchanged screen isn't re-encoded.
+    let mut last_frame: Option<(Framebuffer, Vec<Vec<u8>>)> = None;
+    let mut send_failures = 0u32;
 
     loop {
         let idle = matches!(content, OledContent::Ui) && notify.is_none();
@@ -303,11 +316,34 @@ pub fn run(path: DevicePath, rx: Receiver<OledCommand>, levels: Option<Arc<Level
         };
 
         if let Some(fb) = fb {
-            for pkt in fb.frame_packets() {
-                if dev.send_feature(&pkt).is_err() {
-                    // Transient USB hiccup; try again next tick.
-                    break;
+            // The firmware only holds content while the ioctls keep coming, so
+            // every tick still pushes — but an identical frame reuses its
+            // packets instead of re-encoding 8192 bits into 2 KB of fresh
+            // vectors 25 times a second.
+            if last_frame.as_ref().map_or(true, |(prev, _)| *prev != fb) {
+                let packets = fb.frame_packets();
+                last_frame = Some((fb, packets));
+            }
+            let mut sent = true;
+            if let Some((_, packets)) = &last_frame {
+                for pkt in packets {
+                    if dev.send_feature(pkt).is_err() {
+                        sent = false;
+                        break;
+                    }
                 }
+            }
+            if sent {
+                send_failures = 0;
+            } else {
+                send_failures += 1;
+                if send_failures >= MAX_SEND_FAILURES {
+                    warn!("OLED panel stopped accepting frames; draw thread exiting");
+                    modes.release_spectrum();
+                    return;
+                }
+                // Transient USB hiccup; back off and try again next tick.
+                std::thread::sleep(SEND_BACKOFF);
             }
         }
     }

@@ -6,7 +6,6 @@
 
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
-use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 
@@ -37,6 +36,12 @@ impl DeviceKind {
         matches!(self, DeviceKind::NovaPro)
     }
 }
+
+/// Opening bytes of the Nova Pro control interface's report descriptor:
+/// `Usage Page (0xFFC0)` in HID's long-item encoding. The device's other
+/// interface (consumer/media keys) starts with a different usage page, so this
+/// is what tells the two apart.
+const VENDOR_USAGE_PAGE: [u8; 3] = [0x06, 0xc0, 0xff];
 
 /// `HIDIOCSFEATURE(len)` = `_IOC(_IOC_WRITE | _IOC_READ, 'H', 0x06, len)`.
 /// Encoded per the asm-generic ioctl layout (dir<<30 | size<<16 | type<<8 | nr).
@@ -82,7 +87,7 @@ pub fn find_device() -> Option<DevicePath> {
             DeviceKind::NovaPro => {
                 // Only the vendor control collection can drive status + OLED.
                 let desc = std::fs::read(sys.join("report_descriptor")).unwrap_or_default();
-                if desc.starts_with(&[0x06, 0xc0, 0xff]) {
+                if desc.starts_with(&VENDOR_USAGE_PAGE) {
                     return Some(DevicePath { dev, product_id: pid, kind });
                 }
             }
@@ -195,12 +200,9 @@ impl HidDevice {
     /// Open a second, blocking handle to the same node for a reader thread, so
     /// blocking reads never contend with command writes on one fd.
     pub fn open_reader(&self) -> io::Result<HidReader> {
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            // O_NONBLOCK off: the reader thread blocks until an event arrives.
-            .custom_flags(0)
-            .open(&self.path)?;
+        // No O_NONBLOCK (the default), so the reader thread blocks until an
+        // event arrives instead of spinning on EAGAIN.
+        let file = OpenOptions::new().read(true).write(true).open(&self.path)?;
         Ok(HidReader { file })
     }
 }

@@ -14,6 +14,7 @@ pub mod manager;
 pub mod media;
 pub mod oled;
 pub mod oled_controller;
+pub mod oled_draw;
 pub mod oled_mode_media;
 pub mod oled_mode_audio;
 pub mod oled_mode_clock;
