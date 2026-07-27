@@ -693,3 +693,51 @@ mod tests {
         assert_eq!(rows[1].label, "Battlefield");
     }
 }
+
+#[cfg(test)]
+mod ipc_contract {
+    /// The frontend routes every call through `src/lib/ipc.ts`, whose `Command`
+    /// union is hand-maintained. Nothing else connects the two: a command
+    /// renamed here would keep compiling on both sides and only break when a
+    /// user clicked the thing. This pins them together.
+    #[test]
+    fn command_union_matches_the_handler_list() {
+        let lib = include_str!("lib.rs");
+        let handler = lib
+            .split_once("generate_handler![")
+            .expect("handler list")
+            .1
+            .split_once("])")
+            .expect("handler list end")
+            .0;
+        let mut rust: Vec<&str> = handler
+            .lines()
+            .filter_map(|l| l.trim().trim_end_matches(',').rsplit("::").next())
+            .filter(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_lowercase() || c == '_' || c.is_ascii_digit()))
+            .collect();
+        rust.sort_unstable();
+        rust.dedup();
+
+        let ts = include_str!("../../src/lib/ipc.ts");
+        let union = ts
+            .split_once("export type Command =")
+            .expect("Command union")
+            .1
+            .split_once(';')
+            .expect("union end")
+            .0;
+        let mut front: Vec<&str> = union
+            .lines()
+            .filter_map(|l| l.trim().strip_prefix("| \""))
+            .filter_map(|l| l.strip_suffix('"'))
+            .collect();
+        front.sort_unstable();
+
+        let missing: Vec<_> = rust.iter().filter(|c| !front.contains(c)).collect();
+        let extra: Vec<_> = front.iter().filter(|c| !rust.contains(c)).collect();
+        assert!(
+            missing.is_empty() && extra.is_empty(),
+            "src/lib/ipc.ts is out of sync with generate_handler!\n  missing from ipc.ts: {missing:?}\n  not a real command: {extra:?}"
+        );
+    }
+}

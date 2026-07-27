@@ -1,6 +1,5 @@
 import { create } from "zustand";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { call, subscribe, type Command } from "../lib/ipc";
 import { createDebouncer } from "../lib/debounce";
 import type {
   AppStream,
@@ -20,8 +19,8 @@ import type {
 const debounce = createDebouncer(90, (_key, e) =>
   useMixerStore.setState({ error: String(e) }),
 );
-function debouncedInvoke(key: string, cmd: string, args: Record<string, unknown>, onError: (e: unknown) => void) {
-  debounce(key, () => invoke(cmd, args), { onError });
+function debouncedInvoke(key: string, cmd: Command, args: Record<string, unknown>, onError: (e: unknown) => void) {
+  debounce(key, () => call(cmd, args), { onError });
 }
 
 /** Per-sink [left, right] peak amplitudes (0-1), streamed from the native backend. */
@@ -39,7 +38,7 @@ let externalSubscribed = false;
 function subscribeExternalChanges() {
   if (externalSubscribed) return;
   externalSubscribed = true;
-  void listen("state-changed", () => {
+  void subscribe("state-changed", () => {
     const s = useMixerStore.getState();
     void s.fetchChannels();
     void s.fetchMic();
@@ -215,7 +214,7 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
   engineAlive: true,
   checkEngine: async () => {
     try {
-      const i = await invoke<{ native: boolean; engine_alive: boolean }>("get_backend_info");
+      const i = await call<{ native: boolean; engine_alive: boolean }>("get_backend_info");
       set({ backendNative: i.native, engineAlive: i.engine_alive });
     } catch {
       // The check itself failing tells us nothing new; leave the last state.
@@ -233,7 +232,7 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
   setBalanceChannels: async (a, b) => {
     set({ balanceA: a, balanceB: b });
     try {
-      await invoke("set_balance_channels", { a, b });
+      await call("set_balance_channels", { a, b });
     } catch (e) {
       set({ error: String(e) });
     }
@@ -242,7 +241,7 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
   setBalanceVisible: async (visible) => {
     set({ showBalance: visible });
     try {
-      await invoke("set_balance_visible", { visible });
+      await call("set_balance_visible", { visible });
     } catch (e) {
       set({ error: String(e) });
     }
@@ -253,7 +252,7 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
     set({ showOnboarding: false, onboardingReplay: false });
     if (replay) return; // view-only: nothing to persist or change
     try {
-      await invoke("set_onboarded");
+      await call("set_onboarded");
       if (blank) {
         // Collapse the seeded defaults to a single starter channel; the
         // active profile autosaves the result.
@@ -274,15 +273,15 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
   initialize: async () => {
     if (get().initialized) return;
     try {
-      await invoke("init_virtual_devices");
+      await call("init_virtual_devices");
       set({ initialized: true, error: null });
       subscribeExternalChanges();
       // Leaving backendNative null on failure would gate native-only features
       // on an unknown, so say it failed instead of swallowing it.
-      void invoke<{ native: boolean; engine_alive: boolean }>("get_backend_info")
+      void call<{ native: boolean; engine_alive: boolean }>("get_backend_info")
         .then((i) => set({ backendNative: i.native, engineAlive: i.engine_alive }))
         .catch((e: unknown) => set({ error: String(e) }));
-      void invoke<{
+      void call<{
         onboarded: boolean;
         balance_a: string | null;
         balance_b: string | null;
@@ -304,7 +303,7 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
       ]);
       // Active profile is tracked backend-side (survives restarts).
       try {
-        const active = await invoke<string | null>("get_active_profile");
+        const active = await call<string | null>("get_active_profile");
         if (active) {
           set({ activeProfile: active });
         } else if (get().profiles.some((p) => p.name === "Default")) {
@@ -321,7 +320,7 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
 
   fetchChannels: async () => {
     try {
-      const channels = await invoke<VirtualSink[]>("get_virtual_devices");
+      const channels = await call<VirtualSink[]>("get_virtual_devices");
       set({ channels });
     } catch (e) {
       set({ error: String(e) });
@@ -330,7 +329,7 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
 
   fetchAppStreams: async () => {
     try {
-      const appStreams = await invoke<AppStream[]>("get_app_streams");
+      const appStreams = await call<AppStream[]>("get_app_streams");
       const s = get();
       const patch: Partial<MixerStore> = {};
       if (!jsonEqual(s.appStreams, appStreams)) patch.appStreams = appStreams;
@@ -382,7 +381,7 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
       ),
     }));
     try {
-      await invoke("toggle_channel_mute", { sinkName, muted });
+      await call("toggle_channel_mute", { sinkName, muted });
     } catch (e) {
       set({ error: String(e) });
       await get().fetchChannels();
@@ -398,7 +397,7 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
       ),
     }));
     try {
-      await invoke("route_app_to_channel", { streamIndex, sinkName });
+      await call("route_app_to_channel", { streamIndex, sinkName });
     } catch (e) {
       set({ error: String(e) });
     } finally {
@@ -423,10 +422,10 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
   fetchOutputs: async () => {
     try {
       const [outputDevices, channelOutputs, resolvedOutputs, channelFailover] = await Promise.all([
-        invoke<OutputDevice[]>("get_output_devices"),
-        invoke<Record<string, string | null>>("get_channel_outputs"),
-        invoke<Record<string, string | null>>("get_resolved_outputs"),
-        invoke<Record<string, boolean>>("get_channel_failover"),
+        call<OutputDevice[]>("get_output_devices"),
+        call<Record<string, string | null>>("get_channel_outputs"),
+        call<Record<string, string | null>>("get_resolved_outputs"),
+        call<Record<string, boolean>>("get_channel_failover"),
       ]);
       const s = get();
       const patch: Partial<MixerStore> = {};
@@ -445,7 +444,7 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
       channelOutputs: { ...s.channelOutputs, [sinkName]: outputName },
     }));
     try {
-      await invoke("set_channel_output", { sinkName, outputName: outputName ?? "" });
+      await call("set_channel_output", { sinkName, outputName: outputName ?? "" });
     } catch (e) {
       set({ error: String(e) });
       await get().fetchOutputs();
@@ -457,7 +456,7 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
       channelFailover: { ...s.channelFailover, [sinkName]: enabled },
     }));
     try {
-      await invoke("set_channel_failover", { sinkName, enabled });
+      await call("set_channel_failover", { sinkName, enabled });
     } catch (e) {
       set({ error: String(e) });
       await get().fetchOutputs();
@@ -474,7 +473,7 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
 
   fetchEq: async () => {
     try {
-      const eqConfigs = await invoke<Record<string, EqConfig>>("get_channel_eq_configs");
+      const eqConfigs = await call<Record<string, EqConfig>>("get_channel_eq_configs");
       if (!jsonEqual(get().eqConfigs, eqConfigs)) set({ eqConfigs });
     } catch (e) {
       set({ error: String(e) });
@@ -494,8 +493,8 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
   fetchMic: async () => {
     try {
       const [micConfig, inputDevices] = await Promise.all([
-        invoke<MicConfig>("get_mic_config"),
-        invoke<OutputDevice[]>("get_input_devices"),
+        call<MicConfig>("get_mic_config"),
+        call<OutputDevice[]>("get_input_devices"),
       ]);
       set({ micConfig, inputDevices });
     } catch (e) {
@@ -517,7 +516,7 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
 
   fetchProfiles: async () => {
     try {
-      const profiles = await invoke<ProfileInfo[]>("list_profiles");
+      const profiles = await call<ProfileInfo[]>("list_profiles");
       set({ profiles });
     } catch (e) {
       set({ error: String(e) });
@@ -526,7 +525,7 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
 
   setProfileTrigger: async (name, device) => {
     try {
-      await invoke("set_profile_trigger", { name, device: device ?? "" });
+      await call("set_profile_trigger", { name, device: device ?? "" });
       await get().fetchProfiles();
     } catch (e) {
       set({ error: String(e) });
@@ -548,7 +547,7 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
 
   createBlankProfile: async (name) => {
     try {
-      await invoke("create_blank_profile", { name });
+      await call("create_blank_profile", { name });
       await get().fetchProfiles();
       // Switch to the fresh profile right away - creating a blank slate
       // and not seeing anything change reads as a bug.
@@ -560,7 +559,7 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
 
   fetchSeenApps: async () => {
     try {
-      const seenApps = await invoke<SeenApp[]>("get_seen_apps");
+      const seenApps = await call<SeenApp[]>("get_seen_apps");
       if (!jsonEqual(get().seenApps, seenApps)) set({ seenApps });
     } catch (e) {
       set({ error: String(e) });
@@ -569,7 +568,7 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
 
   setAppIgnored: async (app, ignored) => {
     try {
-      await invoke("set_app_ignored", {
+      await call("set_app_ignored", {
         matchProp: app.match_prop,
         matchValue: app.match_value,
         ignored,
@@ -582,7 +581,7 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
 
   forgetApp: async (app) => {
     try {
-      await invoke("forget_app", {
+      await call("forget_app", {
         matchProp: app.match_prop,
         matchValue: app.match_value,
       });
@@ -594,7 +593,7 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
 
   setAppAssignment: async (app, sinkName) => {
     try {
-      await invoke("set_app_assignment", {
+      await call("set_app_assignment", {
         matchProp: app.match_prop,
         matchValue: app.match_value,
         sinkName: sinkName ?? "",
@@ -607,7 +606,7 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
 
   loadProfile: async (name) => {
     try {
-      await invoke("load_profile", { name });
+      await call("load_profile", { name });
       set({ activeProfile: name });
       // Layout, volumes and routing all changed backend-side.
       await Promise.all([
@@ -625,7 +624,7 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
 
   deleteProfile: async (name) => {
     try {
-      await invoke("delete_profile", { name });
+      await call("delete_profile", { name });
       if (get().activeProfile === name) set({ activeProfile: null });
       await get().fetchProfiles();
     } catch (e) {
@@ -635,7 +634,7 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
 
   addChannel: async (label, icon) => {
     try {
-      await invoke("add_channel", { label, icon });
+      await call("add_channel", { label, icon });
       // Buses too: the master (and auto-include mixes) absorb the channel.
       await Promise.all([get().fetchChannels(), get().fetchOutputs(), get().fetchBuses()]);
     } catch (e) {
@@ -647,7 +646,7 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
 
   fetchBuses: async () => {
     try {
-      const buses = await invoke<BusDef[]>("list_buses");
+      const buses = await call<BusDef[]>("list_buses");
       set({ buses });
     } catch (e) {
       set({ error: String(e) });
@@ -656,7 +655,7 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
 
   addBus: async (label) => {
     try {
-      await invoke("add_bus", { label });
+      await call("add_bus", { label });
       await get().fetchBuses();
     } catch (e) {
       set({ error: String(e) });
@@ -668,7 +667,7 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
       buses: s.buses.map((b) => (b.name === name ? { ...b, label } : b)),
     }));
     try {
-      await invoke("rename_bus", { name, label });
+      await call("rename_bus", { name, label });
     } catch (e) {
       set({ error: String(e) });
       await get().fetchBuses();
@@ -677,7 +676,7 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
 
   removeBus: async (name) => {
     try {
-      await invoke("remove_bus", { name });
+      await call("remove_bus", { name });
       await get().fetchBuses();
     } catch (e) {
       set({ error: String(e) });
@@ -696,7 +695,7 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
       ),
     }));
     try {
-      await invoke("set_bus_members", { name, channels });
+      await call("set_bus_members", { name, channels });
       // The backend converts against its own channel set - sync up so the
       // stored complement can't drift if channels changed mid-flight.
       await get().fetchBuses();
@@ -723,7 +722,7 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
       }),
     }));
     try {
-      await invoke("set_bus_exclude", { name, exclude });
+      await call("set_bus_exclude", { name, exclude });
     } catch (e) {
       set({ error: String(e) });
       await get().fetchBuses();
@@ -745,7 +744,7 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
       buses: s.buses.map((b) => (b.name === name ? { ...b, muted } : b)),
     }));
     try {
-      await invoke("set_bus_mute", { name, muted });
+      await call("set_bus_mute", { name, muted });
     } catch (e) {
       set({ error: String(e) });
       await get().fetchBuses();
@@ -758,7 +757,7 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
     const enabled = !get().monitors[name];
     set((s) => ({ monitors: { ...s.monitors, [name]: enabled } }));
     try {
-      await invoke("set_monitor", { sinkName: name, enabled });
+      await call("set_monitor", { sinkName: name, enabled });
     } catch (e) {
       set({ error: String(e) });
       set((s) => ({ monitors: { ...s.monitors, [name]: !enabled } }));
@@ -770,7 +769,7 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
       channels: s.channels.map((c) => (c.name === sinkName ? { ...c, icon } : c)),
     }));
     try {
-      await invoke("set_channel_icon", { sinkName, icon });
+      await call("set_channel_icon", { sinkName, icon });
     } catch (e) {
       set({ error: String(e) });
       await get().fetchChannels();
@@ -782,7 +781,7 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
       channels: s.channels.map((c) => (c.name === sinkName ? { ...c, label } : c)),
     }));
     try {
-      await invoke("rename_channel", { sinkName, label });
+      await call("rename_channel", { sinkName, label });
     } catch (e) {
       set({ error: String(e) });
       await get().fetchChannels();
@@ -805,7 +804,7 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
   commitChannelOrder: async () => {
     const order = get().channels.map((c) => c.name);
     try {
-      await invoke("reorder_channels", { order });
+      await call("reorder_channels", { order });
     } catch (e) {
       set({ error: String(e) });
       await get().fetchChannels();
@@ -814,7 +813,7 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
 
   removeChannel: async (sinkName) => {
     try {
-      await invoke("remove_channel", { sinkName });
+      await call("remove_channel", { sinkName });
       await Promise.all([
         get().fetchChannels(),
         get().fetchAppStreams(),
@@ -837,7 +836,7 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
       ),
     }));
     try {
-      await invoke("rename_app", {
+      await call("rename_app", {
         matchProp: stream.match_prop,
         matchValue: stream.match_value,
         alias: trimmed,

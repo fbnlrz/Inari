@@ -1,9 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// The store talks to the Rust backend through Tauri IPC; mock the boundary.
-const invoke = vi.fn();
-vi.mock("@tauri-apps/api/core", () => ({
-  invoke: (...args: unknown[]) => invoke(...args),
+// The store talks to the Rust backend through src/lib/ipc; mock that boundary.
+const call = vi.fn();
+const subscribe = vi.fn<(event: string, handler: (payload: never) => void) => Promise<() => void>>(
+  () => Promise.resolve(() => {}),
+);
+vi.mock("../lib/ipc", () => ({
+  call: (...args: unknown[]) => call(...args),
+  subscribe: (event: string, handler: (payload: never) => void) => subscribe(event, handler),
 }));
 
 import { useMixerStore } from "./mixer";
@@ -53,11 +57,11 @@ const seed = (names: string[]) => {
 };
 
 /** Commands actually sent, in order. */
-const commands = () => invoke.mock.calls.map((c) => c[0] as string);
+const commands = () => call.mock.calls.map((c) => c[0] as string);
 
 beforeEach(() => {
-  invoke.mockReset();
-  invoke.mockImplementation(fakeBackend);
+  call.mockReset();
+  call.mockImplementation(fakeBackend);
   useMixerStore.setState(initialState, true);
 });
 
@@ -70,7 +74,7 @@ describe("finishOnboarding(blank)", () => {
     // Destructive by design: everything but the first strip is deleted.
     expect(commands().filter((c) => c === "remove_channel")).toHaveLength(3);
     expect(
-      invoke.mock.calls
+      call.mock.calls
         .filter((c) => c[0] === "remove_channel")
         .map((c) => (c[1] as { sinkName: string }).sinkName),
     ).toEqual(["sink_chat", "sink_media", "sink_aux"]);
@@ -82,11 +86,11 @@ describe("finishOnboarding(blank)", () => {
 
     await useMixerStore.getState().finishOnboarding(true);
 
-    expect(invoke).toHaveBeenCalledWith("rename_channel", {
+    expect(call).toHaveBeenCalledWith("rename_channel", {
       sinkName: "sink_game",
       label: "Main",
     });
-    expect(invoke).toHaveBeenCalledWith("set_channel_icon", {
+    expect(call).toHaveBeenCalledWith("set_channel_icon", {
       sinkName: "sink_game",
       icon: "graphic_eq",
     });
@@ -107,7 +111,7 @@ describe("finishOnboarding(blank)", () => {
     await useMixerStore.getState().finishOnboarding(true);
 
     expect(commands()).not.toContain("remove_channel");
-    expect(invoke).toHaveBeenCalledWith("rename_channel", {
+    expect(call).toHaveBeenCalledWith("rename_channel", {
       sinkName: "sink_game",
       label: "Main",
     });
@@ -138,7 +142,7 @@ describe("finishOnboarding(blank)", () => {
     // user's live layout.
     await useMixerStore.getState().finishOnboarding(true);
 
-    expect(invoke).not.toHaveBeenCalled();
+    expect(call).not.toHaveBeenCalled();
     expect(useMixerStore.getState().showOnboarding).toBe(false);
     expect(useMixerStore.getState().onboardingReplay).toBe(false);
     expect(backendChannels).toHaveLength(2);
@@ -146,7 +150,7 @@ describe("finishOnboarding(blank)", () => {
 
   it("closes the modal and reports the failure when the backend refuses", async () => {
     seed(["sink_game", "sink_chat"]);
-    invoke.mockImplementation(async (cmd: string, args: Record<string, unknown>) => {
+    call.mockImplementation(async (cmd: string, args: Record<string, unknown>) => {
       if (cmd === "set_onboarded") throw "prefs are read-only";
       return fakeBackend(cmd, args);
     });

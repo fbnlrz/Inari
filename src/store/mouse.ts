@@ -1,6 +1,5 @@
 import { create } from "zustand";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { call, subscribe } from "../lib/ipc";
 import { createDebouncer } from "../lib/debounce";
 
 // Mirrors the Rust structs in src-tauri/src/mouse/.
@@ -95,7 +94,7 @@ export const useMouse = create<MouseState>((set, get) => {
     _initialized: false,
 
     refresh: async () => {
-      const snap = await invoke<MouseSnapshot>("get_mouse_status");
+      const snap = await call<MouseSnapshot>("get_mouse_status");
       set({
         connected: snap.connected,
         status: snap.status,
@@ -113,13 +112,13 @@ export const useMouse = create<MouseState>((set, get) => {
       } catch (e) {
         console.error("mouse init:", e);
       }
-      void listen<MouseStatus>("mouse-status", (e) => set({ status: e.payload }));
-      void listen<boolean>("mouse-presence", (e) => {
+      void subscribe<MouseStatus>("mouse-status", (status) => set({ status }));
+      void subscribe<boolean>("mouse-presence", (connected) => {
         set((s) => ({
-          connected: e.payload,
-          status: e.payload ? s.status : emptyStatus,
+          connected,
+          status: connected ? s.status : emptyStatus,
         }));
-        if (e.payload) {
+        if (connected) {
           void get().refresh().catch((err: unknown) => set({ error: String(err) }));
         }
       });
@@ -129,13 +128,13 @@ export const useMouse = create<MouseState>((set, get) => {
       set((s) => ({
         config: { ...s.config, dpi_presets: presets, dpi_selected: selected },
       }));
-      debounced("dpi", () => invoke("mouse_set_dpi", { presets, selected }));
+      debounced("dpi", () => call("mouse_set_dpi", { presets, selected }));
     },
     setPolling: async (hz) => {
       const prev = get().config.polling_hz;
       set((s) => ({ config: { ...s.config, polling_hz: hz } }));
       try {
-        await invoke("mouse_set_polling", { hz });
+        await call("mouse_set_polling", { hz });
       } catch (e) {
         // Callers `void` these, so an uncaught rejection would leave the UI
         // showing a rate the mouse never accepted.
@@ -148,14 +147,14 @@ export const useMouse = create<MouseState>((set, get) => {
         return { config: { ...s.config, zones, rainbow: false } };
       });
       debounced(`zone:${zone}`, () =>
-        invoke("mouse_set_zone_color", { zone, r: rgb[0], g: rgb[1], b: rgb[2] }),
+        call("mouse_set_zone_color", { zone, r: rgb[0], g: rgb[1], b: rgb[2] }),
       );
     },
     setRainbow: async () => {
       const prev = get().config.rainbow;
       set((s) => ({ config: { ...s.config, rainbow: true } }));
       try {
-        await invoke("mouse_set_rainbow");
+        await call("mouse_set_rainbow");
       } catch (e) {
         set((s) => ({ config: { ...s.config, rainbow: prev }, error: String(e) }));
       }
@@ -164,18 +163,18 @@ export const useMouse = create<MouseState>((set, get) => {
       const prev = get().config.reactive;
       set((s) => ({ config: { ...s.config, reactive: rgb } }));
       try {
-        await invoke("mouse_set_reactive", { rgb });
+        await call("mouse_set_reactive", { rgb });
       } catch (e) {
         set((s) => ({ config: { ...s.config, reactive: prev }, error: String(e) }));
       }
     },
     setSleep: async (minutes) => {
       set((s) => ({ config: { ...s.config, sleep_minutes: minutes } }));
-      debounced("sleep", () => invoke("mouse_set_sleep", { minutes }));
+      debounced("sleep", () => call("mouse_set_sleep", { minutes }));
     },
     setDim: async (seconds) => {
       set((s) => ({ config: { ...s.config, dim_seconds: seconds } }));
-      debounced("dim", () => invoke("mouse_set_dim", { seconds }));
+      debounced("dim", () => call("mouse_set_dim", { seconds }));
     },
   };
 });

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { call } from "../../lib/ipc";
 import { getVersion } from "@tauri-apps/api/app";
 import { useMixerStore } from "../../store/mixer";
 import { useTheme, THEMES } from "../../store/theme";
@@ -111,10 +111,10 @@ export function SettingsScreen() {
   const setBalanceVisible = useMixerStore((s) => s.setBalanceVisible);
 
   useEffect(() => {
-    void invoke<boolean>("get_autostart").then(setAutostart);
-    void invoke<{ native: boolean }>("get_backend_info").then((i) => setBackendNative(i.native));
-    void invoke<DefaultDevices>("get_default_devices").then(setDefaults).catch(() => {});
-    void invoke<{ device_label_style: LabelStyle; start_minimized: boolean }>("get_prefs")
+    void call<boolean>("get_autostart").then(setAutostart);
+    void call<{ native: boolean }>("get_backend_info").then((i) => setBackendNative(i.native));
+    void call<DefaultDevices>("get_default_devices").then(setDefaults).catch(() => {});
+    void call<{ device_label_style: LabelStyle; start_minimized: boolean }>("get_prefs")
       .then((p) => {
         setLabelStyle(p.device_label_style);
         setStartMinimized(p.start_minimized);
@@ -125,7 +125,7 @@ export function SettingsScreen() {
 
   const pickDefault = async (kind: "output" | "input", name: string) => {
     try {
-      await invoke(kind === "output" ? "set_default_output" : "set_default_input", { name });
+      await call(kind === "output" ? "set_default_output" : "set_default_input", { name });
       setDefaults((d) => ({ ...d, [kind]: name }));
       setError(null);
     } catch (e) {
@@ -135,7 +135,7 @@ export function SettingsScreen() {
 
   const pickLabelStyle = async (style: LabelStyle) => {
     try {
-      await invoke("set_device_label_style", { style });
+      await call("set_device_label_style", { style });
       setLabelStyle(style);
       setError(null);
     } catch (e) {
@@ -146,7 +146,7 @@ export function SettingsScreen() {
   const toggleAutostart = async () => {
     if (autostart === null) return;
     try {
-      const actual = await invoke<boolean>("set_autostart", { enabled: !autostart });
+      const actual = await call<boolean>("set_autostart", { enabled: !autostart });
       setAutostart(actual);
       setError(null);
     } catch (e) {
@@ -158,7 +158,7 @@ export function SettingsScreen() {
     const next = !startMinimized;
     setStartMinimized(next);
     try {
-      await invoke("set_start_minimized", { minimized: next });
+      await call("set_start_minimized", { minimized: next });
       setError(null);
     } catch (e) {
       setStartMinimized(!next);
@@ -371,7 +371,7 @@ export function SettingsScreen() {
               type="button"
               className="select"
               onClick={() =>
-                void invoke("open_log_dir").catch((e) => setError(String(e)))
+                void call("open_log_dir").catch((e) => setError(String(e)))
               }
             >
               <span>Open</span>
@@ -411,7 +411,7 @@ export function SettingsScreen() {
         onClose={() => setConfirmingReset(false)}
         title="Reset Inari?"
         confirmLabel="Reset everything"
-        onConfirm={() => void invoke("reset_app").catch((e) => setError(String(e)))}
+        onConfirm={() => void call("reset_app").catch((e) => setError(String(e)))}
       >
         Everything you've set up - channels, mixes, profiles, app assignments,
         history and preferences - is permanently deleted, and Inari relaunches

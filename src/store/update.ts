@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { invoke } from "@tauri-apps/api/core";
+import { call } from "../lib/ipc";
 
 export interface UpdateInfo {
   current: string;
@@ -37,7 +37,7 @@ export const useUpdate = create<UpdateState>((set, get) => ({
     if (get().checking) return;
     set({ checking: true, error: null });
     try {
-      const info = await invoke<UpdateInfo>("check_update");
+      const info = await call<UpdateInfo>("check_update");
       set({ info, checking: false, dismissed: false });
     } catch (e) {
       set({ checking: false, error: String(e) });
@@ -49,23 +49,23 @@ export const useUpdate = create<UpdateState>((set, get) => ({
     if (!info?.deb_url || get().applying) return;
     set({ applying: true, error: null });
     try {
-      await invoke("apply_update", { debUrl: info.deb_url });
+      await call("apply_update", { debUrl: info.deb_url });
       set({ applying: false, installed: true });
       // The new .deb is in place; relaunch so it takes over. The manual
       // "Restart now" button stays as a fallback if this ever doesn't fire.
-      await invoke("restart_app");
+      await call("restart_app");
     } catch (e) {
       set({ applying: false, error: String(e) });
     }
   },
 
   restart: async () => {
-    await invoke("restart_app");
+    await call("restart_app");
   },
 
   openNotes: async () => {
     const url = get().info?.url;
-    if (url) await invoke("open_url", { url });
+    if (url) await call("open_url", { url });
   },
 
   dismiss: () => set({ dismissed: true }),

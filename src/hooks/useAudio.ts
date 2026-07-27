@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { subscribe } from "../lib/ipc";
 import { useMixerStore, type Levels } from "../store/mixer";
 
 /**
@@ -71,7 +71,7 @@ export function useAudio() {
     // The primary path: the backend tells us when the PipeWire graph actually
     // moved (node added/removed/renamed, default device switched), already
     // coalesced, so a startup burst is one refetch and not dozens.
-    const unlisten = listen("graph-changed", () => {
+    const unlisten = subscribe("graph-changed", () => {
       if (document.hidden) return; // start() refreshes when the window returns
       // History is written backend-side while the stream list is served, so
       // read it back after that call rather than racing it.
@@ -86,7 +86,7 @@ export function useAudio() {
   }, [fetchAppStreams, fetchOutputs, fetchSeenApps, eventDriven]);
 
   useEffect(() => {
-    const unlisten = listen<Levels>("levels", (event) => setLevels(event.payload));
+    const unlisten = subscribe<Levels>("levels", (levels) => setLevels(levels));
     return () => {
       void unlisten.then((fn) => fn());
     };
@@ -95,8 +95,8 @@ export function useAudio() {
   // Profile switched from the tray menu - sync the whole UI.
   const onProfileChanged = useMixerStore((s) => s.onProfileChanged);
   useEffect(() => {
-    const unlisten = listen<string>("profile-changed", (event) => {
-      void onProfileChanged(event.payload);
+    const unlisten = subscribe<string>("profile-changed", (name) => {
+      void onProfileChanged(name);
     });
     return () => {
       void unlisten.then((fn) => fn());
