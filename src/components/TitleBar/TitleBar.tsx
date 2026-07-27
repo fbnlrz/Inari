@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useMixerStore } from "../../store/mixer";
 import { Ms, InariMark } from "../Icons";
@@ -13,10 +14,22 @@ export function TitleBar({ screen }: Readonly<{ screen: string }>) {
   const win = getCurrentWindow();
   const error = useMixerStore((s) => s.error);
   const initialized = useMixerStore((s) => s.initialized);
+  const engineAlive = useMixerStore((s) => s.engineAlive);
+  const checkEngine = useMixerStore((s) => s.checkEngine);
 
+  // A dead PipeWire loop surfaces as an ordinary command failure, so a fresh
+  // error is the cue to ask whether the engine is still there at all.
+  useEffect(() => {
+    if (error) void checkEngine();
+  }, [error, checkEngine]);
+
+  // A stopped engine outranks the rest: the others are recoverable, this one
+  // needs a restart.
   let status = "Starting…";
-  if (error) status = "Engine error";
+  if (!engineAlive) status = "Engine stopped";
+  else if (error) status = "Engine error";
   else if (initialized) status = "Engine running";
+  const bad = !engineAlive || !!error;
 
   return (
     <header data-tauri-drag-region className="headerbar">
@@ -34,7 +47,11 @@ export function TitleBar({ screen }: Readonly<{ screen: string }>) {
       <div data-tauri-drag-region className="hb-spacer" />
       <BalanceBar />
       <ProfileMenu />
-      <div className={"hb-status" + (error ? " err" : "")}>
+      <div
+        className={"hb-status" + (bad ? " err" : "")}
+        role="status"
+        title={!engineAlive ? "The audio engine stopped. Restart Inari to restore audio control." : undefined}
+      >
         <span className="dot" />
         {status}
       </div>

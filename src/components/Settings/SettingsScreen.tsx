@@ -95,7 +95,8 @@ export function SettingsScreen() {
   const [autostart, setAutostart] = useState<boolean | null>(null);
   const [startMinimized, setStartMinimized] = useState(false);
   const [backendNative, setBackendNative] = useState<boolean | null>(null);
-  const [engineAlive, setEngineAlive] = useState(true);
+  // One source of truth with the title bar, which re-checks on every failure.
+  const engineAlive = useMixerStore((s) => s.engineAlive);
   const [version, setVersion] = useState("");
   const [defaults, setDefaults] = useState<DefaultDevices>({ output: null, input: null });
   const [labelStyle, setLabelStyle] = useState<LabelStyle>("plain");
@@ -110,10 +111,7 @@ export function SettingsScreen() {
 
   useEffect(() => {
     void invoke<boolean>("get_autostart").then(setAutostart);
-    void invoke<{ native: boolean; engine_alive: boolean }>("get_backend_info").then((i) => {
-      setBackendNative(i.native);
-      setEngineAlive(i.engine_alive);
-    });
+    void invoke<{ native: boolean }>("get_backend_info").then((i) => setBackendNative(i.native));
     void invoke<DefaultDevices>("get_default_devices").then(setDefaults).catch(() => {});
     void invoke<{ device_label_style: LabelStyle; start_minimized: boolean }>("get_prefs")
       .then((p) => {
