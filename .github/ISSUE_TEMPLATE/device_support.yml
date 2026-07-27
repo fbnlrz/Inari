@@ -1,0 +1,110 @@
+name: "🎧 Device support request"
+description: "Ask for Inari to support another SteelSeries device (headset, mouse, keyboard, base station …)."
+title: "[device] "
+labels: ["device-support"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping grow Inari's hardware support! The more of the
+        information below you can provide, the more likely the device can be
+        added — especially the **USB IDs**, the **HID interface**, and any
+        **existing protocol work** you can find. You do not need all of it, but
+        please fill in everything you can.
+
+  - type: input
+    id: device
+    attributes:
+      label: Device name & model
+      description: The exact product name, and edition/revision if any.
+      placeholder: "SteelSeries Arctis 7+ (2022), or Aerox 5 Wireless"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Device type
+      options:
+        - Headset
+        - Headset base station / dongle
+        - Mouse
+        - Keyboard
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: connection
+    attributes:
+      label: How is it connected?
+      multiple: true
+      options:
+        - Wired USB
+        - 2.4 GHz wireless dongle
+        - Bluetooth
+    validations:
+      required: true
+
+  - type: textarea
+    id: lsusb
+    attributes:
+      label: "`lsusb` output"
+      description: |
+        Run `lsusb` with the device plugged in and paste the line(s) for it.
+        The `Vendor:Product` id (e.g. `1038:12e0`) is the single most important
+        piece of information.
+      render: shell
+      placeholder: "Bus 001 Device 007: ID 1038:12e0 SteelSeries ApS ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: hid
+    attributes:
+      label: HID interfaces
+      description: |
+        Optional but very helpful. With the device connected, paste the output of:
+        ```
+        for d in /sys/class/hidraw/hidraw*; do
+          echo "$d -> $(cat $d/device/uevent | tr '\n' ' ')"
+        done
+        ```
+        This shows which `/dev/hidraw*` nodes and interfaces the device exposes.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: prior-work
+    attributes:
+      label: Existing protocol work / references
+      description: |
+        Anything you can find that documents this device — this is what makes
+        support feasible. Links to any of:
+        - [HeadsetControl](https://github.com/Sapd/HeadsetControl) (headsets)
+        - [rivalcfg](https://github.com/flozz/rivalcfg) (mice/keyboards)
+        - [libratbag](https://github.com/libratbag/libratbag)
+        - [Linux-Arctis-Manager](https://github.com/elegos/Linux-Arctis-Manager)
+        - blog posts, Wireshark/USBPcap captures, reverse-engineering notes,
+          other projects, forum threads …
+      placeholder: "e.g. HeadsetControl has a device_arctis_7_plus.c with the opcodes …"
+    validations:
+      required: false
+
+  - type: textarea
+    id: wanted
+    attributes:
+      label: What would you like to control?
+      description: "Battery, ANC, sidetone, RGB, DPI, OLED, …"
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: testing
+    attributes:
+      label: Testing
+      description: Inari's maintainer very likely does not own this device.
+      options:
+        - label: "I own this device and can test builds / capture USB traffic."
+        - label: "I understand support depends on someone with the hardware verifying it."

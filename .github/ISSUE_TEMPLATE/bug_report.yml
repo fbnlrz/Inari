@@ -1,0 +1,56 @@
+name: "🐛 Bug report"
+description: "Something in Inari isn't working."
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Inari version
+      description: "See Settings → About, or run `inari --version`."
+      placeholder: "1.0.3"
+    validations:
+      required: true
+
+  - type: input
+    id: install
+    attributes:
+      label: How did you install it?
+      placeholder: ".deb / one-line installer / AppImage / built from source"
+    validations:
+      required: true
+
+  - type: input
+    id: distro
+    attributes:
+      label: Distro & desktop
+      placeholder: "Fedora 42, KDE Plasma 6 (Wayland)"
+    validations:
+      required: true
+
+  - type: input
+    id: pipewire
+    attributes:
+      label: PipeWire / WirePlumber versions
+      description: "`pipewire --version` and `wireplumber --version`"
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        If it's a crash or misbehaviour, run Inari from a terminal (`inari`) and
+        paste any relevant output.
+      render: shell
+    validations:
+      required: false
