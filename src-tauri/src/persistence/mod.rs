@@ -13,7 +13,6 @@ pub mod notify_mirror;
 pub mod outputs;
 pub mod prefs;
 pub mod seen;
-pub mod soundboard;
 pub mod profiles;
 pub mod wireplumber;
 

@@ -14,12 +14,6 @@ pub struct DspSettings {
     /// Linear gain multiplier (UI percent / 100).
     pub gain: f32,
     pub muted: bool,
-    /// Soundboard ducking: a linear attenuation applied *on top of* `gain`
-    /// while a clip is playing, 1.0 when nothing is ducking. It is a separate
-    /// field on purpose - folding it into `gain` would mean writing a
-    /// temporary value into the user's own microphone setting and leaving
-    /// whatever the last clip left behind in their config.
-    pub duck: f32,
     /// Tunable stage parameters (UI-exposed; time constants stay fixed).
     pub gate_threshold_db: f32,
     pub comp_threshold_db: f32,
@@ -35,7 +29,6 @@ impl Default for DspSettings {
             limiter_enabled: true,
             gain: 1.0,
             muted: false,
-            duck: 1.0,
             gate_threshold_db: -40.0,
             comp_threshold_db: -18.0,
             comp_ratio: 3.0,
@@ -55,13 +48,6 @@ const COMP_RELEASE_MS: f32 = 60.0;
 const COMP_MAKEUP_DB: f32 = 4.0;
 
 const LIMIT_RELEASE_MS: f32 = 60.0;
-
-/// Time constant of the ducking fade, in and back out. Between the gate's
-/// attack and its release: fast enough that the mic is down before the clip's
-/// first syllable, slow enough not to click - stepping the gain in a single
-/// sample would put an audible tick at both ends of every clip. It settles in
-/// roughly three of these.
-const DUCK_RAMP_MS: f32 = 15.0;
 
 fn db_to_linear(db: f32) -> f32 {
     10f32.powf(db / 20.0)
@@ -85,8 +71,6 @@ pub struct DspChain {
     comp_env: f32,
     // limiter
     limit_gain: f32,
-    // soundboard ducking
-    duck_gain: f32,
 }
 
 impl DspChain {
@@ -98,7 +82,6 @@ impl DspChain {
             gate_hold: 0,
             comp_env: 0.0,
             limit_gain: 1.0,
-            duck_gain: 1.0,
         }
     }
 
@@ -122,9 +105,6 @@ impl DspChain {
 
         let ceiling = db_to_linear(s.limiter_ceiling_db);
         let limit_rel = coeff(LIMIT_RELEASE_MS, sr);
-
-        let duck_target = s.duck.clamp(0.0, 1.0);
-        let duck_c = coeff(DUCK_RAMP_MS, sr);
 
         for sample in samples.iter_mut() {
             let mut x = *sample;
@@ -186,13 +166,6 @@ impl DspChain {
                 x *= self.limit_gain;
                 x = x.clamp(-ceiling, ceiling);
             }
-
-            // ---- soundboard ducking ----
-            // Last in the chain, so the attenuation the user asked for is the
-            // attenuation the chat hears: applied before the compressor, its
-            // makeup gain and the limiter would each give part of it back.
-            self.duck_gain = duck_target + duck_c * (self.duck_gain - duck_target);
-            x *= self.duck_gain;
 
             *sample = x;
         }
@@ -264,59 +237,6 @@ mod tests {
         // → net -4 dB from input peak 0.5 → ~0.315. Allow generous tolerance.
         assert!(out_peak < 0.45, "expected compression, peak={out_peak}");
         assert!(out_peak > 0.2, "compression overshot, peak={out_peak}");
-    }
-
-    #[test]
-    fn ducking_reaches_the_requested_attenuation_and_lets_go_again() {
-        let mut chain = DspChain::new(48000.0);
-        let mut s = settings(false, false, false, 1.0);
-        // -12 dB while a clip plays.
-        s.duck = 0.25;
-        let mut buf = vec![0.5f32; 48000];
-        chain.process(&mut buf, &s);
-        // The tail is past the ramp: exactly a quarter of the input.
-        assert!((buf[47999] - 0.125).abs() < 1e-4, "got {}", buf[47999]);
-
-        // Clip over: back to unity, and back to the *user's* level - the gain
-        // setting was never touched.
-        s.duck = 1.0;
-        let mut buf = vec![0.5f32; 48000];
-        chain.process(&mut buf, &s);
-        assert!((buf[47999] - 0.5).abs() < 1e-4, "got {}", buf[47999]);
-    }
-
-    #[test]
-    fn ducking_ramps_instead_of_stepping() {
-        // A one-sample jump from 1.0 to 0.25 is a click in someone's mic.
-        // Both edges have to be gradual.
-        let mut chain = DspChain::new(48000.0);
-        let mut s = settings(false, false, false, 1.0);
-        s.duck = 0.25;
-        let mut buf = vec![1.0f32; 4800];
-        chain.process(&mut buf, &s);
-        let step = (buf[0] - buf[1]).abs();
-        assert!(step < 0.01, "duck-in steps by {step} in one sample");
-        assert!(buf[0] > 0.9, "the first sample is still near unity");
-        // 2400 samples = 50 ms, i.e. a few time constants: essentially there.
-        assert!(buf[2400] < 0.3, "duck did not reach its target: {}", buf[2400]);
-
-        s.duck = 1.0;
-        let mut back = vec![1.0f32; 4800];
-        chain.process(&mut back, &s);
-        let step = (back[0] - back[1]).abs();
-        assert!(step < 0.01, "duck-out steps by {step} in one sample");
-        assert!(back[0] < 0.3, "release starts from where ducking left off");
-        assert!(back[4799] > 0.9, "and finishes back at unity");
-    }
-
-    #[test]
-    fn ducking_is_inert_at_its_default() {
-        // The chain's default must be indistinguishable from a build without
-        // ducking at all.
-        let mut chain = DspChain::new(48000.0);
-        let mut buf = vec![0.3f32; 480];
-        chain.process(&mut buf, &settings(false, false, false, 1.0));
-        assert!((buf[479] - 0.3).abs() < 1e-6);
     }
 
     #[test]

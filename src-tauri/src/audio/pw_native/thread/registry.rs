@@ -22,7 +22,7 @@ use crate::audio::pw_native::pods;
 use crate::audio::types::is_virtual_sink;
 use crate::persistence::buses::is_bus_name;
 
-use super::links::{ensure_all_links, ensure_clip_links, ensure_mic_links};
+use super::links::{ensure_all_links, ensure_mic_links};
 use super::state::{notify_graph, NodeEntry, PortEntry, State, CORE};
 use super::{
     INTERNAL_PREFIX, SINK_CLASS, SOURCE_CLASS, STREAM_CLASS, VIRTUAL_SOURCE_CLASS,
@@ -48,14 +48,11 @@ pub(super) fn on_global(
                 channel: props.get("audio.channel").map(str::to_string),
             };
             state.borrow_mut().ports.insert(global.id, entry);
-            // Channel, mic and clip wiring all depend on ports of untracked
-            // stream nodes (EQ/mic/clip playback streams), so reconcile on
-            // every port event - all three are idempotent no-ops until both
-            // ends exist. A clip's ports arrive here a few milliseconds after
-            // it was started, and this is where it gets connected.
+            // Channel and mic wiring both depend on ports of untracked
+            // stream nodes (EQ/mic playback streams), so reconcile on every
+            // port event - both are idempotent no-ops until both ends exist.
             ensure_all_links(state);
             ensure_mic_links(state);
-            ensure_clip_links(state);
         }
         ObjectType::Link => {
             let Some(props) = global.props else { return };
@@ -420,11 +417,6 @@ pub(super) fn build_mic_streams(state: &Rc<RefCell<State>>) {
             let old = {
                 let mut s = state.borrow_mut();
                 s.mic_links.clear();
-                // A fresh chain starts un-ducked. If a clip is playing right
-                // now (a device change mid-clip), that would pop the mic back
-                // to full level under it - so re-apply what the soundboard
-                // last asked for.
-                streams.params.set_duck(s.mic_duck.0);
                 s.mic_streams.replace(streams)
             };
             drop(old);

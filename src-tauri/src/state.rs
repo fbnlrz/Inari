@@ -6,7 +6,6 @@ use crate::audio::backend::AudioBackend;
 use crate::headset::HeadsetManager;
 use crate::mixer::state::MixerState;
 use crate::mouse::MouseManager;
-use crate::soundboard::SoundboardManager;
 
 /// Application state managed by Tauri and shared across commands and the tray.
 pub struct AppState {
@@ -18,8 +17,6 @@ pub struct AppState {
     pub headset: Arc<HeadsetManager>,
     /// SteelSeries mouse (Aerox 9 Wireless).
     pub mouse: Arc<MouseManager>,
-    /// Soundboard library and playback bookkeeping.
-    pub soundboard: Arc<SoundboardManager>,
 }
 
 impl AppState {
@@ -70,7 +67,6 @@ impl AppState {
             mixer: Mutex::new(mixer),
             headset: HeadsetManager::new(),
             mouse: MouseManager::new(),
-            soundboard: SoundboardManager::new(),
         }
     }
 

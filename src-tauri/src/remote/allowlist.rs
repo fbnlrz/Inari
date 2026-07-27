@@ -232,29 +232,6 @@ sync_table! {
     headset_timer_toggle => |app, _| ok(commands::headset::headset_timer_toggle(app.state())?),
     headset_timer_reset => |app, _| ok(commands::headset::headset_timer_reset(app.state())?),
 
-    // -- soundboard --------------------------------------------------------
-    // Firing a clip from the tablet is the point: the phone in your hand is
-    // where a soundboard belongs. It is safe here for the same reason the
-    // media transport is - no parameter a path could travel through. The clip
-    // id was minted by the backend and only ever selects a library entry;
-    // `soundboard_add_clip`, which does take a path, is deliberately absent,
-    // and so are the other library edits (a mis-tap must not rename or delete
-    // someone's clip).
-    soundboard_clips => |app, _| ok(commands::soundboard::soundboard_clips(app.state())?),
-    soundboard_status => |app, _| ok(commands::soundboard::soundboard_status(app.state())?),
-    soundboard_duck => |app, _| ok(commands::soundboard::soundboard_duck(app.state())?),
-    // What a button sends: the stop-or-take-over decision is made in the
-    // backend, because as two round trips over the WebSocket it is a race.
-    soundboard_toggle => |app, a| ok(commands::soundboard::soundboard_toggle(
-        app.state(), a.get("id")?, a.get("targets").unwrap_or(None))?),
-    soundboard_play => |app, a| ok(commands::soundboard::soundboard_play(
-        app.state(), a.get("id")?, a.get("targets").unwrap_or(None))?),
-    soundboard_stop_all => |app, _| ok(commands::soundboard::soundboard_stop_all(app.state())?),
-    // Whether the mic dips while a clip plays is an operating decision, not a
-    // structural one, and it is exactly the thing you reach for mid-call.
-    soundboard_set_duck => |app, a| ok(commands::soundboard::soundboard_set_duck(
-        app.state(), a.get("enabled")?, a.get("attenuation_db")?)?),
-
     // -- profiles ----------------------------------------------------------
     // Switching between saved profiles only. `create_blank_profile` and
     // `delete_profile` are structural and stay off the remote.
@@ -299,12 +276,7 @@ pub fn is_read(cmd: &str) -> bool {
         || cmd.starts_with("list_")
         || matches!(
             cmd,
-            "headset_eq_presets"
-                | "headset_oled_modes"
-                | "headset_oled_clips"
-                | "soundboard_clips"
-                | "soundboard_status"
-                | "soundboard_duck"
+            "headset_eq_presets" | "headset_oled_modes" | "headset_oled_clips"
         )
 }
 
@@ -349,7 +321,6 @@ mod tests {
         ("import_eq_file", "takes a filesystem path"),
         ("export_channel_eq_to_file", "writes to a filesystem path"),
         ("headset_oled_media", "reads a filesystem path"),
-        ("soundboard_add_clip", "takes a filesystem path"),
         ("open_url", "spawns a process"),
         ("open_log_dir", "spawns a process"),
         ("set_autostart", "changes what runs at login"),
@@ -391,9 +362,6 @@ mod tests {
             "headset_set_eq_bands",
             "headset_oled_clip",
             "load_profile",
-            "soundboard_toggle",
-            "soundboard_play",
-            "soundboard_stop_all",
         ] {
             assert!(is_allowed(cmd), "{cmd} is in scope but denied");
         }
@@ -465,8 +433,6 @@ mod tests {
         assert!(is_read("get_virtual_devices"));
         assert!(is_read("list_profiles"));
         assert!(is_read("headset_eq_presets"));
-        assert!(is_read("soundboard_clips"), "it only lists the library");
-        assert!(!is_read("soundboard_play"), "it makes sound");
         assert!(!is_read("set_channel_volume"));
         assert!(!is_read("headset_oled_status"), "it draws on the display");
     }
@@ -549,13 +515,7 @@ mod frontend_contract {
             "set_device_label_style", "get_default_devices", "set_default_output",
             "set_default_input", "set_onboarded",
             // take a filesystem path
-            "import_eq_file", "export_channel_eq_to_file", "soundboard_add_clip",
-            // the file dialog that goes with adding a clip is desktop-only,
-            // so the list of formats it filters on is too
-            "soundboard_formats",
-            // library edits: the remote fires clips, it does not curate them
-            "soundboard_remove_clip", "soundboard_rename_clip",
-            "soundboard_set_clip_volume",
+            "import_eq_file", "export_channel_eq_to_file",
             // spawn a process / write system config
             "headset_set_notify_mirror", "headset_set_alsa_headroom",
             // the desktop instance owns the audio graph's lifetime

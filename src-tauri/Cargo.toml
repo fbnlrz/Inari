@@ -41,13 +41,6 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 # Verify the downloaded .deb against the release's SHA256SUMS before handing it
 # to `pkexec apt-get` - the one place we run attacker-reachable bytes as root.
 sha2 = "0.10"
-# Soundboard clips: WAV and FLAC decode in-process, because the two formats a
-# user's own recordings actually arrive in must play on a machine without
-# ffmpeg. Both crates are pure Rust parsers with no system dependency; the
-# compressed formats (mp3, ogg, m4a) still go through the optional system
-# ffmpeg, exactly like OLED video does.
-hound = "3"
-claxon = "0.4"
 # 0.8.0 on crates.io predates PipeWire 1.6 headers (libspa bindgen breaks);
 # git main carries the header fixes. v0_3_49 gates Buffer::requested().
 pipewire = { git = "https://gitlab.freedesktop.org/pipewire/pipewire-rs", rev = "v0.10.0", features = ["v0_3_49"] }

@@ -13,5 +13,4 @@ pub mod profiles;
 pub mod remote;
 pub mod routing;
 pub mod settings;
-pub mod soundboard;
 pub mod update;

@@ -7,7 +7,6 @@ mod mixer;
 mod mouse;
 mod persistence;
 mod remote;
-mod soundboard;
 mod state;
 
 use std::collections::HashMap;
@@ -280,18 +279,6 @@ pub fn run() {
             commands::media::media_next,
             commands::media::media_previous,
             commands::media::media_seek,
-            commands::soundboard::soundboard_clips,
-            commands::soundboard::soundboard_formats,
-            commands::soundboard::soundboard_add_clip,
-            commands::soundboard::soundboard_remove_clip,
-            commands::soundboard::soundboard_rename_clip,
-            commands::soundboard::soundboard_set_clip_volume,
-            commands::soundboard::soundboard_toggle,
-            commands::soundboard::soundboard_play,
-            commands::soundboard::soundboard_stop_all,
-            commands::soundboard::soundboard_duck,
-            commands::soundboard::soundboard_set_duck,
-            commands::soundboard::soundboard_status,
             commands::update::check_update,
             commands::update::apply_update,
             commands::update::restart_app,

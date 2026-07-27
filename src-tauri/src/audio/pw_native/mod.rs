@@ -5,7 +5,6 @@
 //!
 //! Extras over the pactl backend: real per-sink level metering (`levels`).
 
-mod clip;
 mod dsp;
 mod eq;
 mod eq_chain;
@@ -367,26 +366,6 @@ impl AudioBackend for PipeWireBackend {
     fn set_default_input(&self, name: &str) -> Result<(), SinkError> {
         let name = name.to_string();
         self.request(|reply| Cmd::SetDefault { input: true, name, reply })
-    }
-
-    fn play_clip_supported(&self) -> bool {
-        true
-    }
-
-    fn play_clip(&self, clip: crate::audio::types::ClipPcm) -> Result<(), SinkError> {
-        self.request(|reply| Cmd::PlayClip { clip, reply })
-    }
-
-    fn stop_clip(&self, id: u64) -> Result<(), SinkError> {
-        self.request(|reply| Cmd::StopClip { id, reply })
-    }
-
-    fn stop_all_clips(&self) -> Result<(), SinkError> {
-        self.request(|reply| Cmd::StopAllClips { reply })
-    }
-
-    fn set_mic_duck(&self, factor: f32) -> Result<(), SinkError> {
-        self.request(|reply| Cmd::SetMicDuck { factor, reply })
     }
 }
 
