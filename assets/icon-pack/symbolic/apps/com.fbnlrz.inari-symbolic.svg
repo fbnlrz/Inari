@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 44 44">
+  <g fill="#bebebe">
+    <!-- kasagi (swept top) -->
+    <path d="M4 11 Q22 5 40 11 L40 16 Q22 22 4 16 Z"/>
+    <!-- nuki (lower crossbar) -->
+    <path d="M9 23 L35 23 L35 28 L9 28 Z"/>
+    <!-- gakuzuka -->
+    <rect x="20.5" y="16" width="3" height="8"/>
+    <!-- pillars -->
+    <path d="M12 17 L18 17 L19.5 38 L10.5 38 Z"/>
+    <path d="M32 17 L26 17 L24.5 38 L33.5 38 Z"/>
+  </g>
+</svg>
