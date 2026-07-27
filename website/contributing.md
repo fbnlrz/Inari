@@ -1,3 +1,8 @@
+---
+title: Contributing
+description: How to build Inari, which checks have to pass, and what to include when contributing support for a new SteelSeries device.
+---
+
 # Contributing
 
 Contributions are welcome — bug fixes, new device support and docs. Inari is a

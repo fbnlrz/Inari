@@ -1,3 +1,8 @@
+---
+title: Protocols
+description: How Inari finds and talks to SteelSeries devices over /dev/hidraw — report formats, the OLED feature report and what to check when adding a device.
+---
+
 # Protocols (for contributors)
 
 Inari talks to SteelSeries devices by writing HID reports to `/dev/hidraw*`
@@ -21,8 +26,14 @@ The protocols were learned and cross-checked from
 
 ## Arctis Nova Pro Wireless
 
-- Vendor control is on **USB interface 4**; output reports are report id `0x06`,
-  zero-padded to 64 bytes. Replies are tagged `0x06`, unsolicited events `0x07`.
+- The base station exposes several HID interfaces. Inari does **not** pick one
+  by interface number — it walks `/sys/class/hidraw` and takes the node whose
+  `report_descriptor` starts with the vendor usage page `06 c0 ff`
+  (`Usage Page (0xFFC0)`). That is what separates the control/OLED collection
+  from the consumer/media-key one. See `VENDOR_USAGE_PAGE` and `find_device()`
+  in `headset/hidraw.rs`.
+- Output reports are report id `0x06`, zero-padded to 64 bytes. Replies are
+  tagged `0x06`, unsolicited events `0x07`.
 - Status is queried with `06 b0`; the reply frame carries battery, ANC, mic,
   power and wireless fields at fixed byte offsets.
 - Commands set sidetone, mic volume/LED, ANC/transparency, auto-off, gain,
@@ -49,7 +60,10 @@ The protocols were learned and cross-checked from
 
 ## Adding a device
 
-1. Confirm the USB `Vendor:Product` id and which interface carries control.
+1. Confirm the USB `Vendor:Product` id, then work out how to recognise the
+   control node — a distinctive report-descriptor prefix if the device exposes
+   several HID collections (as the Nova Pro does), or the product id alone if it
+   exposes only one (as the older Arctis Pro does).
 2. Find or capture the command set (existing tools above, or USBPcap/Wireshark).
 3. Add a protocol module mirroring the existing ones, plumb it through a store
    and a presence-aware screen.

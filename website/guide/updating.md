@@ -1,3 +1,8 @@
+---
+title: Updating
+description: How Inari's in-app updater works, when the one-click self-update is offered, and how to update from the command line.
+---
+
 # Updating
 
 ## In-app updates

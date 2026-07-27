@@ -1,3 +1,8 @@
+---
+title: Building from source
+description: Build and install Inari with install.sh, or by hand with the Debian/Ubuntu dependency list, plus the dev-server commands.
+---
+
 # Building from source
 
 Works on any distro. The `install.sh` script handles dependencies, builds a
@@ -34,6 +39,7 @@ npm run tauri dev      # run
 npm run tauri build    # package
 ```
 
-Config lives in `~/.config/inari` as plain JSON. Contributions welcome — the
+Config lives in `~/.config/inari` (see
+[Configuration & files](/reference/configuration)). Contributions welcome — the
 repo is a fork of [NC1107/sink](https://github.com/NC1107/sink); all the
 original PipeWire audio-mixing work is by [@NC1107](https://github.com/NC1107).
