@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 Questions & help
+    url: https://github.com/fbnlrz/Inari/discussions
+    about: Usage questions, setup help and general discussion — please use Discussions, not issues.
+  - name: 📖 Documentation
+    url: https://fbnlrz.github.io/Inari/
+    about: Install, usage, troubleshooting and reference docs.

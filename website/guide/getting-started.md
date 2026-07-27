@@ -63,7 +63,8 @@ chmod +x Inari_*_amd64.AppImage
 
 - [Building from source](/guide/building)
 - [Updating](/guide/updating)
-- [SteelSeries devices](/guide/devices)
+- [SteelSeries devices](/features/headset)
+- [Supported hardware](/reference/hardware)
 
 Config lives in `~/.config/inari` as plain JSON. Coming from the upstream Sink?
 Run `./migrate-to-inari.sh` once to move your existing `~/.config/sink` over.
