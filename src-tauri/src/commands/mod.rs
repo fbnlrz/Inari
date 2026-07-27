@@ -9,6 +9,7 @@ pub mod hotkeys;
 pub mod mic;
 pub mod mouse;
 pub mod profiles;
+pub mod remote;
 pub mod routing;
 pub mod settings;
 pub mod update;

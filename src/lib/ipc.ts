@@ -11,7 +11,7 @@
  * `tsc` never saw it. A Rust test pins this union to the actual
  * `generate_handler!` list, so drift fails the build instead of the app.
  */
-import { invoke as tauriInvoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { listen as tauriListen } from "@tauri-apps/api/event";
 
 /** Every command registered in src-tauri/src/lib.rs. Keep sorted. */
@@ -41,6 +41,8 @@ export type Command =
   | "get_mouse_status"
   | "get_output_devices"
   | "get_prefs"
+  | "get_remote_pairing"
+  | "get_remote_status"
   | "get_resolved_outputs"
   | "get_seen_apps"
   | "get_virtual_devices"
@@ -100,6 +102,7 @@ export type Command =
   | "mouse_set_zone_color"
   | "open_log_dir"
   | "open_url"
+  | "regenerate_remote_token"
   | "remove_bus"
   | "remove_channel"
   | "rename_app"
@@ -134,6 +137,8 @@ export type Command =
   | "set_monitor"
   | "set_onboarded"
   | "set_profile_trigger"
+  | "set_remote_bind"
+  | "set_remote_enabled"
   | "set_start_minimized"
   | "teardown_virtual_devices"
   | "toggle_channel_mute";
@@ -157,6 +162,12 @@ export interface Transport {
   call<T>(cmd: Command, args?: Args): Promise<T>;
   /** Resolves once subscribed; call the result to stop listening. */
   subscribe<T>(event: EventName, onPayload: (payload: T) => void): Promise<Unsubscribe>;
+  /**
+   * Browser-loadable URL for a file on the host machine (app icons are the
+   * only use). The asset protocol resolves only inside the Tauri webview, so
+   * the remote client has to fetch the same file over HTTP instead.
+   */
+  assetUrl(path: string): string;
 }
 
 /**
@@ -168,6 +179,7 @@ export const tauriTransport: Transport = {
   call: <T,>(cmd: Command, args?: Args) => tauriInvoke<T>(cmd, args),
   subscribe: <T,>(event: EventName, onPayload: (payload: T) => void) =>
     tauriListen<T>(event, (e) => onPayload(e.payload)),
+  assetUrl: (path: string) => convertFileSrc(path),
 };
 
 let active: Transport = tauriTransport;
@@ -186,4 +198,8 @@ export function subscribe<T>(
   onPayload: (payload: T) => void,
 ): Promise<Unsubscribe> {
   return active.subscribe<T>(event, onPayload);
+}
+
+export function assetUrl(path: string): string {
+  return active.assetUrl(path);
 }

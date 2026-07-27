@@ -113,6 +113,48 @@ impl Hotkeys {
     }
 }
 
+/// Inari Remote: the LAN server that lets a tablet drive the mixer by touch.
+///
+/// Off out of the box, and the bind address is a decision the user makes
+/// rather than one we guess for them: the default is loopback, which serves
+/// nothing to the network until someone deliberately widens it. Opening a
+/// mixer to a Wi-Fi network must be an act, not a default.
+///
+/// The token is deliberately *not* here. `prefs.json` is handed to the webview
+/// wholesale by `get_prefs`, and the remote secret has no reason to travel
+/// there; it lives in its own 0600 file (see `remote::auth`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    /// The address to listen on. `127.0.0.1` reaches only this machine;
+    /// `0.0.0.0` reaches everyone on the network.
+    #[serde(default = "default_remote_address")]
+    pub address: String,
+    #[serde(default = "default_remote_port")]
+    pub port: u16,
+}
+
+fn default_remote_address() -> String {
+    "127.0.0.1".to_string()
+}
+
+/// Unregistered, and clear of the ports a desktop is likely to already be
+/// running something on.
+fn default_remote_port() -> u16 {
+    7684
+}
+
+impl Default for RemoteConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            address: default_remote_address(),
+            port: default_remote_port(),
+        }
+    }
+}
+
 /// App preferences, stored at `$XDG_CONFIG_HOME/inari/prefs.json`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Prefs {
@@ -146,6 +188,9 @@ pub struct Prefs {
     /// System-wide hotkeys (empty until the user assigns them).
     #[serde(default)]
     pub hotkeys: Hotkeys,
+    /// The tablet remote (off until the user turns it on).
+    #[serde(default)]
+    pub remote: RemoteConfig,
     /// Preferences a newer Inari added: kept verbatim so downgrading and
     /// changing one setting doesn't wipe all the others.
     #[serde(default, flatten)]
@@ -169,6 +214,7 @@ impl Default for Prefs {
             notify_duration_secs: default_notify_secs(),
             notify_scroll: NotifyScroll::default(),
             hotkeys: Hotkeys::default(),
+            remote: RemoteConfig::default(),
             extra: Extra::new(),
         }
     }
@@ -287,6 +333,35 @@ mod tests {
         h.set(HotkeyAction::ToggleWindow, Some("   ".into()));
         assert_eq!(h.get(HotkeyAction::ToggleWindow), None);
         assert_eq!(h, Hotkeys::default());
+    }
+
+    #[test]
+    fn the_remote_is_off_and_loopback_only_until_someone_says_otherwise() {
+        // Both halves matter: a prefs file written before the remote existed
+        // must not come back as "enabled", and it must not come back bound to
+        // every interface either.
+        for prefs in [Prefs::default(), parse(r#"{"onboarded":true}"#)] {
+            assert!(!prefs.remote.enabled);
+            assert_eq!(prefs.remote.address, "127.0.0.1");
+        }
+        // A file that only says "enabled" still gets the safe bind address.
+        let p = parse(r#"{"remote":{"enabled":true}}"#);
+        assert!(p.remote.enabled);
+        assert_eq!(p.remote.address, "127.0.0.1");
+        assert_eq!(p.remote.port, RemoteConfig::default().port);
+    }
+
+    #[test]
+    fn the_remote_settings_round_trip_through_the_file() {
+        let p = Prefs {
+            remote: RemoteConfig {
+                enabled: true,
+                address: "0.0.0.0".into(),
+                port: 9000,
+            },
+            ..Prefs::default()
+        };
+        assert_eq!(parse(&serde_json::to_string(&p).expect("serializes")).remote, p.remote);
     }
 
     #[test]

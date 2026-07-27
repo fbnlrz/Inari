@@ -6,6 +6,7 @@ mod headset;
 mod mixer;
 mod mouse;
 mod persistence;
+mod remote;
 mod state;
 
 use std::collections::HashMap;
@@ -147,6 +148,7 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(app_state)
         .manage(commands::hotkeys::HotkeyErrors::default())
+        .manage(remote::RemoteState::new())
         .invoke_handler(tauri::generate_handler![
             commands::devices::get_virtual_devices,
             commands::devices::get_app_streams,
@@ -265,6 +267,11 @@ pub fn run() {
             commands::mouse::mouse_set_sleep,
             commands::mouse::mouse_set_dim,
             commands::mouse::mouse_set_startup_lighting,
+            commands::remote::get_remote_status,
+            commands::remote::set_remote_enabled,
+            commands::remote::get_remote_pairing,
+            commands::remote::set_remote_bind,
+            commands::remote::regenerate_remote_token,
             commands::update::check_update,
             commands::update::apply_update,
             commands::update::restart_app,
@@ -299,13 +306,25 @@ pub fn run() {
                     let _ = window.show();
                 }
             }
+            // Inari Remote. The bridge is installed unconditionally - it costs
+            // nothing while nobody is connected - but the server only comes up
+            // if the user turned it on, and only where they told it to listen.
+            remote::bridge_events(app.handle());
+            let remote_config = app
+                .state::<AppState>()
+                .lock_mixer()
+                .map(|mixer| mixer.prefs.remote.clone())
+                .unwrap_or_default();
+            remote::apply_saved(app.handle(), &remote_config);
+            let remote_clients = app.state::<remote::RemoteState>().client_count();
+
             if let Some(levels) = levels {
                 // The OLED VU mode reads the same peak store as the UI meters.
                 app.state::<AppState>().headset.set_levels(levels.clone());
-                spawn_level_emitter(app.handle().clone(), levels);
+                spawn_level_emitter(app.handle().clone(), levels, remote_clients.clone());
             }
             if let Some(graph) = graph {
-                spawn_graph_emitter(app.handle().clone(), graph);
+                spawn_graph_emitter(app.handle().clone(), graph, remote_clients);
             }
             // Start the Arctis base-station supervisor (discovery, status
             // stream, OLED). No-op on machines without the headset.
@@ -375,7 +394,11 @@ fn spawn_oled_aux_feeder(handle: tauri::AppHandle) {
 /// UI refetches streams and devices when something actually happened instead
 /// of every 2s forever (TD-009). Native backend only - the pactl fallback has
 /// no graph to listen to and keeps polling.
-fn spawn_graph_emitter(handle: tauri::AppHandle, graph: Arc<GraphNotify>) {
+fn spawn_graph_emitter(
+    handle: tauri::AppHandle,
+    graph: Arc<GraphNotify>,
+    remote_clients: Arc<remote::Clients>,
+) {
     /// How long to sit idle before looking again. Only a safety net against a
     /// lost condvar wakeup - a quiet session costs one wakeup a minute.
     const IDLE_WAIT: Duration = Duration::from_secs(60);
@@ -400,7 +423,9 @@ fn spawn_graph_emitter(handle: tauri::AppHandle, graph: Arc<GraphNotify>) {
                 .get_webview_window("main")
                 .map(|w| w.is_visible().unwrap_or(true) && !w.is_minimized().unwrap_or(false))
                 .unwrap_or(true);
-            if !onscreen {
+            // A tablet on the LAN has no visibilitychange to refetch on, and
+            // it is being used precisely when the desktop window is hidden.
+            if !onscreen && !remote_clients.any() {
                 continue;
             }
             // No payload: the event says "the graph moved", the UI decides
@@ -415,7 +440,11 @@ fn spawn_graph_emitter(handle: tauri::AppHandle, graph: Arc<GraphNotify>) {
 
 /// Streams per-channel peak levels to the UI at 10 Hz as `levels` events.
 /// Peaks are drained (read-and-reset), so silence decays to zero.
-fn spawn_level_emitter(handle: tauri::AppHandle, levels: Arc<LevelStore>) {
+fn spawn_level_emitter(
+    handle: tauri::AppHandle,
+    levels: Arc<LevelStore>,
+    remote_clients: Arc<remote::Clients>,
+) {
     std::thread::spawn(move || {
         let mut prev_all_zero = false;
         loop {
@@ -427,7 +456,11 @@ fn spawn_level_emitter(handle: tauri::AppHandle, levels: Arc<LevelStore>) {
                 .get_webview_window("main")
                 .map(|w| w.is_visible().unwrap_or(true) && !w.is_minimized().unwrap_or(false))
                 .unwrap_or(true);
-            if !onscreen {
+            // ...unless a tablet is watching the meters, which is the whole
+            // point of the remote: the window is hidden while it is in use.
+            // The webview gets a wasted wakeup in that case; the alternative
+            // is meters that only work when nobody needs them.
+            if !onscreen && !remote_clients.any() {
                 // Force a fresh frame when the window returns.
                 prev_all_zero = false;
                 continue;

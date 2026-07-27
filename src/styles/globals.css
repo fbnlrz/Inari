@@ -2826,6 +2826,67 @@ input[type="range"]::-webkit-slider-thumb:hover { background: var(--accent-hover
 .hs-chip:disabled { opacity: 0.45; cursor: not-allowed; }
 
 /* ============================================================
+   Inari Remote (Settings › Remote) - pairing surface.
+   ============================================================ */
+/* The QR and its caption stack next to each other, so this row tops-aligns
+   instead of centring a 132px block against two lines of text. */
+.row.remote-pair {
+  align-items: flex-start;
+}
+.remote-qr {
+  flex: 0 0 132px;
+  width: 132px;
+  height: 132px;
+  padding: var(--sp-2);
+  border-radius: var(--r-lg);
+  border: 1px solid var(--border);
+  /* A camera needs light modules on a light quiet zone; this white is
+     functional rather than a theme colour, and `color` covers a QR that
+     draws itself in currentColor. */
+  background: #fff;
+  color: #000;
+}
+.remote-qr svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+/* The address is meant to be typed on the other device, so let it be copied -
+   the app sets `user-select: none` globally. */
+.remote-url {
+  margin-top: var(--sp-2);
+  font-size: var(--fs-meta);
+  color: var(--fg-secondary);
+  word-break: break-all;
+  user-select: text;
+}
+.remote-token {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-top: var(--sp-2);
+}
+.remote-token-value {
+  flex: 1;
+  min-width: 0;
+  padding: 5px var(--sp-2);
+  border-radius: var(--r-sm);
+  background: var(--bg-main);
+  border: 1px solid var(--border);
+  font-family: inherit;
+  font-size: var(--fs-meta);
+  color: var(--fg-primary);
+  word-break: break-all;
+  user-select: text;
+}
+/* Concealed state: the dots are decoration, not a value to select or read. */
+.remote-token-value.hidden {
+  color: var(--fg-muted);
+  letter-spacing: 2px;
+  user-select: none;
+}
+
+/* ============================================================
    Keyboard focus - the app is fully operable without a mouse, so
    every interactive surface has to show where focus is. Colours come
    from the tokens, so the ring follows whichever theme is active.
@@ -2835,7 +2896,11 @@ input[type="range"]::-webkit-slider-thumb:hover { background: var(--accent-hover
 .select:focus-visible,
 .strip-x:focus-visible,
 .hs-chip:focus-visible,
-.theme-swatch:focus-visible {
+.theme-swatch:focus-visible,
+/* Switches are borderless, so the UA default ring sits oddly on the pill -
+   use the app's own ring like every other control. */
+.toggle:focus-visible,
+.eqm-field input:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
