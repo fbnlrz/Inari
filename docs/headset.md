@@ -49,8 +49,9 @@ Inari needs read/write on the base station's `hidraw` node. The bundled rule
 grants this to the logged-in desktop user:
 
 ```bash
-sudo cp packaging/udev/50-sink-steelseries.rules /etc/udev/rules.d/
-sudo udevadm control --reload-rules && sudo udevadm trigger
+sudo install -Dm644 packaging/udev/60-inari.rules /usr/lib/udev/rules.d/60-inari.rules
+sudo udevadm control --reload-rules
+sudo udevadm trigger --action=add --subsystem-match=hidraw
 ```
 
 Re-plug the base station afterwards. The rule covers all SteelSeries devices
