@@ -1,6 +1,11 @@
 name: Dev
 
 on:
+  # All work happens on the dev/X.Y.Z branches the release workflow opens, so
+  # gating only on the PR to main leaves every commit unchecked until the very
+  # end. Check them as they land.
+  push:
+    branches: ["dev/**"]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -45,12 +50,62 @@ jobs:
             clang
 
       - run: npm ci
+      - run: npm run lint
       - run: npx tsc --noEmit
       - run: npm test
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
       - run: cargo test --manifest-path src-tauri/Cargo.toml
 
+  audit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      # Reads package-lock.json directly, so no install needed. `npm audit fix`
+      # is deliberately never run here: a red gate is a prompt to bump a
+      # dependency on purpose, not a licence for CI to rewrite the lockfile.
+      - name: Audit npm dependencies
+        run: npm audit --audit-level=high
+
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: stable
+
+      # cargo-audit is a from-source install (~1 min), so cache the binary. The
+      # advisory database is fetched fresh on every run regardless, so an older
+      # tool still sees today's advisories; bump the key suffix to rebuild it.
+      - uses: actions/cache@v4
+        id: audit-cache
+        with:
+          path: ~/.cargo/bin/cargo-audit
+          key: cargo-audit-${{ runner.os }}-v1
+
+      - name: Install cargo-audit
+        if: steps.audit-cache.outputs.cache-hit != 'true'
+        run: cargo install cargo-audit --locked
+
+      # Known blind spot: RustSec matches crates.io name+version pairs, and
+      # `pipewire` is pulled from a git rev (see src-tauri/Cargo.toml). Git
+      # dependencies have no crates.io version to match, so pipewire, libspa
+      # and libspa-sys are simply not covered by this gate - a clean run says
+      # nothing about them. Watch pipewire-rs upstream by hand.
+      #
+      # Warnings (unmaintained/unsound) do not fail the run: Tauri 2 still
+      # drags in the archived gtk-rs GTK3 bindings, which we cannot drop, and a
+      # permanently red job teaches everyone to ignore it. Vulnerabilities do.
+      - name: Audit Rust dependencies
+        run: cargo audit
+
   bundles:
+    # Packaging smoke test only on the PR to main (and on demand). A full
+    # tauri build on every dev/** commit costs ~10 min for a signal `check`
+    # already gives - the bundle step catches packaging faults, not code ones.
+    if: github.event_name != 'push'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7

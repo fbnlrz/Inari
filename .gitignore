@@ -4,5 +4,9 @@ target/
 src-tauri/gen/schemas/
 *.log
 
+# Local-only tool caches (eslint --cache, vitest --coverage)
+.eslintcache
+coverage/
+
 # Internal audit findings - local only, never committed
 technical_debt.md

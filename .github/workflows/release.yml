@@ -130,6 +130,7 @@ jobs:
       - name: Verify (never publish untested code)
         if: steps.ver.outputs.release == 'true'
         run: |
+          npm run lint
           npx tsc --noEmit
           npm test
           cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings

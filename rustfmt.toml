@@ -1,0 +1,11 @@
+# Stock rustfmt style, pinned. Without this the style edition follows whatever
+# the toolchain defaults to, so the same source can format differently on two
+# machines. Every non-default width was tried against the tree and made things
+# worse - the code is closest to plain defaults.
+#
+# Deliberately NOT gated in CI yet: this tree predates any formatter, and a
+# first `cargo fmt --all` rewrites ~50 of 77 files. That churn belongs in its
+# own commit, reviewed on its own, not smuggled in with a workflow change.
+# Once it has landed, drop this into the `check` job in dev.yml and release.yml:
+#   cargo fmt --all --manifest-path src-tauri/Cargo.toml -- --check
+style_edition = "2021"
