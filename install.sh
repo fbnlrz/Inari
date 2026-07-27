@@ -97,7 +97,8 @@ do_uninstall() {
   sudo rm -f "$PREFIX/bin/$APP_ID"
   sudo rm -f "$PREFIX/share/applications/$APP_ID.desktop"
   sudo rm -f "$PREFIX/share/icons/hicolor/512x512/apps/$APP_ID.png"
-  sudo rm -f /etc/udev/rules.d/50-sink-steelseries.rules
+  sudo rm -f /usr/lib/udev/rules.d/60-inari.rules
+  sudo rm -f /etc/udev/rules.d/50-sink-steelseries.rules  # legacy: pre-rename source installs
   sudo udevadm control --reload-rules 2>/dev/null || true
   systemctl --user disable --now inari.service 2>/dev/null || true
   bold "Uninstalled. Config left at ~/.config/inari (delete it manually if you want a clean slate)."
@@ -135,13 +136,15 @@ EOF
   [[ -f "$icon" ]] && sudo install -Dm644 "$icon" \
     "$PREFIX/share/icons/hicolor/512x512/apps/$APP_ID.png"
 
-  # Lets Inari talk to SteelSeries HID devices without root.
-  if [[ -f "$REPO_DIR/packaging/udev/50-sink-steelseries.rules" ]]; then
+  # Lets Inari talk to SteelSeries HID devices without root. The package owns its
+  # rule under /usr/lib/udev/rules.d/ (same path the .deb ships it to); the
+  # /etc/udev/rules.d/ tree is left free so an admin can drop in an override.
+  if [[ -f "$REPO_DIR/packaging/udev/60-inari.rules" ]]; then
     info "Installing udev rule for SteelSeries devices"
-    sudo install -Dm644 "$REPO_DIR/packaging/udev/50-sink-steelseries.rules" \
-      /etc/udev/rules.d/50-sink-steelseries.rules
+    sudo install -Dm644 "$REPO_DIR/packaging/udev/60-inari.rules" \
+      /usr/lib/udev/rules.d/60-inari.rules
     sudo udevadm control --reload-rules
-    sudo udevadm trigger
+    sudo udevadm trigger --action=add --subsystem-match=hidraw
   fi
 
   bold ""

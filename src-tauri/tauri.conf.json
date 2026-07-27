@@ -52,7 +52,11 @@
           "pulseaudio-utils",
           "pipewire-pulse",
           "wireplumber"
-        ]
+        ],
+        "files": {
+          "/usr/lib/udev/rules.d/60-inari.rules": "../packaging/udev/60-inari.rules"
+        },
+        "postInstallScript": "../packaging/deb/postinst"
       },
       "rpm": {
         "depends": [
@@ -60,7 +64,11 @@
           "pulseaudio-utils",
           "pipewire-pulseaudio",
           "wireplumber"
-        ]
+        ],
+        "files": {
+          "/usr/lib/udev/rules.d/60-inari.rules": "../packaging/udev/60-inari.rules"
+        },
+        "postInstallScript": "../packaging/deb/postinst"
       }
     },
     "icon": [

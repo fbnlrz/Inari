@@ -20,7 +20,7 @@ someone with the hardware being able to test — see
 
 ## Access & permissions
 
-The installer ships a udev rule (`50-sink-steelseries.rules`) that grants the
+The installer ships a udev rule (`60-inari.rules`) that grants the
 logged-in desktop user access to SteelSeries HID devices via `uaccess` — no root
 and no background daemon. Re-plug the device once after the first install so the
 rule applies.
