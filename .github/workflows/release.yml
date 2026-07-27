@@ -64,10 +64,11 @@ jobs:
       - name: Determine release
         # The release version is whatever is in the manifest
         # (src-tauri/tauri.conf.json). A push to main auto-publishes it as a
-        # stable vX.Y.Z the first time that version is seen (its tag doesn't
-        # exist yet); pushes that don't bump the version are a no-op. A manual
-        # dispatch re-publishes the current version (or an explicit override),
-        # replacing an existing release of the same tag.
+        # stable vX.Y.Z the first time that version is seen — but only if actual
+        # app source changed since the last release. Docs/website/meta-only
+        # changes are skipped (they'd nag the in-app updater for an identical
+        # binary); the bumped version is simply claimed by the next code release.
+        # A manual dispatch always (re)publishes the current or overridden version.
         id: ver
         env:
           INPUT_VERSION: ${{ github.event.inputs.version }}
@@ -85,7 +86,18 @@ jobs:
             echo "::notice::$tag already released - nothing to do"
             release=false; force=false    # version unchanged since last release
           else
-            release=true; force=false     # new version on main -> auto-release
+            # New version. Only cut a release if real app source changed since
+            # the last release — a docs/website/.github-only bump is not worth an
+            # app release. These paths are never touched by the version bump.
+            last=$(git tag -l 'v*' --sort=-v:refname | head -1)
+            if [ -z "$last" ]; then
+              release=true; force=false   # first release ever
+            elif git diff --quiet "$last"..HEAD -- src src-tauri/src src-tauri/icons; then
+              echo "::notice::no app source changed since $last - skipping release (docs/meta only)"
+              release=false; force=false
+            else
+              release=true; force=false   # new version + app changes -> release
+            fi
           fi
           echo "version=$ver" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
