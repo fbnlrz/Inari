@@ -328,7 +328,8 @@ export function HeadsetScreen() {
                 title={p.description}
                 onClick={() => {
                   setActivePreset(p.name);
-                  void h.applyEqPreset(p.name).then(setEq);
+                  // null = the device rejected it (the store shows why).
+                  void h.applyEqPreset(p.name).then((bands) => bands && setEq(bands));
                 }}
               >
                 {p.name}

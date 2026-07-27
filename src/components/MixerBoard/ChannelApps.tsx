@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { useMixerStore } from "../../store/mixer";
 import type { VirtualSink } from "../../types";
 import { AppIcon } from "../AppList/AppIcon";
@@ -35,37 +36,43 @@ export function ChannelApps({
   const routeApp = useMixerStore((s) => s.routeApp);
   const setAppAssignment = useMixerStore((s) => s.setAppAssignment);
 
-  const entries: Entry[] = [];
-  const seenKeys = new Set<string>();
-  for (const s of appStreams) {
-    const key = `${s.match_prop}\0${s.match_value}`;
-    seenKeys.add(key);
-    entries.push({
-      key,
-      name: s.alias ?? s.app_name,
-      iconPath: s.icon_path,
-      checked: s.assigned_sink === channel.name,
-      active: s.active,
-      streamIndex: s.index,
-      matchProp: s.match_prop,
-      matchValue: s.match_value,
-    });
-  }
-  for (const a of seenApps) {
-    const key = `${a.match_prop}\0${a.match_value}`;
-    if (a.ignored || seenKeys.has(key)) continue;
-    entries.push({
-      key,
-      name: a.alias ?? a.display_name,
-      iconPath: a.icon_path,
-      checked: a.assigned_sink === channel.name,
-      active: false,
-      streamIndex: null,
-      matchProp: a.match_prop,
-      matchValue: a.match_value,
-    });
-  }
-  entries.sort((a, b) => Number(b.checked) - Number(a.checked) || a.name.localeCompare(b.name));
+  // The parent re-renders 10×/s off the levels event, so building this list
+  // eagerly would sort every known app ten times a second for a closed menu.
+  const entries = useMemo<Entry[]>(() => {
+    if (!open) return [];
+    const list: Entry[] = [];
+    const seenKeys = new Set<string>();
+    for (const s of appStreams) {
+      const key = `${s.match_prop}\0${s.match_value}`;
+      seenKeys.add(key);
+      list.push({
+        key,
+        name: s.alias ?? s.app_name,
+        iconPath: s.icon_path,
+        checked: s.assigned_sink === channel.name,
+        active: s.active,
+        streamIndex: s.index,
+        matchProp: s.match_prop,
+        matchValue: s.match_value,
+      });
+    }
+    for (const a of seenApps) {
+      const key = `${a.match_prop}\0${a.match_value}`;
+      if (a.ignored || seenKeys.has(key)) continue;
+      list.push({
+        key,
+        name: a.alias ?? a.display_name,
+        iconPath: a.icon_path,
+        checked: a.assigned_sink === channel.name,
+        active: false,
+        streamIndex: null,
+        matchProp: a.match_prop,
+        matchValue: a.match_value,
+      });
+    }
+    list.sort((a, b) => Number(b.checked) - Number(a.checked) || a.name.localeCompare(b.name));
+    return list;
+  }, [open, appStreams, seenApps, channel.name]);
 
   const toggle = (entry: Entry) => {
     if (entry.streamIndex !== null) {

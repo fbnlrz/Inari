@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
+import { createDebouncer } from "../lib/debounce";
 import type {
   AppStream,
   BusDef,
@@ -13,18 +14,13 @@ import type {
 
 // Faders fire on every pointer move; debounce backend calls per target so a
 // drag doesn't spawn a pactl subprocess per pixel. UI state updates
-// optimistically and immediately.
-const pendingInvokes = new Map<string, number>();
+// optimistically and immediately. Every call site passes its own handler,
+// since most also need to re-sync the state the failed write was guessing at.
+const debounce = createDebouncer(90, (_key, e) =>
+  useMixerStore.setState({ error: String(e) }),
+);
 function debouncedInvoke(key: string, cmd: string, args: Record<string, unknown>, onError: (e: unknown) => void) {
-  const existing = pendingInvokes.get(key);
-  if (existing !== undefined) clearTimeout(existing);
-  pendingInvokes.set(
-    key,
-    window.setTimeout(() => {
-      pendingInvokes.delete(key);
-      invoke(cmd, args).catch(onError);
-    }, 90),
-  );
+  debounce(key, () => invoke(cmd, args), { onError });
 }
 
 /** Per-sink [left, right] peak amplitudes (0-1), streamed from the native backend. */
@@ -241,9 +237,11 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
     try {
       await invoke("init_virtual_devices");
       set({ initialized: true, error: null });
+      // Leaving backendNative null on failure would gate native-only features
+      // on an unknown, so say it failed instead of swallowing it.
       void invoke<{ native: boolean }>("get_backend_info")
         .then((i) => set({ backendNative: i.native }))
-        .catch(() => {});
+        .catch((e: unknown) => set({ error: String(e) }));
       void invoke<{
         onboarded: boolean;
         balance_a: string | null;
@@ -254,7 +252,7 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
           set({ balanceA: p.balance_a, balanceB: p.balance_b, showBalance: p.show_balance });
           if (!p.onboarded) set({ showOnboarding: true });
         })
-        .catch(() => {});
+        .catch((e: unknown) => set({ error: String(e) }));
       await Promise.all([
         get().fetchChannels(),
         get().fetchAppStreams(),

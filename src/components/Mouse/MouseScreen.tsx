@@ -67,8 +67,17 @@ export function MouseScreen() {
 
       <div className="hs-body">
         {m.error && (
-          <div className="error-banner" style={{ borderRadius: 8 }}>
-            {m.error}
+          <div className="error-banner" role="alert" style={{ borderRadius: 8 }}>
+            <span className="error-banner-msg">{m.error}</span>
+            <button
+              type="button"
+              className="error-banner-x"
+              aria-label="Dismiss error"
+              title="Dismiss"
+              onClick={m.clearError}
+            >
+              <Ms name="close" style={{ fontSize: 16 }} />
+            </button>
           </div>
         )}
 

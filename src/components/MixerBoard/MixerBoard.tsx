@@ -167,11 +167,12 @@ export function MixerBoard() {
             ))}
           </MixGroup>
 
-          {backendNative !== false && <div className="group-div" />}
+          {backendNative === true && <div className="group-div" />}
 
-          {/* Mixes need the native backend; hide them on the pactl
-           * fallback instead of showing strips that can't work. */}
-          {backendNative !== false && (
+          {/* Mixes need the native backend; hide them on the pactl fallback -
+           * and while it is still unknown (null) - instead of showing strips
+           * that can't work. */}
+          {backendNative === true && (
           <MixGroup
             icon="podcasts"
             label="Mixes"
