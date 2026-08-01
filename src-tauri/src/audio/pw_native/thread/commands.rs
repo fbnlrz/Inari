@@ -89,14 +89,7 @@ pub(super) fn handle_cmd(state: &Rc<RefCell<State>>, registry: &RegistryRc, cmd:
             };
             drop(doomed);
             let mut s = state.borrow_mut();
-            s.desired.remove(&name);
-            s.eq_configs.remove(&name);
-            s.channel_links.remove(&name);
-            s.bus_links.retain(|(_, ch), _| ch != &name);
-            s.channel_outputs.remove(&name);
-            if let Some(levels) = &s.levels {
-                levels.release(&name);
-            }
+            s.forget_channel(&name);
             if let Some(proxy) = s.owned_sinks.remove(&name) {
                 match CORE.with(|c| c.borrow().clone()) {
                     Some(core) => {
@@ -126,6 +119,7 @@ pub(super) fn handle_cmd(state: &Rc<RefCell<State>>, registry: &RegistryRc, cmd:
                         crate::audio::types::resolve_identity(|key| n.props.get(key).cloned());
                     AppStream {
                         index: n.id,
+                        serial: n.serial,
                         app_name,
                         match_prop,
                         match_value,
@@ -205,7 +199,22 @@ pub(super) fn handle_cmd(state: &Rc<RefCell<State>>, registry: &RegistryRc, cmd:
         }
         Cmd::SetNodeVolumeById { id, percent, reply } => {
             let s = state.borrow();
-            let _ = reply.send(set_props(s.nodes.get(&id), Some(percent), None));
+            // Only ever an application stream. If the id has been recycled
+            // onto a sink or a device in the meantime, refusing is the whole
+            // point — writing an app's fader value onto the headset's output
+            // node is the failure this guards against.
+            let node = s
+                .nodes
+                .get(&id)
+                .filter(|n| n.media_class == STREAM_CLASS);
+            match node {
+                Some(_) => {
+                    let _ = reply.send(set_props(node, Some(percent), None));
+                }
+                None => {
+                    let _ = reply.send(Err(SinkError::UnknownSink(format!("stream {id}"))));
+                }
+            }
         }
         Cmd::CreateBus { name, label, reply } => {
             let mut s = state.borrow_mut();
@@ -385,6 +394,13 @@ pub(super) fn handle_cmd(state: &Rc<RefCell<State>>, registry: &RegistryRc, cmd:
                     let mut s = state.borrow_mut();
                     s.desired.remove(MIC_NODE);
                     s.mic_links.clear();
+                    // Hand the meter slot back too. Left registered it kept a
+                    // permanently silent "MIC" bar in the OLED's VU mode,
+                    // which divides the panel by the number of registered
+                    // names — so it also made every real channel shorter.
+                    if let Some(levels) = &s.levels {
+                        levels.release(MIC_NODE);
+                    }
                     (s.mic_streams.take(), s.mic_source.take())
                 };
                 drop(streams);

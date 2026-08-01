@@ -226,8 +226,17 @@ fn apply_blocking(requested: String) -> Result<(), String> {
     let expected = expected_sha(&String::from_utf8_lossy(&sums.stdout), &basename)
         .ok_or_else(|| format!("the release publishes no checksum for {basename}"))?;
 
-    let dir = std::env::temp_dir().join("inari-update");
-    std::fs::create_dir_all(&dir).map_err(|e| format!("temp dir: {e}"))?;
+    // A fresh directory this process alone owns, created exclusively.
+    //
+    // The old fixed `/tmp/inari-update` was predictable, and `/tmp` is
+    // world-writable with the sticky bit: another local user could create it
+    // first, at which point `create_dir_all` is a no-op, the `set_permissions`
+    // below fails into a `let _ =`, and the `.deb` sits somewhere they control
+    // between the checksum check and `pkexec apt-get` — a swap in that window
+    // installs their package as root. `create_dir` fails rather than adopting
+    // a directory that already exists, and the name carries the pid and a
+    // clock reading so a squatter cannot pre-create it.
+    let dir = unique_download_dir()?;
     let deb = dir.join("inari_latest_amd64.deb");
 
     let ok = Command::new("curl")
@@ -268,8 +277,8 @@ fn apply_blocking(requested: String) -> Result<(), String> {
     // install runs sandboxed (no "Download is performed unsandboxed" notice).
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755));
-        let _ = std::fs::set_permissions(&deb, std::fs::Permissions::from_mode(0o644));
+        std::fs::set_permissions(&deb, std::fs::Permissions::from_mode(0o644))
+            .map_err(|e| format!("could not prepare the package for install: {e}"))?;
     }
 
     // Install as root via polkit (a graphical password prompt). Running apt-get
@@ -287,6 +296,7 @@ fn apply_blocking(requested: String) -> Result<(), String> {
         .map_err(|e| format!("pkexec is required to install the update: {e}"))?;
 
     let _ = std::fs::remove_file(&deb);
+    let _ = std::fs::remove_dir(&dir);
 
     match status.code() {
         Some(0) => Ok(()),
@@ -343,17 +353,69 @@ pub fn restart_app(app: tauri::AppHandle) {
     }
     if let Ok(exe) = std::env::current_exe() {
         let script = relaunch_script(&exe.to_string_lossy());
-        // setsid detaches the relauncher into its own session so it survives our
-        // exit; fall back to a plain detached shell if setsid is unavailable.
-        let spawned = Command::new("setsid")
-            .args(["sh", "-c", &script])
-            .spawn()
-            .is_ok();
-        if !spawned {
-            let _ = Command::new("sh").args(["-c", &script]).spawn();
+        // A new session is not enough. Launched from the application menu, KDE
+        // wraps us in a transient `app-<id>@<hash>.service` with
+        // `KillMode=control-group` — verified on this machine for Dolphin,
+        // kitty and Chrome — and systemd sweeps the whole control group when
+        // the main process exits. `setsid` leaves the session but stays in
+        // that cgroup, so the relauncher was killed a second after being
+        // spawned and the app simply never came back. This is the same
+        // failure the 1.0.11 fix addressed for our own unit, reached by a
+        // different route.
+        //
+        // `systemd-run --user` puts the relauncher in a transient unit of its
+        // own, outside any cgroup that is about to be swept.
+        let detached = Command::new("systemd-run")
+            .args(["--user", "--collect", "--quiet", "--", "sh", "-c", &script])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        // Fallbacks for systems without systemd, where nothing sweeps a cgroup
+        // and leaving the session is sufficient.
+        if !detached {
+            let spawned = Command::new("setsid")
+                .args(["sh", "-c", &script])
+                .spawn()
+                .is_ok();
+            if !spawned {
+                let _ = Command::new("sh").args(["-c", &script]).spawn();
+            }
         }
     }
     app.exit(0);
+}
+
+/// A download directory this process created and therefore owns.
+///
+/// Exclusive creation is the point: if the path exists, someone else made it,
+/// and the right answer is to fail rather than to trust it.
+fn unique_download_dir() -> Result<std::path::PathBuf, String> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let base = std::env::temp_dir();
+    for attempt in 0..8 {
+        let dir = base.join(format!(
+            "inari-update-{}-{}",
+            std::process::id(),
+            stamp.wrapping_add(attempt)
+        ));
+        match std::fs::create_dir(&dir) {
+            Ok(()) => {
+                use std::os::unix::fs::PermissionsExt;
+                // 0755, not 0700: apt's `_apt` sandbox user has to read the
+                // package, and that is the whole reason this lives in a
+                // directory of its own rather than somewhere private.
+                let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755));
+                return Ok(dir);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(format!("temp dir: {e}")),
+        }
+    }
+    Err("could not create a private download directory".into())
 }
 
 /// Open a release page in the user's browser.

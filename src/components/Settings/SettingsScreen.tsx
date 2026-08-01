@@ -187,7 +187,7 @@ export function SettingsScreen() {
         {error && <div className="error-banner" style={{ borderRadius: 8 }}>{error}</div>}
 
         <div className="section-label">Appearance</div>
-        <div className="card" style={{ padding: "var(--sp-2)" }}>
+        <div className="card">
           <div className="row">
             <div className="ricon">
               <Ms name="palette" />
@@ -218,7 +218,7 @@ export function SettingsScreen() {
         </div>
 
         <div className="section-label">Preferences</div>
-        <div className="card" style={{ padding: "var(--sp-2)" }}>
+        <div className="card">
           {/* How this machine names its devices, and which of them the system
            * falls back to, is a property of the PC - the remote neither shows
            * it nor is allowed to change it. */}
@@ -323,7 +323,7 @@ export function SettingsScreen() {
         {isTauri && <RemoteSection />}
 
         <div className="section-label">About</div>
-        <div className="card" style={{ padding: "var(--sp-2)" }}>
+        <div className="card">
           <div className="row">
             <div className="ricon">
               <Ms name="cable" />

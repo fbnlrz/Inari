@@ -2,16 +2,30 @@ use log::{error, warn};
 use tauri::State;
 
 use crate::audio::types::{AppStream, OutputDevice, VirtualSink};
+use crate::mixer::state::StreamKey;
 use crate::state::AppState;
 
 /// How often the poll force-saves app history to refresh `last_seen` on disk.
 const SEEN_FLUSH_SECS: u64 = 15 * 60;
 
-/// Current channel state (volume/mute as tracked by MixerState).
+/// Current channel state, refreshed from the sinks themselves.
+///
+/// The strips used to be a pure cache that `adopt_live_channel_state` filled
+/// once during `init_virtual_devices` and nothing ever refreshed. Anything that
+/// changed a volume outside Inari — pavucontrol, `wpctl`, or WirePlumber
+/// restoring a remembered level when a device reappears — left the fader
+/// showing a number the sink had stopped using. On this machine that meant a
+/// channel sitting at 0% behind a fader reading 100%: silent, with nothing on
+/// screen to explain it. The same one-shot also lost the reading when the
+/// first Props event had not arrived yet at init, and there was no second try.
+///
+/// `sink_state` is an in-memory read of what the loop thread already mirrors,
+/// so this costs a channel round trip and no server traffic. A backend that
+/// cannot answer leaves the cached value alone, as at init.
 #[tauri::command]
 pub fn get_virtual_devices(state: State<'_, AppState>) -> Result<Vec<VirtualSink>, String> {
-    let mixer = state.lock_mixer()?;
-    Ok(mixer.channels.clone())
+    state.refresh_channel_state();
+    Ok(state.lock_mixer()?.channels.clone())
 }
 
 /// All running app audio streams.
@@ -82,7 +96,7 @@ pub fn get_app_streams(state: State<'_, AppState>) -> Result<Vec<AppStream>, Str
         let mut planned: Vec<(u32, String, String)> = Vec::new();
         if mixer.initialized {
             for stream in &streams {
-                if mixer.auto_routed.contains(&stream.index) {
+                if mixer.auto_routed.contains(&StreamKey::of(stream)) {
                     continue;
                 }
                 if let Some(target) = mixer
@@ -95,13 +109,15 @@ pub fn get_app_streams(state: State<'_, AppState>) -> Result<Vec<AppStream>, Str
                 }
                 // Marked handled once (before the move, so a concurrent poll
                 // can't re-plan it); manual re-routing then isn't fought.
-                mixer.auto_routed.insert(stream.index);
+                mixer.auto_routed.insert(StreamKey::of(stream));
             }
             // Forget streams that have gone away, so the ledger can't grow
-            // without bound and a recycled PipeWire index isn't mistaken for one
-            // we already handled (which would skip auto-routing a new stream).
-            let live: std::collections::HashSet<u32> = streams.iter().map(|s| s.index).collect();
-            mixer.auto_routed.retain(|i| live.contains(i));
+            // without bound. Keyed by serial this is now sound: an id that has
+            // been handed to a different stream carries a different serial, so
+            // the new stream is not mistaken for the old one.
+            let live: std::collections::HashSet<StreamKey> =
+                streams.iter().map(StreamKey::of).collect();
+            mixer.auto_routed.retain(|k| live.contains(k));
         }
 
         // User-chosen display names (in-memory read, cheap enough to keep here).
@@ -276,6 +292,8 @@ pub fn init_virtual_devices(
     if matches!(crate::persistence::profiles::list(), Ok(list) if list.is_empty()) {
         let mut mixer = state.lock_mixer()?;
         let default = crate::persistence::profiles::Profile {
+            version: Default::default(),
+            extra: Default::default(),
             name: "Default".to_string(),
             channels: mixer.channels.clone(),
             assignments: mixer.assignments.clone(),

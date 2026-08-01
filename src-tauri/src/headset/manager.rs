@@ -5,16 +5,16 @@
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use log::{info, warn};
 use tauri::{AppHandle, Emitter};
 
 use crate::audio::pw_native::levels::LevelStore;
-use crate::device::{Caps, DeviceEntry, HeadsetOps};
+use crate::device::{self, Caps, DeviceClass, DeviceEntry, HeadsetOps};
 use crate::persistence::prefs::{NotifyScroll, Prefs};
 
-use super::hidraw::{HidDevice, READ_POLL_INTERVAL};
+use super::hidraw::{HidDevice, HidReader, READ_POLL_INTERVAL};
 use super::media::OledFrame;
 use super::oled_controller::{self, AuxData, OledCommand, OledContent};
 use super::protocol::{self, HeadsetStatus};
@@ -23,6 +23,15 @@ use super::protocol::{self, HeadsetStatus};
 const EV_STATUS: &str = "headset-status";
 const EV_PRESENCE: &str = "headset-presence";
 const EV_CHATMIX: &str = "headset-chatmix";
+
+/// How long to wait between discovery sweeps when nothing is attached, and
+/// after a failed open.
+const RESCAN_INTERVAL: Duration = Duration::from_secs(3);
+/// How long a freshly opened node gets to answer the handshake before it is
+/// written off and the next candidate is tried. Three seconds is well past a
+/// healthy station's reply and short enough that walking two or three nodes
+/// still feels immediate.
+const PROOF_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Shared, thread-safe access to the base station.
 pub struct HeadsetManager {
@@ -310,23 +319,67 @@ impl HeadsetManager {
 
     /// Discovery/reconnect loop. Each successful connection runs the read loop
     /// until the device goes away, then falls back to polling for it again.
+    /// Wait for the device to say anything this protocol understands.
+    ///
+    /// Any input report would prove the node is alive, but not that it is the
+    /// *right* node — so this insists on a frame the generation's decoder
+    /// accepts. The data is folded into the live snapshot rather than thrown
+    /// away, so proving the link also populates the first status.
+    fn prove_alive(&self, reader: &mut HidReader, ops: &'static dyn HeadsetOps) -> bool {
+        let deadline = Instant::now() + PROOF_TIMEOUT;
+        let mut buf = [0u8; protocol::COMMAND_LEN];
+        while Instant::now() < deadline {
+            match reader.read_report(&mut buf, Duration::from_millis(200)) {
+                Ok(Some(n)) if n > 0 => {
+                    let decoded = self
+                        .status
+                        .lock()
+                        .map(|mut status| ops.apply_status_frame(&buf, &mut status))
+                        .unwrap_or(false);
+                    if decoded {
+                        return true;
+                    }
+                }
+                Ok(Some(_)) | Ok(None) => continue,
+                Err(_) => return false,
+            }
+        }
+        false
+    }
+
     fn supervise(self: Arc<Self>) {
+        // Which candidate to try next. A base station can expose more than one
+        // node matching the vendor collection, and only one of them answers;
+        // rotating means a silent one is skipped instead of retried forever.
+        let mut attempt: usize = 0;
         loop {
-            let writer = match HidDevice::discover() {
+            let candidates = device::scan_all(DeviceClass::Headset);
+            if candidates.is_empty() {
+                attempt = 0;
+                std::thread::sleep(RESCAN_INTERVAL);
+                continue;
+            }
+            let path = candidates[attempt % candidates.len()].clone();
+            attempt = attempt.wrapping_add(1);
+
+            let writer = match HidDevice::open(&path) {
                 Ok(w) => w,
-                Err(_) => {
-                    std::thread::sleep(Duration::from_secs(3));
+                Err(e) => {
+                    // Permission errors land here too, which is worth saying
+                    // out loud: without the udev rule the node exists and
+                    // cannot be opened, and the symptom is silence.
+                    warn!("headset open failed at {}: {e}", path.dev.display());
+                    std::thread::sleep(RESCAN_INTERVAL);
                     continue;
                 }
             };
-            let path = writer.device_path();
 
             // Open a second fd for blocking reads before we move the writer.
             let mut reader = match writer.open_reader() {
                 Ok(r) => r,
                 Err(e) => {
                     warn!("headset reader open failed: {e}");
-                    std::thread::sleep(Duration::from_secs(3));
+                    std::thread::sleep(RESCAN_INTERVAL);
                     continue;
                 }
             };
@@ -336,9 +389,36 @@ impl HeadsetManager {
             // test pins it). Bail out before touching state if one ever didn't.
             let Some(ops) = entry.ops else {
                 warn!("headset {} has no protocol ops; ignoring", entry.name);
-                std::thread::sleep(Duration::from_secs(3));
+                std::thread::sleep(RESCAN_INTERVAL);
                 continue;
             };
+
+            let writer = Arc::new(Mutex::new(writer));
+            if let Ok(mut slot) = self.writer.lock() {
+                *slot = Some(Arc::clone(&writer));
+            }
+
+            // Safe handshake: pull an initial snapshot (and, on Nova, enable
+            // the event stream). Never writes user settings.
+            let _ = self.send_all(&ops.init_safe());
+
+            // Prove the node actually talks before telling anyone it is
+            // connected. Opening succeeding proves only that a file exists —
+            // and announcing "connected" for a node that never answers is what
+            // left the UI showing an empty Headset tab until the user unplugged
+            // the station and restarted the app.
+            if !self.prove_alive(&mut reader, ops) {
+                warn!(
+                    "headset at {} opened but never answered; trying the next node",
+                    path.dev.display()
+                );
+                if let Ok(mut slot) = self.writer.lock() {
+                    *slot = None;
+                }
+                std::thread::sleep(Duration::from_secs(1));
+                continue;
+            }
+
             if let Ok(mut slot) = self.entry.lock() {
                 *slot = Some(entry);
             }
@@ -369,16 +449,13 @@ impl HeadsetManager {
                 }
             }
 
-            let writer = Arc::new(Mutex::new(writer));
-            if let Ok(mut slot) = self.writer.lock() {
-                *slot = Some(Arc::clone(&writer));
-            }
+            attempt = 0;
             self.emit_presence(true);
-            info!("headset connected: {} at {}", entry.name, path.dev.display());
-
-            // Safe handshake: pull an initial snapshot (and, on Nova, enable
-            // the event stream). Never writes user settings.
-            let _ = self.send_all(&ops.init_safe());
+            info!(
+                "headset connected: {} at {}",
+                entry.name,
+                path.dev.display()
+            );
 
             // Resume notification mirroring if the user left it on.
             if crate::persistence::notify_mirror::is_enabled() {

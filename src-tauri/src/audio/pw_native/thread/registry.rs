@@ -236,21 +236,36 @@ fn on_node(
             }
             let Some(pod) = param else { return };
             let parsed = pods::parse_props(pod);
-            let mut s = state_p.borrow_mut();
-            if let Some(entry) = s.nodes.get_mut(&node_id) {
-                if let Some(linear) = parsed.volume_linear {
-                    entry.volume_percent = pods::linear_to_percent(linear);
-                    // From here on the fields are readings, not placeholders -
-                    // `observed_state` may report them.
-                    entry.props_seen = true;
+            let mut changed = false;
+            {
+                let mut s = state_p.borrow_mut();
+                if let Some(entry) = s.nodes.get_mut(&node_id) {
+                    if let Some(linear) = parsed.volume_linear {
+                        let percent = pods::linear_to_percent(linear);
+                        changed |= entry.volume_percent != percent || !entry.props_seen;
+                        entry.volume_percent = percent;
+                        // From here on the fields are readings, not
+                        // placeholders - `observed_state` may report them.
+                        entry.props_seen = true;
+                    }
+                    if let Some(channels) = parsed.channels {
+                        entry.channels = channels;
+                    }
+                    if let Some(muted) = parsed.muted {
+                        changed |= entry.muted != muted || !entry.props_seen;
+                        entry.muted = muted;
+                        entry.props_seen = true;
+                    }
                 }
-                if let Some(channels) = parsed.channels {
-                    entry.channels = channels;
-                }
-                if let Some(muted) = parsed.muted {
-                    entry.muted = muted;
-                    entry.props_seen = true;
-                }
+            }
+            // Announce it, the way the info handler above already does for the
+            // fields it owns. Without this the loop thread knew the true
+            // volume and nothing else ever found out: a channel that
+            // WirePlumber restored to 0%, or that was changed in pavucontrol,
+            // stayed at whatever the strip last showed. The coalescing window
+            // absorbs the burst from a fader drag.
+            if changed {
+                notify_graph(&state_p);
             }
         })
         .register();

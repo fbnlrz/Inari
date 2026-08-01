@@ -3,6 +3,7 @@ use tauri::State;
 use crate::audio::types::is_virtual_sink;
 use crate::persistence::wireplumber;
 use crate::state::AppState;
+use crate::mixer::state::StreamKey;
 
 pub(crate) const MAX_VOLUME: u8 = 150;
 
@@ -16,11 +17,13 @@ pub(crate) const MAX_VOLUME: u8 = 150;
 pub fn route_app_to_channel(
     state: State<'_, AppState>,
     stream_index: u32,
+    serial: Option<u64>,
     sink_name: String,
 ) -> Result<(), String> {
     if !sink_name.is_empty() && !is_virtual_sink(&sink_name) {
         return Err(format!("unknown channel: {sink_name}"));
     }
+    let stream_index = resolve_stream(&state, stream_index, serial)?;
     state
         .backend
         .move_stream_to_sink(stream_index, &sink_name)
@@ -46,7 +49,7 @@ pub fn route_app_to_channel(
                 .set(&stream.match_prop, &stream.match_value, &sink_name);
         }
         // The user explicitly placed this stream; don't auto-route it again.
-        mixer.auto_routed.insert(stream_index);
+        mixer.auto_routed.insert(StreamKey::of(stream));
         (
             mixer.assignments.clone(),
             crate::commands::profiles::build_autosave(&mixer),
@@ -159,16 +162,44 @@ pub fn rename_app(
     aliases.save().map_err(|e| e.to_string())
 }
 
+/// Turn the stream the UI was looking at into the id it has *now*.
+///
+/// PipeWire recycles global ids hard, and both of these commands can arrive
+/// well after the UI read the list — `set_app_volume` is debounced by 90 ms,
+/// and browsers create and destroy a stream per media element. Holding the id
+/// across that gap means a write can land on whatever inherited the number.
+/// The serial never repeats, so it is what the UI passes and what gets
+/// resolved here, immediately before acting. A stream that has genuinely gone
+/// is an error rather than a write to a stranger.
+fn resolve_stream(
+    state: &AppState,
+    stream_index: u32,
+    serial: Option<u64>,
+) -> Result<u32, String> {
+    let Some(serial) = serial else {
+        // The pactl backend has no serials; nothing better is available.
+        return Ok(stream_index);
+    };
+    let streams = state.backend.list_app_streams().map_err(|e| e.to_string())?;
+    streams
+        .iter()
+        .find(|s| s.serial == Some(serial))
+        .map(|s| s.index)
+        .ok_or_else(|| "that stream has ended".to_string())
+}
+
 /// Set the volume of a single app stream (0-150%).
 #[tauri::command]
 pub fn set_app_volume(
     state: State<'_, AppState>,
     stream_index: u32,
+    serial: Option<u64>,
     volume: u8,
 ) -> Result<(), String> {
+    let index = resolve_stream(&state, stream_index, serial)?;
     state
         .backend
-        .set_app_volume(stream_index, volume.min(MAX_VOLUME))
+        .set_app_volume(index, volume.min(MAX_VOLUME))
         .map_err(|e| e.to_string())
 }
 

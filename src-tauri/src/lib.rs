@@ -25,6 +25,22 @@ use audio::pw_native::levels::LevelStore;
 use audio::pw_native::{GraphCoalescer, GraphNotify, PipeWireBackend, GRAPH_MAX_WAIT, GRAPH_QUIET};
 use state::AppState;
 
+/// Bring the main window to the user, from wherever it currently is.
+///
+/// `show()` alone is a no-op for a window that is visible but minimised, and
+/// `set_focus()` on a minimised window does not restore it under KWin — it
+/// blinks the task-bar entry at best. Both call sites need the same three
+/// steps in the same order, and the tray's "Show Window" was missing the first
+/// one, so clicking it did nothing at all for a minimised window.
+fn reveal_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+
 /// Global level for the logger. Info by default: lifecycle events only, since
 /// the OLED draw loop (25 Hz) and the audio poll log at debug/trace and would
 /// otherwise churn through the rotating file in minutes. `RUST_LOG=debug`
@@ -136,11 +152,7 @@ pub fn run() {
             if args.iter().any(|a| a == "--minimized") {
                 return;
             }
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.unminimize();
-                let _ = window.show();
-                let _ = window.set_focus();
-            }
+            reveal_window(app);
         }))
         .plugin(log_plugin())
         .plugin(tauri_plugin_dialog::init())
@@ -229,7 +241,7 @@ pub fn run() {
             commands::headset::headset_set_gain_high,
             commands::headset::headset_set_wireless_range,
             commands::headset::headset_set_line_out,
-            commands::headset::headset_set_line_out_volumes,
+            commands::headset::headset_set_stream_mix,
             commands::headset::headset_set_eq_bands,
             commands::headset::headset_set_eq_preset,
             commands::headset::headset_eq_presets,
@@ -293,6 +305,11 @@ pub fn run() {
             commands::keyboard::keyboard_oled_test,
             commands::keyboard::keyboard_set_actuation,
             commands::keyboard::keyboard_set_key_actuation,
+            commands::keyboard::keyboard_set_rapid_trigger,
+            commands::keyboard::keyboard_set_protection_mode,
+            commands::keyboard::keyboard_set_rapid_tap,
+            commands::keyboard::keyboard_set_idle,
+            commands::keyboard::keyboard_set_power_saving,
             commands::keyboard::keyboard_select_profile,
             commands::keyboard::keyboard_send_raw,
             commands::update::check_update,
@@ -494,11 +511,15 @@ fn spawn_level_emitter(
                 prev_all_zero = false;
                 continue;
             }
+            // Own drain handle: the peaks are consumed on read, so sharing one
+            // with the keyboard's lighting and the OLED's VU meant this emitter
+            // reported whatever was left over since one of them last ticked.
+            let ui = levels.reader("ui");
             // The meter registry is dynamic (user-defined channels + mic).
             let payload: HashMap<String, [f32; 2]> = levels
                 .names()
                 .into_iter()
-                .map(|(name, slot)| (name, [levels.drain(slot, 0), levels.drain(slot, 1)]))
+                .map(|(name, slot)| (name, [levels.drain(ui, slot, 0), levels.drain(ui, slot, 1)]))
                 .collect();
             // Emit the first all-zero frame so the meters settle to zero, then
             // go quiet until sound returns instead of pushing silence at 10 Hz.
@@ -552,11 +573,10 @@ fn build_tray_menu(
 
     let show = MenuItem::with_id(app, "show", "Show Window", true, None::<&str>)?;
 
-    let mutes = app
-        .state::<AppState>()
-        .lock_mixer()
-        .map(|m| tray_mutes(&m))
-        .unwrap_or_default();
+    // The tray's check marks are a claim about the sinks, so read them first.
+    let state = app.state::<AppState>();
+    state.refresh_channel_state();
+    let mutes = state.lock_mixer().map(|m| tray_mutes(&m)).unwrap_or_default();
     let mute_items: Vec<CheckMenuItem<tauri::Wry>> = mutes
         .iter()
         .map(|row| {
@@ -686,12 +706,7 @@ fn build_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 return;
             }
             match id {
-                "show" => {
-                    if let Some(window) = app.get_webview_window("main") {
-                        let _ = window.show();
-                        let _ = window.set_focus();
-                    }
-                }
+                "show" => reveal_window(app),
                 "quit" => {
                     // Clean up our virtual sinks before exiting. Best-effort:
                     // log failures but never block quitting.

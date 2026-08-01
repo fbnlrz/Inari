@@ -55,6 +55,30 @@
   --fg-primary: #ededef;
   --fg-secondary: #ababb0;
   --fg-muted: #848490;
+  /* Rules and ticks, deliberately dimmer than any text. */
+  --line-muted: #6b6b76;
+
+  /* Channel vs. mix colour coding. These used to be raw hex in the rules
+     themselves, so switching theme moved the accent while the strips stayed
+     violet — the colour then said something the rest of the window did not. */
+  --channel-line: #2e2e55;
+  --channel-tint: rgba(85, 87, 224, 0.06);
+  --mix-line: #46350f;
+  --mix-tint: rgba(245, 158, 11, 0.05);
+  --mix-icon-tint: rgba(245, 158, 11, 0.12);
+
+  /* Semantic tints. The colours themselves are --danger / --online, but the
+     translucent variants were spelled out as raw rgba in a dozen rules, which
+     is why an error banner stayed red-on-red no matter which theme was
+     picked. */
+  --danger-tint: rgba(239, 68, 68, 0.12);
+  --danger-tint-strong: rgba(239, 68, 68, 0.2);
+  --danger-line: rgba(239, 68, 68, 0.35);
+  --danger-ring: rgba(239, 68, 68, 0.16);
+  --danger-glow: rgba(239, 68, 68, 0.7);
+  --danger-fg: #fca5a5;
+  --online-tint: rgba(34, 197, 94, 0.14);
+  --online-ring: rgba(34, 197, 94, 0.16);
 
   /* Accent (indigo) */
   --accent: #5557e0;
@@ -80,11 +104,24 @@
 
   /* Type */
   --font-sans: "Fira Code", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  --fs-h2: 22px;
-  --fs-title: 14px;
+  /* Type scale.
+     Five sizes were defined and, in practice, two carried the app: --fs-meta
+     (35 rules) and --fs-caption (37). Everything between a screen title and a
+     list row rested on a single pixel of difference, and .hs-card-head h2 came
+     out *smaller* than the rows beneath it. Spread at the top, merged in the
+     middle, and given names at the bottom where a dozen rules had been picking
+     their own 9–11px. */
+  --fs-h2: 24px;
+  /* Card and dialog headings. */
+  --fs-h3: 17px;
+  /* Row titles and other primary text. --fs-title (14px) used to sit here as a
+     near-duplicate; it now resolves to the same value. */
   --fs-body: 15px;
+  --fs-title: var(--fs-body);
   --fs-meta: 13px;
   --fs-caption: 12px;
+  --fs-micro: 10px;
+  --fs-nano: 9px;
 
   /* Spacing */
   --sp-1: 4px;
@@ -203,11 +240,11 @@ body,
   height: 7px;
   border-radius: 50%;
   background: var(--online);
-  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.16);
+  box-shadow: 0 0 0 3px var(--online-ring);
 }
 .hb-status.err .dot {
   background: var(--danger);
-  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.16);
+  box-shadow: 0 0 0 3px var(--danger-ring);
 }
 
 /* window controls */
@@ -281,7 +318,7 @@ body,
   font-size: 21px;
 }
 .nav-item .nav-label {
-  font-size: 9.5px;
+  font-size: var(--fs-nano);
   letter-spacing: 0.2px;
   font-weight: 500;
 }
@@ -321,11 +358,18 @@ body,
 .content.narrow {
   --content-w: 720px;
 }
+/* Device screens are neither: they carry pictures of hardware — a key map, an
+   OLED preview, ten EQ faders — next to their settings rows, and 720px squeezes
+   those while 900px still keeps a row's control near its label. */
+.content.device {
+  --content-w: 980px;
+}
 .screen-head {
   flex: 0 0 auto;
   padding: var(--sp-6) var(--sp-7) var(--sp-4);
   padding-inline: max(var(--sp-7), calc((100% - var(--content-w)) / 2));
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-end;
   gap: var(--sp-4);
   border-bottom: 1px solid var(--border);
@@ -428,7 +472,7 @@ body,
   color: var(--fg-muted);
 }
 .group-head .gh-label {
-  font-size: 10.5px;
+  font-size: var(--fs-micro);
   font-weight: 700;
   letter-spacing: 1px;
   text-transform: uppercase;
@@ -530,7 +574,11 @@ body,
 .strip-x .ms {
   font-size: 14px;
 }
-/* drag-reorder grip: mirrors the delete ×, top-left */
+/* drag-reorder grip: mirrors the delete ×, top-left.
+   Unlike the ×, this one keeps a resting visibility. Deleting a strip is
+   something you go looking for; that the strips can be reordered at all is
+   something you have to be told, and starting fully transparent meant only
+   people who happened to sweep the corner ever found out. */
 .strip-grip {
   position: absolute;
   top: 7px;
@@ -544,7 +592,7 @@ body,
   display: grid;
   place-items: center;
   cursor: grab;
-  opacity: 0;
+  opacity: 0.28;
   transition: opacity 0.12s, background 0.12s, color 0.12s;
 }
 .strip:hover .strip-grip {
@@ -749,7 +797,7 @@ body,
   left: 0;
   right: 0;
   height: 1px;
-  background: var(--fg-muted);
+  background: var(--line-muted);
   opacity: 0.5;
 }
 
@@ -777,11 +825,11 @@ body,
 .vu-clip.on {
   background: var(--danger);
   border-color: var(--danger);
-  box-shadow: 0 0 6px rgba(239, 68, 68, 0.7);
+  box-shadow: 0 0 6px var(--danger-glow);
 }
 .vu-db {
   flex: 0 0 auto;
-  font-size: 9px;
+  font-size: var(--fs-nano);
   color: var(--fg-muted);
   font-variant-numeric: tabular-nums;
   line-height: 1;
@@ -889,10 +937,19 @@ body,
 .section-label:first-child {
   margin-top: 0;
 }
-.card {
+/* Cards.
+   Two systems grew here: `.card` (settings, mic, app list) and `.hs-card`
+   (device screens). Both wrap the same `.row`, but with different padding and
+   different corners, so the same row began 22px from the card edge on one
+   screen and 30px on another and the corners differed by 2px. The shared
+   look now lives in one place; `.hs-card` keeps only what genuinely differs,
+   which is that it stacks its children with a gap rather than relying on
+   `.row + .row`. */
+.card,
+.hs-card {
   background: var(--bg-surface);
   border: 1px solid var(--border);
-  border-radius: var(--r-xl);
+  border-radius: var(--r-lg);
   padding: var(--sp-2);
 }
 .row {
@@ -1019,7 +1076,7 @@ body,
   background: var(--bg-active);
 }
 .icon-btn.danger:hover {
-  background: rgba(239, 68, 68, 0.16);
+  background: var(--danger-ring);
   color: var(--danger);
 }
 .row .rtrail {
@@ -1073,19 +1130,29 @@ body,
   align-items: center;
   gap: var(--sp-3);
 }
-.hs-track {
+.hs-track,
+.media-seek-track {
   /* Without this a touch drag becomes a scroll gesture: the browser
      cancels the pointer stream, so the tablet could only tap a value,
-     never slide to one. */
+     never slide to one. Same reason as .fader-track and .bal-track. */
   touch-action: none;
   position: relative;
-  flex: 1;
   height: 6px;
   border-radius: var(--r-pill);
   background: var(--bg-active);
   cursor: pointer;
 }
-.hs-fill {
+/* The one genuine difference between the two: the headset's tracks sit in a
+   row next to a label and a value and have to take the space that is left;
+   the seek bar owns its whole line. */
+.hs-track {
+  flex: 1;
+}
+/* The media seek bar was a second, byte-for-byte identical copy of these
+   three rules — the kind of duplicate that stays identical right up until
+   someone fixes one of them. */
+.hs-fill,
+.media-seek-fill {
   position: absolute;
   left: 0;
   top: 0;
@@ -1093,7 +1160,8 @@ body,
   background: var(--accent);
   border-radius: var(--r-pill);
 }
-.hs-cap {
+.hs-cap,
+.media-seek-cap {
   position: absolute;
   top: 50%;
   width: 14px;
@@ -1209,14 +1277,14 @@ body,
 }
 
 .tag.live {
-  background: rgba(34, 197, 94, 0.14);
+  background: var(--online-tint);
   color: var(--online);
 }
 
 /* mic input strip accent (design: input-strip) */
 .strip.input-strip {
-  border-color: #2e2e55;
-  background: linear-gradient(180deg, rgba(85, 87, 224, 0.06), var(--bg-surface) 38%);
+  border-color: var(--channel-line);
+  background: linear-gradient(180deg, var(--channel-tint), var(--bg-surface) 38%);
 }
 .strip-icon-mic {
   background: var(--accent-light);
@@ -1225,11 +1293,11 @@ body,
 
 /* stream mix bus strip (record bus - amber accents) */
 .strip.bus-strip {
-  border-color: #46350f;
-  background: linear-gradient(180deg, rgba(245, 158, 11, 0.05), var(--bg-surface) 38%);
+  border-color: var(--mix-line);
+  background: linear-gradient(180deg, var(--mix-tint), var(--bg-surface) 38%);
 }
 .strip-icon-bus {
-  background: rgba(245, 158, 11, 0.12);
+  background: var(--mix-icon-tint);
   color: var(--warning);
 }
 
@@ -1462,7 +1530,7 @@ body,
 .modal-title {
   flex: 1;
   min-width: 0;
-  font-size: var(--fs-title-lg, 16px);
+  font-size: var(--fs-h3);
   font-weight: 600;
 }
 /* Pull the close button out to the panel's padding edge. */
@@ -1573,9 +1641,9 @@ body,
   align-items: center;
   gap: var(--sp-3);
   padding: var(--sp-2) var(--sp-7);
-  background: rgba(239, 68, 68, 0.12);
-  border-bottom: 1px solid rgba(239, 68, 68, 0.35);
-  color: #fca5a5;
+  background: var(--danger-tint);
+  border-bottom: 1px solid var(--danger-line);
+  color: var(--danger-fg);
   font-size: var(--fs-meta);
 }
 .error-banner-msg {
@@ -1595,10 +1663,10 @@ body,
   cursor: pointer;
 }
 .error-banner-x:hover {
-  background: rgba(239, 68, 68, 0.2);
+  background: var(--danger-tint-strong);
 }
 .error-banner-x:focus-visible {
-  outline: 2px solid #fca5a5;
+  outline: 2px solid var(--danger-fg);
   outline-offset: 1px;
 }
 
@@ -1814,14 +1882,14 @@ body,
   color: var(--fg-muted);
 }
 .ob-flow-node.is-channel {
-  border-color: #2e2e55;
+  border-color: var(--channel-line);
   color: var(--accent-hover);
 }
 .ob-flow-node.is-channel .ms {
   color: var(--accent-hover);
 }
 .ob-flow-node.is-mix {
-  border-color: #46350f;
+  border-color: var(--mix-line);
   color: var(--warning);
 }
 .ob-flow-node.is-mix .ms {
@@ -1829,7 +1897,7 @@ body,
 }
 .ob-flow-arrow {
   font-size: 14px;
-  color: var(--fg-muted);
+  color: var(--line-muted);
 }
 .ob-foot {
   display: flex;
@@ -1899,7 +1967,7 @@ body,
 /* version tag at the bottom of the nav rail */
 .rail-version {
   text-align: center;
-  font-size: 10px;
+  font-size: var(--fs-micro);
   color: var(--fg-muted);
   padding: var(--sp-2) 0 var(--sp-1);
   user-select: text;
@@ -2072,7 +2140,7 @@ body,
 }
 .eqm-region-label {
   fill: var(--fg-secondary);
-  font-size: 9px;
+  font-size: var(--fs-nano);
   font-weight: 600;
   letter-spacing: 0.7px;
   text-anchor: middle;
@@ -2082,7 +2150,7 @@ body,
 }
 .eqm-axis-label {
   fill: var(--fg-secondary);
-  font-size: 9px;
+  font-size: var(--fs-nano);
   font-family: inherit;
   user-select: none;
 }
@@ -2214,7 +2282,7 @@ body,
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 10px;
+  font-size: var(--fs-micro);
   color: var(--fg-secondary);
 }
 .eqm-field input {
@@ -2450,9 +2518,8 @@ body,
    ============================================================ */
 .hs { gap: var(--sp-4); }
 .hs-card {
-  background: var(--bg-surface);
-  border: 1px solid var(--border);
-  border-radius: var(--r-lg);
+  /* Device cards hold sliders, chips and pictures rather than a stack of
+     rows, so they carry their own padding and lay their children out. */
   padding: var(--sp-4) var(--sp-5);
   display: flex;
   flex-direction: column;
@@ -2464,7 +2531,7 @@ body,
   gap: var(--sp-2);
   color: var(--fg-primary);
 }
-.hs-card-head h2 { font-size: var(--fs-title); margin: 0; font-weight: 600; }
+.hs-card-head h2 { font-size: var(--fs-h3); margin: 0; font-weight: 600; }
 .hs-card-right { margin-left: auto; }
 
 /* Segmented control */
@@ -2561,20 +2628,60 @@ input[type="range"]::-webkit-slider-thumb:hover { background: var(--accent-hover
 /* Preset chips can get numerous — wrap, and keep the row from exploding vertically. */
 .hs-eq-presets { gap: var(--sp-2); flex-wrap: wrap; max-height: 132px; overflow-y: auto; }
 .hs-eq {
+  position: relative;
   display: grid;
   grid-template-columns: repeat(10, 1fr);
   gap: 6px;
   align-items: end;
-  height: 130px;
+  height: 152px;
 }
-.hs-eq-band { flex-direction: column; align-items: center; gap: 6px; height: 100%; }
+/* 0 dB and the two ±5 dB references, behind the faders. Without them "is this
+   band boosted or cut" has to be judged from the handle position alone. */
+.hs-eq-lines {
+  position: absolute;
+  inset: 18px 0 14px;
+  pointer-events: none;
+}
+.hs-eq-lines i {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--line-muted);
+  opacity: 0.4;
+}
+.hs-eq-lines i.zero {
+  opacity: 0.85;
+}
+.hs-eq-axis {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  float: left;
+  height: 152px;
+  padding: 14px 8px 10px 0;
+  font-size: var(--fs-nano);
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+.hs-eq-band { flex-direction: column; align-items: center; gap: 4px; height: 100%; }
 .hs-eq-fader {
   writing-mode: vertical-lr;
   direction: rtl;
-  width: 4px;
+  width: 6px;
   height: 100px;
 }
-.hs-eq-band span { font-size: 10px; color: var(--fg-muted); }
+.hs-eq-band span { font-size: var(--fs-micro); color: var(--fg-muted); }
+.hs-eq-val {
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-secondary);
+}
+/* A band at rest should not compete with the ones that were actually moved. */
+.hs-eq-val.zero {
+  color: var(--fg-muted);
+  opacity: 0.6;
+}
 
 /* Chips + buttons */
 .hs-chip {
@@ -2644,7 +2751,7 @@ input[type="range"]::-webkit-slider-thumb:hover { background: var(--accent-hover
   background: #05060a;
   border: 2px solid var(--border);
   border-radius: var(--r-sm);
-  box-shadow: inset 0 0 24px rgba(122, 162, 247, 0.15);
+  box-shadow: inset 0 0 24px var(--accent-light);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2730,36 +2837,6 @@ input[type="range"]::-webkit-slider-thumb:hover { background: var(--accent-hover
 }
 
 .media-seek { display: flex; flex-direction: column; gap: 6px; }
-.media-seek-track {
-  /* Without this a touch drag becomes a scroll gesture: the browser cancels
-     the pointer stream, so the tablet could only tap a position, never
-     scrub to one. Same reason as .hs-track and .fader-track. */
-  touch-action: none;
-  position: relative;
-  height: 6px;
-  border-radius: var(--r-pill);
-  background: var(--bg-active);
-  cursor: pointer;
-}
-.media-seek-fill {
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  background: var(--accent);
-  border-radius: var(--r-pill);
-}
-.media-seek-cap {
-  position: absolute;
-  top: 50%;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: var(--fg-primary);
-  transform: translate(-50%, -50%);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
-  cursor: grab;
-}
 .media-times {
   display: flex;
   justify-content: space-between;
@@ -2820,7 +2897,28 @@ input[type="range"]::-webkit-slider-thumb:hover { background: var(--accent-hover
 
   --fg-primary: #c0caf5;
   --fg-secondary: #a9b1d6;
-  --fg-muted: #565f89;
+  /* Tokyo Night's own #565f89 is the palette's *comment and rule* colour, not
+     a text colour: 2.76:1 on --bg-surface, well under any legibility bar, and
+     it carries roughly every second line of text in the app. Lightened to the
+     same hue at 5.78:1; the original is kept below for the things it was
+     actually meant for. */
+  --fg-muted: #8b94c1;
+  --line-muted: #565f89;
+
+  --channel-line: #3b4261;
+  --channel-tint: rgba(122, 162, 247, 0.07);
+  --mix-line: #4a3a1c;
+  --mix-tint: rgba(224, 175, 104, 0.06);
+  --mix-icon-tint: rgba(224, 175, 104, 0.14);
+
+  --danger-tint: rgba(247, 118, 142, 0.12);
+  --danger-tint-strong: rgba(247, 118, 142, 0.2);
+  --danger-line: rgba(247, 118, 142, 0.35);
+  --danger-ring: rgba(247, 118, 142, 0.16);
+  --danger-glow: rgba(247, 118, 142, 0.7);
+  --danger-fg: #f7a8b8;
+  --online-tint: rgba(158, 206, 106, 0.14);
+  --online-ring: rgba(158, 206, 106, 0.16);
 
   --accent: #7aa2f7;
   --accent-hover: #9eb8f9;
@@ -2872,9 +2970,21 @@ input[type="range"]::-webkit-slider-thumb:hover { background: var(--accent-hover
   min-height: 0;
   overflow: auto;
   padding: var(--sp-5) var(--sp-6) var(--sp-7);
+  /* Same formula as .screen-head and .screen-body. Without it the head centred
+     itself on the readable column while the cards below started at the window
+     edge — on a 1280px window the title began 242px in and the first card at
+     20px, which read as a broken layout rather than a wide one. */
+  padding-inline: max(var(--sp-6), calc((100% - var(--content-w)) / 2));
   display: flex;
   flex-direction: column;
   gap: var(--sp-4);
+}
+/* A card that should keep the full width of the window rather than the reading
+   column: the key map is a picture of the hardware, and shrinking it to a text
+   measure makes the keys unreadable. */
+.hs-body > .hs-card.full-bleed {
+  width: min(1200px, 100%);
+  align-self: center;
 }
 .hs-body::-webkit-scrollbar { width: 10px; height: 10px; }
 .hs-body::-webkit-scrollbar-thumb {
@@ -3130,14 +3240,18 @@ input[type="range"]::-webkit-slider-thumb:hover { background: var(--accent-hover
   white-space: nowrap;
 }
 
-/* Scene picker: each chip previews its own palette. */
+/* Scene picker: each tile previews its own palette.
+   Twenty-four tiles distinguished only by a 4px strip over a neutral card read
+   as a grid of identical grey boxes — the palette is the whole point of
+   choosing one scene over another, so it carries the tile. */
 .kb-scenes {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
   gap: var(--sp-2);
 }
 .kb-scene {
   position: relative;
+  min-height: 74px;
   text-align: left;
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
@@ -3146,30 +3260,63 @@ input[type="range"]::-webkit-slider-thumb:hover { background: var(--accent-hover
   padding: 8px 10px 9px;
   cursor: pointer;
   overflow: hidden;
-  transition: border-color 90ms ease, transform 90ms ease;
+  transition: border-color 90ms ease, transform 90ms ease, box-shadow 90ms ease;
+}
+/* The tint is an inline gradient built from the scene's own swatches; this
+   layer sits under the text and over the card background. */
+.kb-scene::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--scene-tint, transparent);
+  opacity: 0.18;
+  pointer-events: none;
+}
+.kb-scene > * {
+  position: relative;
 }
 .kb-scene:hover {
   transform: translateY(-1px);
 }
+.kb-scene:hover::before {
+  opacity: 0.26;
+}
 .kb-scene.active {
   border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent), 0 0 18px -6px var(--accent);
+}
+.kb-scene.active::before {
+  opacity: 0.3;
+}
+/* Which scene is running, on the tile itself rather than only in the card
+   head — with 24 tiles the head is off screen while you are choosing. */
+.kb-scene-live {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  font-size: var(--fs-nano);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent);
 }
 .kb-scene-name {
   display: block;
   font-weight: 600;
-  font-size: var(--fs-small);
+  font-size: var(--fs-caption);
 }
 .kb-scene-hint {
   display: block;
-  font-size: 10px;
+  font-size: var(--fs-micro);
   color: var(--fg-secondary);
   margin-top: 2px;
 }
-/* A strip of the scene's own colours, so the list is scannable by eye. */
+/* A band of the scene's own colours, so the list is scannable by eye. Hard
+   stops, not a blend: the palette is what the board will actually paint. */
 .kb-scene-strip {
   display: flex;
-  height: 4px;
-  margin: -8px -10px 7px;
+  height: 12px;
+  margin: -8px -10px 8px;
 }
 .kb-scene-strip span {
   flex: 1;
@@ -3186,7 +3333,7 @@ input[type="range"]::-webkit-slider-thumb:hover { background: var(--accent-hover
   display: flex;
   flex-direction: column;
   gap: 4px;
-  font-size: var(--fs-small);
+  font-size: var(--fs-caption);
   color: var(--fg-secondary);
 }
 .kb-color input[type="color"] {
@@ -3205,8 +3352,8 @@ input[type="range"]::-webkit-slider-thumb:hover { background: var(--accent-hover
   border-radius: var(--r-sm);
   background: var(--bg-main);
   color: var(--fg-primary);
-  font-family: var(--font-mono, monospace);
-  font-size: var(--fs-small);
+  font-family: var(--font-sans);
+  font-size: var(--fs-caption);
 }
 .kb-text {
   width: 100%;
@@ -3215,14 +3362,14 @@ input[type="range"]::-webkit-slider-thumb:hover { background: var(--accent-hover
   border-radius: var(--r-sm);
   background: var(--bg-main);
   color: var(--fg-primary);
-  font-family: var(--font-mono, monospace);
-  font-size: var(--fs-small);
+  font-family: var(--font-sans);
+  font-size: var(--fs-caption);
   resize: vertical;
 }
 
 .kb-chip-tag {
   margin-left: 5px;
-  font-size: 9px;
+  font-size: var(--fs-nano);
   opacity: 0.65;
   border: 1px solid currentColor;
   border-radius: 3px;
@@ -3249,6 +3396,244 @@ input[type="range"]::-webkit-slider-thumb:hover { background: var(--accent-hover
   display: flex;
   align-items: flex-start;
   gap: 6px;
-  border-left: 2px solid var(--warn, #e0a030);
+  border-left: 2px solid var(--warning);
   padding-left: var(--sp-3);
+}
+
+/* Keyboard screen: section tabs in the head.
+   Placed after the h1 rather than in .screen-head-actions, which carries
+   margin-left:auto and would push them to the far right, away from the title
+   they belong to. */
+.kb-tabs {
+  flex: 0 0 auto;
+  margin-left: var(--sp-4);
+}
+.kb-tabs .hs-seg-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+@media (max-width: 900px) {
+  /* The head wraps before the tabs do; keep them on their own line rather
+     than letting them squeeze the title. */
+  .kb-tabs {
+    order: 3;
+    width: 100%;
+    margin-left: 0;
+  }
+}
+
+/* EQ: per-band response curves behind the sum, so Q is something you can see
+   rather than only feel on the scroll wheel. */
+.eqm-band-line {
+  fill: none;
+  stroke-width: 1;
+  opacity: 0.28;
+  pointer-events: none;
+}
+.eqm-band-line.sel {
+  stroke-width: 1.75;
+  opacity: 0.75;
+}
+.eqm-dot-label {
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  fill: var(--fg-primary);
+  paint-order: stroke;
+  stroke: var(--bg-main);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+/* A card whose controls the device is currently ignoring.
+   Dimmed and click-through rather than hidden: the settings are still worth
+   reading, and hiding them would make the master switch look like it deleted
+   them. The badge stays clickable — it is the way back. */
+.hs-card.is-inert > *:not(.hs-card-head) {
+  opacity: 0.45;
+  pointer-events: none;
+}
+.hs-card.is-inert .hs-card-head > :not(.kb-inert-badge) {
+  opacity: 0.6;
+}
+.kb-inert-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: 1px solid var(--warning);
+  color: var(--warning);
+  border-radius: var(--r-sm);
+  padding: 2px 8px;
+  font-family: var(--font-sans);
+  font-size: var(--fs-caption);
+  cursor: pointer;
+}
+.kb-inert-badge:hover {
+  background: var(--bg-active);
+}
+
+/* Where a setting lives: Inari, the board's memory, or the board until it
+   loses power. Three states, three tints, no prose. */
+.kb-origin {
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+  cursor: help;
+}
+.kb-origin.live {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.kb-origin.stored {
+  color: var(--online);
+  border-color: var(--online);
+}
+.kb-origin.volatile {
+  color: var(--warning);
+  border-color: var(--warning);
+}
+
+/* Diagnostics folded into the card they belong to.
+   The OLED transport comparison and the raw command probe are things you touch
+   once, when something is wrong; open by default they cost roughly 350px of the
+   main column on every visit. */
+.kb-details > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-h3);
+  font-weight: 600;
+  color: var(--fg-primary);
+  cursor: pointer;
+  list-style: none;
+  padding: var(--sp-1) 0;
+}
+.kb-details > summary::-webkit-details-marker {
+  display: none;
+}
+.kb-details > summary::after {
+  content: "expand_more";
+  font-family: "Material Symbols Outlined";
+  font-size: 18px;
+  color: var(--fg-muted);
+  margin-left: auto;
+  transition: transform 0.12s;
+}
+.kb-details[open] > summary::after {
+  transform: rotate(180deg);
+}
+.kb-details > summary:hover {
+  color: var(--accent);
+}
+.kb-details[open] > summary {
+  margin-bottom: var(--sp-2);
+}
+
+/* Charging is its own state. Grouping it with "offline" told the user their
+   headset was unreachable while it sat in the cradle filling up. */
+.tag.tag-charging {
+  color: var(--warning);
+  border-color: var(--warning);
+  background: transparent;
+}
+.hs-batt-fill.charging {
+  background-image: linear-gradient(
+    -45deg,
+    rgba(255, 255, 255, 0.22) 25%,
+    transparent 25%,
+    transparent 50%,
+    rgba(255, 255, 255, 0.22) 50%,
+    rgba(255, 255, 255, 0.22) 75%,
+    transparent 75%
+  );
+  background-size: 12px 12px;
+  animation: batt-charge 0.8s linear infinite;
+}
+@keyframes batt-charge {
+  to {
+    background-position: 12px 0;
+  }
+}
+/* No reading yet — distinct from a reading of zero. */
+.hs-batt-pct.pending {
+  color: var(--fg-muted);
+}
+@media (prefers-reduced-motion: reduce) {
+  .hs-batt-fill.charging {
+    animation: none;
+  }
+}
+
+/* Status values carry their own meaning. */
+.hs-status-grid b.good {
+  color: var(--online);
+}
+.hs-status-grid b.warn {
+  color: var(--warning);
+}
+.hs-status-grid b.bad {
+  color: var(--fg-muted);
+}
+
+/* Preset filter: the bundled library is long enough that scrolling it is not
+   a way to find anything. */
+.eqm-filter {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border-bottom: 1px solid var(--border);
+  color: var(--fg-muted);
+}
+.eqm-filter input {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: 0;
+  outline: none;
+  color: var(--fg-primary);
+  font-family: var(--font-sans);
+  font-size: var(--fs-meta);
+}
+.eqm-preset-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
+/* The description used to live only in a title attribute — invisible until you
+   hovered, and never while deciding which one to hover. */
+.eqm-preset-desc {
+  font-size: var(--fs-caption);
+  color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Hardware EQ preset categories: a row of switches rather than a dropdown in
+   the card header, and grouped headings when showing all of them. */
+.hs-eq-cats {
+  flex-wrap: wrap;
+}
+.hs-eq-cat-label {
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  color: var(--fg-muted);
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  margin: var(--sp-2) 0 var(--sp-1);
+}
+/* With the list grouped, the scroll box is no longer the thing keeping the
+   card short — let each group size itself. */
+.hs-eq-cat-label + .hs-eq-presets {
+  max-height: none;
+  overflow: visible;
 }

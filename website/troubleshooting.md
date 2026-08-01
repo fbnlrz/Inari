@@ -24,12 +24,36 @@ Moving the fader was the first moment anyone wrote the value again.
 
 **Fix.** Update. Since v1.0.10 Inari reads each channel's volume and mute off
 the sink instead of setting it, so the strips show what you will actually hear —
-and your channel volumes survive a restart. On an older build, confirm it with:
+and your channel volumes survive a restart.
+
+**v1.0.13** closes the rest of it. That read happened once, during startup, and
+never again — so anything that moved a level afterwards (`pavucontrol`,
+`wpctl`, WirePlumber restoring a level when a device reappears) put the strip
+back out of step, and if the reading had not arrived yet when Inari looked, the
+100 % placeholder simply stayed for the session. The strips now follow the
+sinks continuously. Confirm what the sink is really at with:
 
 ```bash
 pactl list sinks short | grep sink_
 pactl get-sink-volume sink_music
 ```
+
+## A channel plays a continuous tone or hum that will not stop
+
+**Symptom.** One channel hums or drones on, at a pitch a bit below wherever you
+set a shelf band, and it carries on after the music stops. Turning the channel
+down does not remove it.
+
+**Cause.** Before **v1.0.13**, a shelf band with a steep slope could be given a
+filter design with both poles exactly on the unit circle — an undamped
+resonator. It rings for ever at an amplitude that can exceed full scale, so it
+also clips. Slope 10 reached it at only ±8 dB of shelf gain, so an ordinary
+steep bass boost was enough.
+
+**Fix.** Update. The slope is now capped to the steepest one the chosen gain
+can support. On an older build, open that channel's EQ and turn the shelf's Q
+back down (or flatten the band) — recomputing the coefficients stops the
+oscillation immediately.
 
 ## The VU meters never move
 
@@ -44,6 +68,19 @@ engine**. A `fallback` tag means no native engine; a `stopped` tag means it
 died and Inari has to be restarted. Either way, quit from the tray and relaunch
 once your session's PipeWire is fully up. Full explanation:
 [Why don't my VU meters move?](/faq#why-don-t-my-vu-meters-move).
+
+## The meters twitch or read low while the keyboard or OLED is lit
+
+**Symptom.** The mixer's level meters look sluggish or under-read, and it is
+worse with an Apex keyboard on an audio-reactive effect or the headset OLED in
+VU mode.
+
+**Cause.** Before **v1.0.13** all three read the same peak store, and reading a
+peak clears it. Whichever ticked first — the keyboard every 33 ms, the OLED
+every 40, the window every 100 — took the value, and the others saw whatever
+had accumulated since.
+
+**Fix.** Update. Each of the three has its own peaks now.
 
 ## The window is black, or Inari won't draw at all
 
@@ -74,11 +111,38 @@ overridden somewhere in your session.
 
 ## A SteelSeries device shows "not connected"
 
-**Cause.** The udev rule hasn't applied to the already-plugged device yet.
+**Start here, before guessing:**
 
-**Fix.** Re-plug the device once, then reopen the tab. Confirm your user can
-read/write the device's `/dev/hidraw*` node — the installer's `uaccess` rule
-handles this (see [Supported hardware](/reference/hardware)).
+```sh
+inari doctor
+```
+
+It runs in your terminal — no running Inari needed, which is the point — and
+prints every SteelSeries HID node, which one Inari's table claims, which passed
+the interface/descriptor probe, whether it can be opened at all, and, for each
+candidate, whether the device actually answers. Reading it top to bottom
+usually names the cause outright.
+
+**Cause 1 — permissions.** A node reading `cannot open (permission denied)`
+means the udev rule has not been applied to an already-plugged device.
+
+**Fix.** Re-plug the device once, or:
+
+```sh
+sudo udevadm control --reload && sudo udevadm trigger --subsystem-match=hidraw
+```
+
+**Cause 2 — nothing passed the probe.** The report says a product id matched
+but no node passed. The device exposes its configuration collection on a
+different interface than the table expects; that is a bug worth reporting, with
+the report attached.
+
+**Cause 3 — the device is silent.** A node opens but never answers. Inari
+handles this by itself since 1.0.12: it only reports "connected" once the
+device has actually replied, and moves on to the next candidate node otherwise.
+Older versions announced the first node that merely *opened*, which is why a
+headset could sit there showing nothing until it was unplugged and the app
+restarted.
 
 ## The OLED tab says "display not supported"
 
@@ -198,9 +262,16 @@ by running `./migrate-to-inari.sh` once.
 
 ### The in-app update installed but didn't restart
 
-Fixed in **v1.0.3**. Earlier builds couldn't relaunch after an in-place upgrade
-(the running binary's file had been replaced). Update once more from the command
-line, then in-app updates restart cleanly:
+Fixed in **v1.0.3**, again in **v1.0.11**, and again in **v1.0.13** — three
+different reasons with the same symptom. v1.0.3: the running binary's file had
+been replaced. v1.0.11: systemd killed the relaunch helper when it swept our
+own unit's control group. v1.0.13: launched from the application menu, KDE
+wraps the app in a transient `app-*.service` with `KillMode=control-group`, and
+`setsid` leaves the session but stays in that cgroup — so the helper was swept a
+second after being spawned. The relaunch now goes through
+`systemd-run --user`, which puts it in a unit of its own.
+
+Update once more from the command line, then in-app updates restart cleanly:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/fbnlrz/Inari/main/get-inari.sh | bash

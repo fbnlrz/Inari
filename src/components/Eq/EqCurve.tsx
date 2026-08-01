@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { EqBand, EqConfig } from "../../types";
 import { EQ_GAIN_RANGE_DB } from "../../types";
-import { curvePoints, freqToX, xToFreq } from "../../lib/eqMath";
+import { curvePoints, freqToX, magnitudeDb, xToFreq } from "../../lib/eqMath";
 
 // SVG coordinate space; the element scales responsively. All labels live
 // in gutters OUTSIDE the plot rectangle: regions above, dB left, Hz below.
@@ -14,10 +14,21 @@ const FOOT = 18;
 const TOP = HEAD + 4;
 const BOTTOM = H - FOOT - 4;
 
-const dbToY = (db: number) =>
-  TOP + ((EQ_GAIN_RANGE_DB - db) / (2 * EQ_GAIN_RANGE_DB)) * (BOTTOM - TOP);
-const yToDb = (y: number) =>
-  EQ_GAIN_RANGE_DB - ((y - TOP) / (BOTTOM - TOP)) * 2 * EQ_GAIN_RANGE_DB;
+/** Default half-height of the gain axis.
+ *
+ *  The plot used to span the full ±24 dB the engine allows, but nothing people
+ *  actually load goes near that: the loudest of the 32 bundled presets peaks
+ *  below 9.2 dB, so a +6 dB shelf drew as 25 px of a 204 px plot. The axis now
+ *  starts at ±12 and only opens up when a curve genuinely needs the room. */
+const DEFAULT_RANGE_DB = 12;
+
+// Plain functions of (value, range) rather than a closure pair built per
+// render: a fresh object identity every render would defeat the memoisation
+// on the drag handler.
+const dbToYIn = (db: number, range: number) =>
+  TOP + ((range - db) / (2 * range)) * (BOTTOM - TOP);
+const yToDbIn = (y: number, range: number) =>
+  range - ((y - TOP) / (BOTTOM - TOP)) * 2 * range;
 const fxToX = (fx: number) => LEFT + fx * (W - LEFT - RIGHT);
 const xToFx = (x: number) => (x - LEFT) / (W - LEFT - RIGHT);
 
@@ -33,9 +44,12 @@ const REGIONS: { label: string; to: number }[] = [
 
 /** Frequencies that get a labeled vertical grid line. */
 const GRID_FREQS = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
-/** dB lines: labeled majors and unlabeled minors (plot edges are ±24). */
-const GRID_DBS_MAJOR = [-12, 0, 12];
-const GRID_DBS_MINOR = [-18, -6, 6, 18];
+/** dB lines for a given axis range: labeled majors, unlabeled minors. */
+function gridDbs(range: number): { major: number[]; minor: number[] } {
+  return range <= DEFAULT_RANGE_DB
+    ? { major: [-6, 0, 6], minor: [-9, -3, 3, 9] }
+    : { major: [-12, 0, 12], minor: [-18, -6, 6, 18] };
+}
 
 const fmtFreq = (hz: number) => (hz >= 1000 ? `${hz / 1000}kHz` : `${hz}Hz`);
 const fmtDb = (db: number) => `${db > 0 ? "+" : ""}${db} dB`;
@@ -78,6 +92,21 @@ interface EqCurveProps {
 export function EqCurve({ config, selected, onSelect, onBandChange }: Readonly<EqCurveProps>) {
   const svgRef = useRef<SVGSVGElement>(null);
   const dragIndex = useRef<number>(-1);
+  // Which dot to label; a ref alone would not re-render while dragging.
+  const [active, setActive] = useState(-1);
+
+  const points = curvePoints(config);
+  // Open the axis up only for curves that need it. Dragging a dot above the
+  // plot edge still yields more than the range, which is what expands it —
+  // so the clamp below stays at the engine's limit, not the axis's.
+  const peak = Math.max(
+    0,
+    ...points.map((p) => Math.abs(p.db)),
+    ...config.bands.filter((b) => !gainless(b)).map((b) => Math.abs(b.gain_db)),
+  );
+  const range = peak > DEFAULT_RANGE_DB ? EQ_GAIN_RANGE_DB : DEFAULT_RANGE_DB;
+  const dbToY = (db: number) => dbToYIn(db, range);
+  const grid = gridDbs(range);
 
   const dragTo = useCallback(
     (clientX: number, clientY: number) => {
@@ -92,12 +121,15 @@ export function EqCurve({ config, selected, onSelect, onBandChange }: Readonly<E
       const freq_hz = Math.round(xToFreq(xToFx(x)));
       const patch: Partial<EqBand> = { freq_hz };
       if (!gainless(band)) {
-        const db = Math.max(-EQ_GAIN_RANGE_DB, Math.min(EQ_GAIN_RANGE_DB, yToDb(y)));
+        const db = Math.max(
+          -EQ_GAIN_RANGE_DB,
+          Math.min(EQ_GAIN_RANGE_DB, yToDbIn(y, range)),
+        );
         patch.gain_db = Math.round(db * 10) / 10;
       }
       onBandChange(index, patch);
     },
-    [config.bands, onBandChange],
+    [config.bands, onBandChange, range],
   );
 
   // Window-level listeners attached once; latest handler via ref (Fader idiom).
@@ -110,6 +142,7 @@ export function EqCurve({ config, selected, onSelect, onBandChange }: Readonly<E
     };
     const up = () => {
       dragIndex.current = -1;
+      setActive(-1);
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
@@ -119,7 +152,22 @@ export function EqCurve({ config, selected, onSelect, onBandChange }: Readonly<E
     };
   }, []);
 
-  const points = curvePoints(config);
+  /** A single band's own response, on the same axes as the sum. */
+  const bandPath = (band: EqBand) => {
+    const steps = 64;
+    const logMin = Math.log10(20);
+    const logMax = Math.log10(20000);
+    let d = "";
+    for (let k = 0; k <= steps; k++) {
+      const freq = Math.pow(10, logMin + ((logMax - logMin) * k) / steps);
+      const db = magnitudeDb([band], 0, freq);
+      const y = dbToY(Math.max(-range, Math.min(range, db)));
+      d += `${k === 0 ? "M" : "L"}${fxToX(freqToX(freq)).toFixed(1)},${y.toFixed(1)}`;
+      if (k < steps) d += " ";
+    }
+    return d;
+  };
+
   const path = points
     .map(
       (p, i) =>
@@ -191,7 +239,7 @@ export function EqCurve({ config, selected, onSelect, onBandChange }: Readonly<E
       })}
 
       {/* horizontal grid + dB labels (left of the plot) */}
-      {GRID_DBS_MINOR.map((db) => (
+      {grid.minor.map((db) => (
         <line
           key={db}
           className="eqm-grid minor"
@@ -201,7 +249,7 @@ export function EqCurve({ config, selected, onSelect, onBandChange }: Readonly<E
           y2={dbToY(db)}
         />
       ))}
-      {GRID_DBS_MAJOR.map((db) => (
+      {grid.major.map((db) => (
         <g key={db}>
           <line
             className={"eqm-grid" + (db === 0 ? " zero" : "")}
@@ -216,6 +264,18 @@ export function EqCurve({ config, selected, onSelect, onBandChange }: Readonly<E
         </g>
       ))}
 
+      {/* One thin curve per band under the sum. Scrolling a dot changes Q,
+          but with only the summed response drawn there was nothing to see it
+          on — and with overlapping bands you cannot tell which dot makes
+          which bump. 64 steps is plenty for a backdrop. */}
+      {config.bands.map((band, i) => (
+        <path
+          key={`b${i}`}
+          className={"eqm-band-line" + (i === selected ? " sel" : "")}
+          style={{ stroke: bandColor(i) }}
+          d={bandPath(band)}
+        />
+      ))}
       <path className="eqm-fill" d={fill} />
       <path className="eqm-line" d={path} />
       {config.bands.map((band, i) => {
@@ -234,6 +294,11 @@ export function EqCurve({ config, selected, onSelect, onBandChange }: Readonly<E
                 e.preventDefault();
                 onSelect(i);
                 dragIndex.current = i;
+                setActive(i);
+              }}
+              onPointerEnter={() => setActive(i)}
+              onPointerLeave={() => {
+                if (dragIndex.current !== i) setActive(-1);
               }}
               onDoubleClick={() => onBandChange(i, { gain_db: 0 })}
               onWheel={(e) => {
@@ -252,6 +317,21 @@ export function EqCurve({ config, selected, onSelect, onBandChange }: Readonly<E
               cy={cy}
               r={i === selected ? 8 : 6}
             />
+            {active === i && (
+              // The band row sits well below the plot and is often out of
+              // view while dragging, so the numbers come to the pointer.
+              // Anchored inward at the edges so the text never clips.
+              <text
+                className="eqm-dot-label"
+                x={cx}
+                y={cy - (i === selected ? 14 : 12)}
+                textAnchor={cx > W - 110 ? "end" : cx < LEFT + 60 ? "start" : "middle"}
+              >
+                {fmtFreq(Math.round(band.freq_hz))}
+                {!gainless(band) && ` · ${band.gain_db > 0 ? "+" : ""}${band.gain_db.toFixed(1)} dB`}
+                {` · Q ${band.q.toFixed(2)}`}
+              </text>
+            )}
           </g>
         );
       })}

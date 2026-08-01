@@ -53,7 +53,7 @@ export function OledScreen() {
 
   if (!h.connected) {
     return (
-      <div className="content narrow">
+      <div className="content narrow device">
         <div className="screen-head">
           <h1>OLED</h1>
         </div>
@@ -73,7 +73,7 @@ export function OledScreen() {
   // (e.g. the pre-Nova Arctis Pro Wireless, whose panel isn't documented).
   if (!h.hasOled) {
     return (
-      <div className="content narrow">
+      <div className="content narrow device">
         <div className="screen-head">
           <h1>OLED</h1>
         </div>
@@ -101,7 +101,7 @@ export function OledScreen() {
   }
 
   return (
-    <div className="content narrow">
+    <div className="content narrow device">
       <div className="screen-head">
         <h1>OLED</h1>
         <div className="screen-head-actions">

@@ -18,6 +18,16 @@ is hidden (see the engine row in [Settings](/features/settings)).
 - **Master Mix** always exists, always carries every channel, and cannot be
   deleted. Its membership is managed for you — add a channel and it joins
   automatically.
+
+  ::: info Upgrading from before mixes existed
+  Older versions had a per-channel *stream mix* switch. If you had turned it
+  off for some channels, that intent is carried over on first start as a mix of
+  its own called **Stream Mix**, rather than into the Master Mix — the Master
+  carries everything by definition, so putting it there would have been
+  overwritten immediately. Before v1.0.13 that is exactly what happened, and a
+  channel you had deliberately kept out of the recorded stream quietly came
+  back.
+  :::
 - **Your own mixes** — up to four, added with the `+` in the *Mixes* group
   header. Give it a name (1–24 characters); that name is exactly what recorders
   display.

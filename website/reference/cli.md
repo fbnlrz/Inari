@@ -9,6 +9,17 @@ Inari has a small non-interactive command line for acting on an **already
 running** instance. It is what a desktop keyboard shortcut calls when
 [global hotkeys](/features/hotkeys) cannot be grabbed.
 
+## `inari doctor`
+
+Prints what Inari sees of your hardware: every SteelSeries HID node, its product
+id, USB interface and report-descriptor prefix, whether Inari's device table
+claims it, whether it can be opened, and — per candidate, in the order Inari
+tries them — whether the device answers.
+
+Unlike the other verbs this one runs in **your** process and prints to **your**
+terminal, so it works when no Inari is running. It is read-only: it opens nodes
+and listens, and never writes to a device.
+
 ## Usage
 
 ```

@@ -78,8 +78,13 @@ pub const FEATURE_LEN_APEX9: usize = 512;
 
 // --- command bytes ------------------------------------------------------
 
-/// Save the current configuration (`0x09`).
-const CMD_APPLY: u8 = 0x09;
+/// Persist volatile settings into the keyboard's flash (`0x11`).
+///
+/// Not `0x09` — that is the Arctis base station's save command, and the
+/// third-party write-up Inari started from used it here too. The vendor's own
+/// specification is explicit: `0x11` on the Apex keyboards and the Aerox,
+/// `0x09` on the Arctis.
+const CMD_APPLY: u8 = 0x11;
 /// Zone colour (`0x21 zone R G B`), zone `0xFF` = every zone at once.
 const CMD_ZONE: u8 = 0x21;
 /// Lighting brightness in percent (`0x22 pct`).
@@ -88,9 +93,6 @@ const CMD_BRIGHTNESS: u8 = 0x22;
 const CMD_REACTIVE: u8 = 0x25;
 /// Colour shift between two colours (`0x26 R G B R G B speed`).
 const CMD_COLOR_SHIFT: u8 = 0x26;
-/// Actuation point in 0.1 mm steps (`0x2D value`). Accepted but ineffective on
-/// firmware 3.24.1 — see the module docs.
-const CMD_ACTUATION: u8 = 0x2d;
 /// Direct per-key lighting, generation 1.
 const CMD_DIRECT_GEN1: u8 = 0x3a;
 /// Hand the LEDs back to the onboard profile, generation 1.
@@ -104,6 +106,15 @@ const CMD_INIT_NEW: u8 = 0x4b;
 /// Direct per-key lighting, wireless models. **Verified.**
 const CMD_DIRECT_WIRELESS: u8 = 0x61;
 /// Select an onboard profile (`0x89 index`).
+/// Hand the panel back to the firmware after direct writes — wireless family.
+///
+/// The vendor driver has a command for leaving direct-write mode at all, which
+/// is itself the argument that the mode sticks — the same stickiness the LEDs
+/// have. Without it Inari's last picture stays in the content area until some
+/// firmware event happens to overdraw it.
+const CMD_OLED_RELEASE: u8 = 0x0b;
+/// The wired Gen 3 and legacy spelling of the same idea.
+const CMD_OLED_RELEASE_GEN3: u8 = 0x69;
 const CMD_PROFILE: u8 = 0x89;
 /// Firmware version query (`0x90`). **Verified** — replies with ASCII.
 const CMD_FIRMWARE: u8 = 0x90;
@@ -140,24 +151,42 @@ pub enum FormFactor {
     Mini,
 }
 
+/// How a frame's pixels are laid out in the bytes.
+///
+/// Three real variants, not two: the vendor software packs these panels row by
+/// row but with the bits inside each byte reversed, which no third-party
+/// write-up mentions. It matters less than it sounds for borders and diagonals
+/// — reversing mirrors each group of eight pixels in place — and it wrecks
+/// text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Packing {
+    /// Row by row, leftmost pixel in the high bit.
+    Row,
+    /// Row by row, leftmost pixel in the low bit ("reverse bytepacking").
+    RowReversed,
+    /// SSD1306 pages: one byte per column holding eight stacked pixels.
+    Page,
+}
+
 /// How this model's OLED is fed. Encodings live in [`super::oled`].
 ///
-/// Two things vary independently — how a frame is addressed, and how its
-/// pixels are packed — so both are spelled out rather than hidden behind a
-/// per-model name. `page` selects SSD1306 page-major packing over row-major.
+/// Addressing and packing vary independently, so both are spelled out rather
+/// than hidden behind a per-model name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OledWire {
-    /// One report: `[cmd][bitmap]`. `0x61` on the 2019 boards (row major),
-    /// `0x0A`/`0x4A` on the Gen 3 wireless ones (page major) per OmniLED.
-    Single { cmd: u8, page: bool },
-    /// One report with a four-byte prefix, `[0x38 0x83 0x00 0x00][bitmap]`,
-    /// page major. OmniLED drives the wired Apex Pro TKL Gen 3 this way.
+    /// One report: `[cmd][bitmap]`. `0x61` on the 2019 boards; `0x0A` is the
+    /// vendor's own real-time path on the 2023/Gen 3 wireless boards, and
+    /// `0x4A` its dongle equivalent.
+    Single { cmd: u8, packing: Packing },
+    /// One report with a four-byte prefix, `[0x38 0x83 0x00 0x00][bitmap]`.
+    /// OmniLED drives the wired Apex Pro TKL Gen 3 this way.
     Gen3Wired,
-    /// Eight offset-addressed chunks of 80 bytes. **Verified** as
-    /// `{cmd: 0x0C, page: false}` on the 2023 wireless board over its cable;
-    /// `apex-tux` uses the page-major form for the Gen 3 wireless boards.
-    Chunked { cmd: u8, page: bool },
+    /// Eight offset-addressed chunks of 80 bytes. The vendor describes this as
+    /// a workaround for a firmware size bug rather than the primary path, but
+    /// it is the one verified on hardware here.
+    Chunked { cmd: u8, packing: Packing },
 }
 
 /// One supported keyboard.
@@ -180,6 +209,27 @@ pub struct Model {
     pub feature_len: usize,
     /// Adjustable (HyperMagnetic / OmniPoint) switches.
     pub actuation: bool,
+    /// The actuation table wants raw sensor counts rather than tenths of a
+    /// millimetre. True for the wired Gen 3 boards, which speak the vendor's
+    /// legacy dialect; see [`super::firmware`].
+    pub raw_actuation: bool,
+    /// Inari knows this board's *firmware command* dialect — the opcodes in
+    /// [`super::firmware`] for actuation, Rapid Trigger, protection mode and
+    /// rapid tap.
+    ///
+    /// Separate from `actuation`, which says only that the switches are
+    /// physically adjustable. The two are not the same thing and conflating
+    /// them is how a keyboard ends up being sent commands it has never heard
+    /// of: the vendor specification gives the Gen 3 *wired* boards an entirely
+    /// different set (`0x31` rather than `0x2F`, `0x34` rather than `0x37`,
+    /// `0x32` rather than `0x36`, and no power-saving command at all), plus a
+    /// different per-key struct order and a driver-mode command around the
+    /// whole exchange. Guessing a second dialect from the first would produce
+    /// a switches tab that looks complete and moves nothing.
+    ///
+    /// Only the 2023 wireless family is set here, because that is the board the
+    /// dialect was read off and verified against.
+    pub switch_dialect: bool,
 }
 
 /// Every Apex keyboard Inari speaks to.
@@ -198,10 +248,12 @@ pub static MODELS: &[Model] = &[
         battery: false,
         oled: Some(OledWire::Single {
             cmd: 0x61,
-            page: false,
+            packing: Packing::Row,
         }),
         feature_len: FEATURE_LEN_WIRED,
         actuation: true,
+        raw_actuation: false,
+        switch_dialect: false,
     },
     Model {
         product_id: PID_APEX_PRO_TKL,
@@ -213,10 +265,12 @@ pub static MODELS: &[Model] = &[
         battery: false,
         oled: Some(OledWire::Single {
             cmd: 0x61,
-            page: false,
+            packing: Packing::Row,
         }),
         feature_len: FEATURE_LEN_WIRED,
         actuation: true,
+        raw_actuation: false,
+        switch_dialect: false,
     },
     Model {
         product_id: PID_APEX_7,
@@ -228,10 +282,12 @@ pub static MODELS: &[Model] = &[
         battery: false,
         oled: Some(OledWire::Single {
             cmd: 0x61,
-            page: false,
+            packing: Packing::Row,
         }),
         feature_len: FEATURE_LEN_WIRED,
         actuation: false,
+        raw_actuation: false,
+        switch_dialect: false,
     },
     Model {
         product_id: PID_APEX_7_TKL,
@@ -243,10 +299,12 @@ pub static MODELS: &[Model] = &[
         battery: false,
         oled: Some(OledWire::Single {
             cmd: 0x61,
-            page: false,
+            packing: Packing::Row,
         }),
         feature_len: FEATURE_LEN_WIRED,
         actuation: false,
+        raw_actuation: false,
+        switch_dialect: false,
     },
     Model {
         product_id: PID_APEX_5,
@@ -258,10 +316,12 @@ pub static MODELS: &[Model] = &[
         battery: false,
         oled: Some(OledWire::Single {
             cmd: 0x61,
-            page: false,
+            packing: Packing::Row,
         }),
         feature_len: FEATURE_LEN_WIRED,
         actuation: false,
+        raw_actuation: false,
+        switch_dialect: false,
     },
     Model {
         product_id: PID_APEX_9_MINI,
@@ -274,6 +334,8 @@ pub static MODELS: &[Model] = &[
         oled: None,
         feature_len: FEATURE_LEN_APEX9,
         actuation: false,
+        raw_actuation: false,
+        switch_dialect: false,
     },
     Model {
         product_id: PID_APEX_9_TKL,
@@ -286,6 +348,8 @@ pub static MODELS: &[Model] = &[
         oled: None,
         feature_len: FEATURE_LEN_APEX9,
         actuation: false,
+        raw_actuation: false,
+        switch_dialect: false,
     },
     Model {
         product_id: PID_APEX_PRO_TKL_2023,
@@ -299,10 +363,12 @@ pub static MODELS: &[Model] = &[
         // is a better guess than the 2019 transport; the manager probes on.
         oled: Some(OledWire::Chunked {
             cmd: 0x0c,
-            page: false,
+            packing: Packing::Row,
         }),
         feature_len: FEATURE_LEN_WIRED,
         actuation: true,
+        raw_actuation: false,
+        switch_dialect: false,
     },
     Model {
         product_id: PID_APEX_PRO_TKL_2023_WL_DONGLE,
@@ -314,10 +380,12 @@ pub static MODELS: &[Model] = &[
         battery: true,
         oled: Some(OledWire::Chunked {
             cmd: 0x4c,
-            page: false,
+            packing: Packing::Row,
         }),
         feature_len: FEATURE_LEN_WIRELESS,
         actuation: true,
+        raw_actuation: false,
+        switch_dialect: true,
     },
     Model {
         product_id: PID_APEX_PRO_TKL_2023_WL_WIRED,
@@ -330,10 +398,12 @@ pub static MODELS: &[Model] = &[
         // Verified on hardware, cable attached.
         oled: Some(OledWire::Chunked {
             cmd: 0x0c,
-            page: false,
+            packing: Packing::Row,
         }),
         feature_len: FEATURE_LEN_WIRELESS,
         actuation: true,
+        raw_actuation: false,
+        switch_dialect: true,
     },
     Model {
         product_id: PID_APEX_PRO_GEN3,
@@ -346,10 +416,12 @@ pub static MODELS: &[Model] = &[
         // apex-tux drives this one with a single page-major report.
         oled: Some(OledWire::Single {
             cmd: 0x61,
-            page: true,
+            packing: Packing::Page,
         }),
         feature_len: FEATURE_LEN_WIRED,
         actuation: true,
+        raw_actuation: true,
+        switch_dialect: false,
     },
     Model {
         product_id: PID_APEX_PRO_TKL_GEN3,
@@ -363,6 +435,8 @@ pub static MODELS: &[Model] = &[
         oled: Some(OledWire::Gen3Wired),
         feature_len: FEATURE_LEN_WIRED,
         actuation: true,
+        raw_actuation: true,
+        switch_dialect: false,
     },
     Model {
         product_id: PID_APEX_PRO_TKL_GEN3_WL_DONGLE,
@@ -372,12 +446,15 @@ pub static MODELS: &[Model] = &[
         interface: 3,
         wireless: true,
         battery: true,
+        // The vendor's own real-time path for this board.
         oled: Some(OledWire::Single {
             cmd: 0x4a,
-            page: true,
+            packing: Packing::RowReversed,
         }),
         feature_len: FEATURE_LEN_WIRELESS,
         actuation: true,
+        raw_actuation: false,
+        switch_dialect: false,
     },
     Model {
         product_id: PID_APEX_PRO_TKL_GEN3_WL_WIRED,
@@ -389,10 +466,12 @@ pub static MODELS: &[Model] = &[
         battery: true,
         oled: Some(OledWire::Single {
             cmd: 0x0a,
-            page: true,
+            packing: Packing::RowReversed,
         }),
         feature_len: FEATURE_LEN_WIRELESS,
         actuation: true,
+        raw_actuation: false,
+        switch_dialect: false,
     },
 ];
 
@@ -518,6 +597,25 @@ pub fn release_to_onboard(model: &Model) -> Vec<u8> {
     control(cmd, &[])
 }
 
+/// Hand the panel back to the keyboard's own screen.
+///
+/// A feature report with nothing but the command byte, matching the shape the
+/// other bulk commands use. Returns `None` for boards with no panel.
+pub fn oled_release(model: &Model) -> Option<Vec<u8>> {
+    let len = model.oled.map(|_| model.feature_len)?;
+    // The wireless family, not the generation: the verified 0x1632 is a Gen 3
+    // entry in this table and still wants 0x0B, while the wired Gen 3 and the
+    // older boards use 0x69. Same split as `direct_cmd`.
+    let cmd = if model.wireless {
+        CMD_OLED_RELEASE
+    } else {
+        CMD_OLED_RELEASE_GEN3
+    };
+    let mut packet = vec![0u8; len];
+    packet[0] = cmd;
+    Some(packet)
+}
+
 /// The direct-lighting command byte for this model.
 fn direct_cmd(model: &Model) -> u8 {
     match (model.gen, model.wireless) {
@@ -552,6 +650,23 @@ pub fn brightness(percent: u8) -> Vec<u8> {
     control(CMD_BRIGHTNESS, &[percent.min(100)])
 }
 
+/// Brightness for whichever dialect this board speaks.
+///
+/// `0x22` is the Gen 1 / OpenRGB brightness command, and on the newer boards
+/// the same byte means `clear_direct_write` — sending it there is not merely
+/// ignored, it is a byte-identical valid command that wipes the direct-write
+/// buffer, with the percentage landing in the byte the reply uses for its error
+/// code. Those boards set brightness through `lighting_config` instead, on a
+/// 0..10 scale.
+pub fn brightness_for(model: &Model, percent: u8) -> Vec<u8> {
+    if model.gen >= Gen::Gen2 {
+        let level = (u16::from(percent.min(100)) * 10).div_ceil(100) as u8;
+        super::firmware::set_lighting_config(Some(level), None, None)
+    } else {
+        brightness(percent)
+    }
+}
+
 /// Persist the current configuration to the keyboard.
 pub fn apply() -> Vec<u8> {
     control(CMD_APPLY, &[])
@@ -571,15 +686,10 @@ pub fn color_shift(a: [u8; 3], b: [u8; 3], speed: u8) -> Vec<u8> {
     )
 }
 
-/// Actuation point in tenths of a millimetre (1 = 0.1 mm … 40 = 4.0 mm).
-///
-/// **Does nothing on the one board this could be tried on** (Apex Pro TKL
-/// Wireless 2023, firmware 3.24.1): the write is accepted, the switches do not
-/// move. Kept because it costs nothing and a different model or firmware may
-/// well answer to it — but the UI must not present it as working.
-pub fn actuation(tenths: u8) -> Vec<u8> {
-    control(CMD_ACTUATION, &[tenths.clamp(1, 40)])
-}
+// Actuation, Rapid Trigger, Protection Mode and Rapid Tap live in
+// `super::firmware`. The `0x2D` command this module used to carry came from a
+// third-party write-up: the hardware accepts it and does nothing. The real
+// per-key table is `0x2F`, and that one is verified.
 
 /// Switch to one of the keyboard's onboard profiles.
 pub fn select_profile(index: u8) -> Vec<u8> {
@@ -644,26 +754,23 @@ pub fn firmware_is_gen3(version: &str) -> bool {
     }
 }
 
-/// Battery level from a `0x92` reply.
+/// Battery level from a `0x92` reply, as `(percent, charging)`.
 ///
-/// The verified board answered `92 95 …` while its own OLED showed **95 %**,
-/// so the byte is read as two BCD digits. That also fits the shape of the
-/// reply — echo, then value. 100 % has no BCD encoding in one byte, so a value
-/// outside 0x00..0x99 (or with a nibble above 9) is reported as full rather
-/// than as a wrong number.
-pub fn parse_battery(buf: &[u8]) -> Option<u8> {
+/// The reply echoes the command in byte 0 — which matters more than it looks:
+/// this device answers queries **one command behind**, so a caller that reads
+/// whatever arrives next gets the previous answer. Checking the echo is what
+/// makes that harmless.
+///
+/// The byte itself is decoded exactly like every other SteelSeries battery
+/// (see [`crate::device::parse_battery_byte`]). An earlier version read it as
+/// two BCD digits, which agrees at 95 % and disagrees everywhere else; the
+/// vendor's own specification and the Aerox reading both say otherwise, and
+/// BCD cannot express 100 % at all.
+pub fn parse_battery(buf: &[u8]) -> Option<(u8, bool)> {
     if buf.first() != Some(&CMD_BATTERY) {
         return None;
     }
-    let raw = *buf.get(1)?;
-    if raw == 0 {
-        return None;
-    }
-    let (hi, lo) = (raw >> 4, raw & 0x0f);
-    if hi > 9 || lo > 9 {
-        return Some(100);
-    }
-    Some((hi * 10 + lo).min(100))
+    crate::device::parse_battery_byte(*buf.get(1)?)
 }
 
 #[cfg(test)]
@@ -691,7 +798,7 @@ mod tests {
             verified.oled,
             Some(OledWire::Chunked {
                 cmd: 0x0c,
-                page: false
+                packing: Packing::Row
             })
         );
         assert!(model(0x0000).is_none());
@@ -746,6 +853,62 @@ mod tests {
         );
         assert_eq!(release_to_onboard(&upgraded)[1], 0x41);
         assert_eq!(init(&upgraded).len(), 1);
+    }
+
+    #[test]
+    fn only_the_verified_family_claims_to_know_the_switch_dialect() {
+        for m in MODELS {
+            let known = matches!(
+                m.product_id,
+                PID_APEX_PRO_TKL_2023_WL_DONGLE | PID_APEX_PRO_TKL_2023_WL_WIRED
+            );
+            assert_eq!(
+                m.switch_dialect, known,
+                "{}: the firmware opcodes were only ever read off the 2023 \
+                 wireless board; the vendor specification gives the Gen 3 wired \
+                 boards a different set entirely",
+                m.name
+            );
+        }
+        // The Gen 3 wired boards do have adjustable switches — the point is
+        // that Inari cannot drive them yet, not that they lack the hardware.
+        let gen3 = model(PID_APEX_PRO_GEN3).unwrap();
+        assert!(gen3.actuation);
+        assert!(!gen3.switch_dialect);
+    }
+
+    #[test]
+    fn the_oled_handback_is_a_bare_command_and_only_for_boards_with_a_panel() {
+        let board = model(PID_APEX_PRO_TKL_2023_WL_WIRED).unwrap();
+        let packet = oled_release(board).expect("this board has a panel");
+        assert_eq!(packet.len(), board.feature_len);
+        assert_eq!(packet[0], 0x0b);
+        assert!(packet[1..].iter().all(|&b| b == 0), "no payload");
+
+        let gen3 = model(PID_APEX_PRO_GEN3).unwrap();
+        assert_eq!(oled_release(gen3).map(|p| p[0]), Some(0x69));
+
+        assert!(
+            oled_release(model(PID_APEX_9_TKL).unwrap()).is_none(),
+            "no panel, nothing to hand back"
+        );
+    }
+
+    #[test]
+    fn brightness_never_sends_0x22_to_a_board_where_it_clears_direct_write() {
+        for m in MODELS {
+            let packet = brightness_for(m, 100);
+            if m.gen >= Gen::Gen2 {
+                assert_eq!(packet[1], 0x20, "{}: lighting_config", m.name);
+                assert_eq!(packet[2], 10, "100% maps to the top of the 0..10 scale");
+            } else {
+                assert_eq!(packet[1], 0x22, "{}: the Gen 1 dialect", m.name);
+            }
+        }
+        // Rounding up, so a non-zero percentage never reads as "off".
+        let gen2 = model(PID_APEX_PRO_TKL_2023_WL_WIRED).unwrap();
+        assert_eq!(brightness_for(gen2, 1)[2], 1);
+        assert_eq!(brightness_for(gen2, 0)[2], 0);
     }
 
     #[test]
@@ -846,13 +1009,6 @@ mod tests {
     }
 
     #[test]
-    fn actuation_clamps_to_the_switchs_travel() {
-        assert_eq!(actuation(0)[2], 1, "0.0 mm is not a thing");
-        assert_eq!(actuation(8)[2], 8);
-        assert_eq!(actuation(255)[2], 40, "4.0 mm is the bottom of the switch");
-    }
-
-    #[test]
     fn zone_and_shift_payloads_match_the_captured_layout() {
         assert_eq!(
             &zone_color(ZONE_ALL, [1, 2, 3])[..6],
@@ -863,7 +1019,7 @@ mod tests {
             &[0, 0x26, 1, 2, 3, 4, 5, 6, 100, 0]
         );
         assert_eq!(&reactive(true)[..3], &[0, 0x25, 1]);
-        assert_eq!(&apply()[..2], &[0, 0x09]);
+        assert_eq!(&apply()[..2], &[0, 0x11], "the keyboard saves with 0x11");
     }
 
     #[test]
@@ -886,15 +1042,15 @@ mod tests {
     }
 
     #[test]
-    fn battery_replies_decode_as_bcd_percent() {
-        // The captured reply, next to the 95 % its own OLED was showing.
-        assert_eq!(parse_battery(&[0x92, 0x95, 0x00]), Some(95));
-        assert_eq!(parse_battery(&[0x92, 0x07]), Some(7));
-        // Not a battery reply at all.
+    fn battery_replies_decode_like_every_other_steelseries_device() {
+        // The captured reply: full, and charging over the cable.
+        assert_eq!(parse_battery(&[0x92, 0x95, 0x00]), Some((100, true)));
+        assert_eq!(parse_battery(&[0x92, 0x0b]), Some((50, false)));
+        // Another command's answer must never be read as a battery level —
+        // this device replies one command behind, so this happens for real.
         assert_eq!(parse_battery(&[0x90, 0x95]), None);
-        assert_eq!(parse_battery(&[0x92, 0x00]), None, "0 means no reading");
+        assert_eq!(parse_battery(&[0x92, 0x00]), None, "0 is not a reading");
+        assert_eq!(parse_battery(&[0x92, 0xff]), None, "0xff means no reading");
         assert_eq!(parse_battery(&[]), None);
-        // Nibbles past 9 cannot be BCD; report full rather than nonsense.
-        assert_eq!(parse_battery(&[0x92, 0xff]), Some(100));
     }
 }

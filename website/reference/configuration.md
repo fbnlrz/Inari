@@ -32,6 +32,19 @@ and keys a build doesn't recognise are preserved across a load/save round trip �
 so running an older Inari once does not silently drop settings a newer one
 wrote.
 
+As of v1.0.13 that really is *every* file: `channels.json` and the profiles had
+been missing both the version field and the catch-all, which meant an older
+build could strip a newer one's additions from exactly the files holding the
+channel set.
+
+Atomicity is not ordering, though. A profile autosave snapshots the whole
+profile under the mixer lock and writes it outside — an `fsync` under that lock
+would stall every other command — so with a second thread writing at the same
+time (the remote's runtime, a global hotkey, the CLI), the slower writer used to
+win the `rename` and put an older snapshot on top of a newer one. Snapshots now
+carry a sequence number, and a write older than what is already on disk is
+dropped rather than applied.
+
 ## The remote token
 
 `remote-token` is 32 bytes from the OS random source, hex-encoded, written with

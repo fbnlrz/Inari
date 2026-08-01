@@ -131,7 +131,8 @@ impl AudioMeters {
     ) -> f32 {
         // Both channels are drained every frame: peaks are consumed on read,
         // so anything left unread would show up late on the next poll.
-        let raw = levels.drain(slot, 0).max(levels.drain(slot, 1));
+        let reader = levels.reader("oled");
+        let raw = levels.drain(reader, slot, 0).max(levels.drain(reader, slot, 1));
         let target = db_norm(raw);
 
         let Some(state) = self.meters.get_mut(slot) else {

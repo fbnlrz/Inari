@@ -6,12 +6,15 @@ use serde::{Deserialize, Serialize};
 use crate::audio::types::VirtualSink;
 use crate::error::SinkError;
 use crate::persistence::assignments::Assignments;
+use crate::persistence::json::{Extra, Version};
 
 /// A named snapshot of the mixer: channel volumes/mutes, the app→channel
 /// assignment set, and per-channel output choices. Stored as JSON in
 /// `$XDG_CONFIG_HOME/inari/profiles/<name>.json`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Profile {
+    #[serde(default)]
+    pub version: Version,
     pub name: String,
     pub channels: Vec<VirtualSink>,
     pub assignments: Assignments,
@@ -28,6 +31,11 @@ pub struct Profile {
     /// User-defined mixes (record buses) with their member channels.
     #[serde(default)]
     pub buses: crate::persistence::buses::Buses,
+    /// Whatever a newer Inari put here. Every other store carries one of
+    /// these; a profile written by a newer version and then autosaved by this
+    /// one used to come back with the new version's work quietly deleted.
+    #[serde(default, flatten)]
+    pub extra: Extra,
 }
 
 /// Listing entry: name plus trigger metadata for the UI/auto-switcher.
@@ -61,6 +69,18 @@ pub fn sanitize_name(name: &str) -> Result<String, SinkError> {
         ));
     }
     Ok(trimmed.to_string())
+}
+
+/// Does a profile file exist under this name?
+///
+/// Deliberately a filesystem question, not a parse. Asking `load(..).is_ok()`
+/// answers "is there a *readable* profile", so a file that had become
+/// unparseable — hand-edited, half-restored from a backup, or written by a
+/// newer version with a renamed field — read as absent and got silently
+/// overwritten. That profile is visible in the list the whole time, because
+/// `list` takes the filename and shrugs off a parse failure.
+pub fn exists(name: &str) -> bool {
+    profile_path(name).map(|p| p.exists()).unwrap_or(false)
 }
 
 fn profile_path(name: &str) -> Result<PathBuf, SinkError> {

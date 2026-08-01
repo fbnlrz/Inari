@@ -51,14 +51,37 @@ pub struct KeyboardConfig {
     /// on this side too, or a clock would sit burnt into the OLED overnight.
     #[serde(default = "default_screensaver")]
     pub oled_screensaver_minutes: u16,
-    /// Global actuation in tenths of a millimetre. Experimental: the command
-    /// is accepted by the hardware and changes nothing on the firmware this
-    /// was tested against.
+    /// Global actuation in tenths of a millimetre (1 = 0.1 mm, 40 = 4.0 mm).
+    /// Verified on hardware: writing 40 to a key makes it trigger visibly
+    /// later. `None` leaves whatever the keyboard's own profile holds.
     #[serde(default)]
     pub actuation: Option<u8>,
-    /// Per-key actuation, same units, same caveat.
+    /// Per-key actuation overrides, same units.
     #[serde(default)]
     pub per_key_actuation: HashMap<u8, u8>,
+    /// Rapid Trigger sensitivity applied to every key; 0 turns it off.
+    #[serde(default)]
+    pub rapid_trigger: u8,
+    /// Protection Mode: dampens the keys around the one you meant to press.
+    #[serde(default)]
+    pub protection_mode: bool,
+    /// Rapid Tap / SOCD master switch.
+    #[serde(default)]
+    pub rapid_tap: bool,
+    /// Seconds of inactivity before the keyboard dims its own lighting;
+    /// 0 never dims. This is the firmware's timer — the one that actually
+    /// controls the keyboard, unlike Inari's own OLED blanking.
+    #[serde(default = "default_idle_secs")]
+    pub idle_timeout_secs: u32,
+    /// Brightness once dimmed, 0..10.
+    #[serde(default)]
+    pub idle_brightness: u8,
+    /// Minutes before the board sleeps; 0 never sleeps.
+    #[serde(default = "default_sleep_minutes")]
+    pub sleep_minutes: u32,
+    /// Trade lighting for battery life on the wireless models.
+    #[serde(default)]
+    pub high_efficiency: bool,
     /// Unknown keys from a newer Inari, preserved across a load/save.
     #[serde(default, flatten)]
     pub extra: Extra,
@@ -71,6 +94,17 @@ fn yes() -> bool {
 /// Ten minutes, which is roughly what the keyboard's own screensaver does.
 fn default_screensaver() -> u16 {
     10
+}
+
+/// What the measured board shipped with: 60 s to dim, 5 min to sleep. Using
+/// the device's own defaults means a fresh install changes nothing until the
+/// user asks it to.
+fn default_idle_secs() -> u32 {
+    60
+}
+
+fn default_sleep_minutes() -> u32 {
+    5
 }
 
 impl Default for KeyboardConfig {
@@ -86,6 +120,13 @@ impl Default for KeyboardConfig {
             oled_screensaver_minutes: default_screensaver(),
             actuation: None,
             per_key_actuation: HashMap::new(),
+            rapid_trigger: 0,
+            protection_mode: false,
+            rapid_tap: false,
+            idle_timeout_secs: default_idle_secs(),
+            idle_brightness: 3,
+            sleep_minutes: default_sleep_minutes(),
+            high_efficiency: false,
             extra: Extra::new(),
         }
     }
@@ -100,6 +141,10 @@ impl KeyboardConfig {
         self.actuation = self.actuation.map(|a| a.clamp(1, 40));
         self.per_key_actuation
             .retain(|_, tenths| (1..=40).contains(tenths));
+        self.idle_brightness = self.idle_brightness.min(10);
+        // A day of either is well past "did you mean off?".
+        self.idle_timeout_secs = self.idle_timeout_secs.min(86_400);
+        self.sleep_minutes = self.sleep_minutes.min(1440);
         // Three lines is all the 128x40 panel fits.
         self.oled_text.truncate(3);
         // A day is well past "did you mean off?".
@@ -120,6 +165,7 @@ pub fn save(config: &KeyboardConfig) -> Result<(), SinkError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::keyboard::protocol::Packing;
     use crate::keyboard::effects::EffectKind;
 
     #[test]
@@ -162,7 +208,7 @@ mod tests {
         config.oled_mode = Some(KbMode::Clock);
         config.oled_wire = Some(OledWire::Chunked {
             cmd: 0x0c,
-            page: false,
+            packing: Packing::Row,
         });
         let raw = serde_json::to_string(&config).unwrap();
         let back: KeyboardConfig = serde_json::from_str(&raw).unwrap();

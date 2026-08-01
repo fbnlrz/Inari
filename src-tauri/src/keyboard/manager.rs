@@ -22,6 +22,7 @@ use crate::headset::oled::Framebuffer;
 use crate::persistence::keyboard::{self, KeyboardConfig};
 
 use super::effects::{self, EffectKind};
+use super::firmware::{self, LightingConfig, PowerSaving};
 use super::oled;
 use super::oled_modes::{Screens, StatusLines};
 use super::protocol::{self, FormFactor, Gen, Model, OledWire};
@@ -38,6 +39,10 @@ const BATTERY_INTERVAL: Duration = Duration::from_secs(60);
 const RESCAN_INTERVAL: Duration = Duration::from_secs(5);
 /// Consecutive failed writes before the device is treated as gone.
 const MAX_FAILURES: u32 = 8;
+/// How long to wait for the reply that matches a query. Generous, because the
+/// device interleaves answers and this loop discards the ones that belong to
+/// other commands.
+const QUERY_TIMEOUT: Duration = Duration::from_millis(700);
 /// How often an unchanged OLED frame is re-sent. The keyboard's firmware
 /// repaints its own screen whenever it feels like it — a volume change, a
 /// profile switch — and would otherwise leave Inari's picture half overwritten.
@@ -54,6 +59,8 @@ pub struct KeyboardStatus {
     pub wireless: bool,
     pub firmware: Option<String>,
     pub battery_percent: Option<u8>,
+    /// On the cable and charging.
+    pub charging: bool,
     /// The keyboard's region byte. Gen 2+ boards have no serial; this stands
     /// in for one, and it also hints at the physical layout.
     pub region: Option<u8>,
@@ -64,6 +71,11 @@ pub struct KeyboardStatus {
     pub has_actuation: bool,
     /// Which OLED transport ended up being used, for the UI to show.
     pub oled_wire: Option<OledWire>,
+    /// The keyboard's own lighting timers, as it reports them. The UI shows
+    /// these rather than Inari's stored guess, so the sliders start on what
+    /// the board is actually doing.
+    pub lighting: Option<LightingConfig>,
+    pub power: Option<PowerSaving>,
 }
 
 pub struct KeyboardManager {
@@ -79,6 +91,10 @@ pub struct KeyboardManager {
     alt_envelope: AtomicBool,
     /// Index into [`oled::candidates`] that the panel accepted.
     oled_choice: AtomicU8,
+    /// The model as `on_connect` corrected it — the firmware version can move a
+    /// board to a newer protocol generation without the product id changing, so
+    /// re-deriving the model from the table loses that correction.
+    effective: Mutex<Option<Model>>,
     app: Mutex<Option<AppHandle>>,
     levels: Mutex<Option<Arc<LevelStore>>>,
 }
@@ -96,6 +112,7 @@ impl Default for KeyboardManager {
             dirty: AtomicBool::new(true),
             alt_envelope: AtomicBool::new(false),
             oled_choice: AtomicU8::new(0),
+            effective: Mutex::new(None),
             app: Mutex::new(None),
             levels: Mutex::new(None),
         }
@@ -160,10 +177,40 @@ impl KeyboardManager {
         Ok(())
     }
 
+    /// Forget which transport the panel accepted.
+    ///
+    /// The choice is an index into a list that is rebuilt per call, and pinning
+    /// a transport puts the pin at index 0 — so a stale index means the pin is
+    /// not tried first, and a stale index whose report id happens to match the
+    /// pin's means it is never tried at all.
+    pub fn reset_oled_choice(&self) {
+        self.oled_choice.store(0, Ordering::Relaxed);
+    }
+
+    /// Mirror a value Inari just wrote into the reported status.
+    ///
+    /// The status is a snapshot taken when the board connected, and the UI
+    /// treats it as the truth for the settings that live in the firmware. If a
+    /// successful write is not reflected here, the next status event hands the
+    /// slider its pre-write value back, and the UI then writes *that* to the
+    /// board — a setting that visibly undoes itself.
+    pub fn patch_status<F>(&self, patch: F)
+    where
+        F: FnOnce(&mut KeyboardStatus),
+    {
+        if let Ok(mut guard) = self.status.lock() {
+            patch(&mut guard);
+        }
+        self.emit_status();
+    }
+
     /// The connected model, if any.
-    fn model(&self) -> Option<&'static Model> {
+    fn model(&self) -> Option<Model> {
+        if let Some(model) = self.effective.lock().ok().and_then(|m| *m) {
+            return Some(model);
+        }
         let pid = self.dev.lock().ok()?.as_ref()?.product_id;
-        protocol::model(pid)
+        protocol::model(pid).copied()
     }
 
     /// Send one already-built control (output) report.
@@ -194,19 +241,63 @@ impl KeyboardManager {
             .map_err(|e| format!("write keyboard: {e}"))
     }
 
-    /// Write a command and read what it answers. Query replies arrive one
-    /// command behind on this hardware, so the input queue is drained first.
-    fn query(&self, dev: &mut HidDevice, packet: &[u8]) -> Option<Vec<u8>> {
+    /// Build a feature report from the connected model and send it.
+    ///
+    /// The per-key tables and the firmware config all need the model to size
+    /// their report, so the caller gets it handed to them rather than having
+    /// to ask for it and handle the "nothing connected" case itself.
+    pub fn send_feature_with_model<F>(&self, build: F) -> Result<(), String>
+    where
+        F: FnOnce(&Model) -> Vec<u8>,
+    {
+        let model = self.model().ok_or("no SteelSeries keyboard connected")?;
+        self.send_feature(&build(&model))
+    }
+
+    /// Write a command and read the answer that belongs to it.
+    ///
+    /// This hardware answers one command behind: a read straight after a write
+    /// returns the previous command's reply. Draining first is not enough
+    /// either — a live probe found 24 stale replies queued, and a read after
+    /// `0xBC` returned the firmware string left over from an earlier `0x90`.
+    /// So the caller says what a valid answer looks like and everything else
+    /// is discarded.
+    ///
+    /// `accept` differs per command because the device is not consistent:
+    /// most replies echo the command in byte 0, but the firmware query answers
+    /// with bare ASCII and no echo at all. Insisting on the echo everywhere
+    /// silently turned the firmware into "unknown".
+    fn query(
+        &self,
+        dev: &mut HidDevice,
+        packet: &[u8],
+        accept: impl Fn(&[u8]) -> bool,
+    ) -> Option<Vec<u8>> {
         let mut reader = dev.open_reader().ok()?;
         // The reader hands back whole input reports; this device's are 64 B.
         let mut buf = [0u8; crate::headset::protocol::COMMAND_LEN];
-        // Drain anything stale.
+        // Clear whatever the last conversation left behind.
         while let Ok(Some(_)) = reader.read_report(&mut buf, Duration::from_millis(5)) {}
         dev.write_command(packet).ok()?;
-        let n = reader
-            .read_report(&mut buf, Duration::from_millis(300))
-            .ok()??;
-        Some(buf[..n].to_vec())
+        let deadline = Instant::now() + QUERY_TIMEOUT;
+        while Instant::now() < deadline {
+            match reader.read_report(&mut buf, Duration::from_millis(60)) {
+                Ok(Some(n)) if n > 0 && accept(&buf[..n]) => return Some(buf[..n].to_vec()),
+                // Somebody else's answer, or an unsolicited frame: keep looking.
+                Ok(Some(_)) | Ok(None) => continue,
+                Err(_) => return None,
+            }
+        }
+        debug!(
+            "keyboard did not answer command {:#04x}",
+            packet.get(1).copied().unwrap_or(0)
+        );
+        None
+    }
+
+    /// Accept a reply that echoes `cmd` in its first byte — the common case.
+    fn echoes(cmd: u8) -> impl Fn(&[u8]) -> bool {
+        move |reply: &[u8]| reply.first() == Some(&cmd)
     }
 
     pub fn start(self: &Arc<Self>, app: AppHandle) {
@@ -270,14 +361,28 @@ impl KeyboardManager {
         if let Ok(mut status) = self.status.lock() {
             *status = KeyboardStatus::default();
         }
+        if let Ok(mut model) = self.effective.lock() {
+            *model = None;
+        }
+        // Both of these are the result of probing *a* board, not a property of
+        // the process. Left standing they would be applied to the next
+        // keyboard plugged in: the envelope latch would send every board the
+        // fallback shape, which the verified 0x1632 answers with EPIPE, and
+        // enough stalls in a row make the device re-enumerate.
+        self.alt_envelope.store(false, Ordering::Relaxed);
+        self.oled_choice.store(0, Ordering::Relaxed);
         self.emit_presence(false);
     }
 
     /// Identify the board, correct its protocol generation from the firmware
     /// version, and take control of its LEDs. Returns the model to drive.
     fn on_connect(&self, dev: &mut HidDevice, model: Model) -> Model {
+        // The firmware answers with bare ASCII, so "is this a version string"
+        // is the only thing that identifies its reply.
         let firmware = self
-            .query(dev, &protocol::firmware_query())
+            .query(dev, &protocol::firmware_query(), |reply| {
+                protocol::parse_firmware(reply).is_some()
+            })
             .and_then(|reply| protocol::parse_firmware(&reply));
         // A Gen 1/2 board on 1.19.7 or newer speaks the Gen 3 dialect, and only
         // the firmware string says so — the product id does not change with the
@@ -290,14 +395,39 @@ impl KeyboardManager {
             }
             _ => model,
         };
-        let region = self
-            .query(dev, &protocol::region_query())
-            .and_then(|reply| (reply.first() == Some(&0xf5)).then(|| reply[2]));
+        // The three optional reads below each cost a full 700 ms timeout on a
+        // board that does not implement them, and the older boards do not — so
+        // they are gated rather than tried hopefully on every connect.
+        let region = model
+            .switch_dialect
+            .then(|| {
+                self.query(dev, &protocol::region_query(), Self::echoes(0xf5))
+                    .and_then(|reply| reply.get(2).copied())
+            })
+            .flatten();
         let battery = model
             .battery
             .then(|| {
-                self.query(dev, &protocol::battery_query())
+                self.query(dev, &protocol::battery_query(), Self::echoes(0x92))
                     .and_then(|reply| protocol::parse_battery(&reply))
+            })
+            .flatten();
+        let (battery_percent, charging) = match battery {
+            Some((percent, charging)) => (Some(percent), charging),
+            None => (None, false),
+        };
+        let lighting = model
+            .switch_dialect
+            .then(|| {
+                self.query(dev, &firmware::read_lighting_query(), Self::echoes(0xa0))
+                    .and_then(|reply| firmware::parse_lighting(&reply))
+            })
+            .flatten();
+        let power = model
+            .switch_dialect
+            .then(|| {
+                self.query(dev, &firmware::read_power_query(), Self::echoes(0xa9))
+                    .and_then(|reply| firmware::parse_power_saving(&reply))
             })
             .flatten();
         info!(
@@ -317,11 +447,17 @@ impl KeyboardManager {
                 generation: Some(model.gen),
                 wireless: model.wireless,
                 firmware,
-                battery_percent: battery,
+                battery_percent,
+                charging,
                 region,
                 has_oled: model.oled.is_some(),
-                has_actuation: model.actuation,
+                // Deliberately both flags: a board with adjustable switches
+                // whose command dialect is unknown gets no switches tab, rather
+                // than one whose controls quietly do nothing.
+                has_actuation: model.actuation && model.switch_dialect,
                 oled_wire: self.wire_for(&model),
+                lighting,
+                power,
             };
         }
         // Gen 3 documents an init before direct lighting is accepted. The
@@ -332,10 +468,71 @@ impl KeyboardManager {
                 debug!("keyboard init refused: {e}");
             }
         }
+        if let Ok(mut slot) = self.effective.lock() {
+            *slot = Some(model);
+        }
+        self.restore_switch_settings(dev, &model);
         self.dirty.store(true, Ordering::Relaxed);
         self.emit_presence(true);
         self.emit_status();
         model
+    }
+
+    /// Re-send the switch settings after a reconnect.
+    ///
+    /// These writes are volatile — nothing here calls the flash-save command,
+    /// deliberately, so that Inari never edits the profile the keyboard falls
+    /// back to when it is used on another machine. The price is that unplugging
+    /// the board, or letting it sleep and wake on its own, silently returns
+    /// every switch to its onboard value while Inari's UI keeps showing the
+    /// user's numbers. The lighting effect is already restored this way by the
+    /// `dirty` flag; the switches had no equivalent.
+    ///
+    /// Only settings the user actually changed are sent. Writing the defaults
+    /// would overwrite whatever the onboard profile holds with Inari's opinion,
+    /// which is the opposite of leaving the board alone.
+    fn restore_switch_settings(&self, dev: &mut HidDevice, model: &Model) {
+        if !model.actuation || !model.switch_dialect {
+            return;
+        }
+        let config = self.config();
+        let hids: Vec<u8> = super::keys::layout(model.form, config.physical)
+            .into_iter()
+            .map(|k| k.hid)
+            .collect();
+
+        if config.actuation.is_some() || !config.per_key_actuation.is_empty() {
+            let global = config.actuation.unwrap_or(15);
+            let table: Vec<firmware::KeyActuation> = hids
+                .iter()
+                .filter(|hid| config.actuation.is_some() || config.per_key_actuation.contains_key(hid))
+                .map(|&hid| {
+                    let tenths = config.per_key_actuation.get(&hid).copied().unwrap_or(global);
+                    firmware::KeyActuation::uniform(model, hid, tenths)
+                })
+                .collect();
+            let _ = self.feature(dev, &firmware::set_actuation(model, &table, 0));
+        }
+
+        if config.rapid_trigger > 0 {
+            let table: Vec<(u8, u8)> = hids.iter().map(|&h| (h, config.rapid_trigger)).collect();
+            let _ = self.feature(
+                dev,
+                &firmware::set_rapid_trigger_sensitivity(model, &table),
+            );
+            let on = firmware::rapid_trigger_on_value(model);
+            let modes: Vec<(u8, u8)> = hids.iter().map(|&h| (h, on)).collect();
+            let _ = self.feature(dev, &firmware::set_release_mode(model, &modes));
+        }
+
+        if config.protection_mode {
+            let table: Vec<(u8, bool)> = hids.iter().map(|&h| (h, true)).collect();
+            let _ = self.feature(dev, &firmware::set_protection_mode(model, &table));
+        }
+
+        if config.rapid_tap {
+            let _ = dev.write_command(&firmware::set_rapid_tap(true));
+        }
     }
 
     /// Send a feature report, falling back to the other envelope once.
@@ -379,7 +576,17 @@ impl KeyboardManager {
         let mut oled_at = Instant::now();
         let mut awake_since = Instant::now();
         let started = Instant::now();
-        let mut failures = 0u32;
+        // Two counters, not one: the lighting write and the OLED push are
+        // independent paths, and only one of them is guaranteed to run on any
+        // given tick. Sharing a counter means an animated effect zeroes it
+        // every 33 ms and hides a permanently failing panel, while an onboard
+        // effect never zeroes it and lets eight transients spread over hours
+        // add up to a dropped connection.
+        let mut light_failures = 0u32;
+        let mut oled_failures = 0u32;
+        // Whether the panel is currently Inari's to draw on, so the handback
+        // fires exactly once on the way out.
+        let mut owns_oled = false;
 
         loop {
             let config = self.config();
@@ -432,10 +639,10 @@ impl KeyboardManager {
                     match self.feature(dev, &protocol::direct_packet(&model, &frame)) {
                         Ok(()) => {
                             last_frame = Some(frame);
-                            failures = 0;
+                            light_failures = 0;
                         }
                         Err(e) => {
-                            failures += 1;
+                            light_failures += 1;
                             debug!("keyboard lighting write failed: {e}");
                         }
                     }
@@ -466,14 +673,27 @@ impl KeyboardManager {
                     oled_at = Instant::now();
                     if self.push_oled(dev, &model, &fb) {
                         last_oled = Some(fb);
+                        owns_oled = true;
+                        oled_failures = 0;
                     } else {
-                        failures += 1;
+                        oled_failures += 1;
                     }
                     wrote = true;
                 }
+            } else if owns_oled {
+                // The user picked "keyboard's own", or the panel went away.
+                // Simply going quiet is not enough: the firmware repaints its
+                // status strip but leaves the content area on Inari's last
+                // picture.
+                owns_oled = false;
+                last_oled = None;
+                if let Some(packet) = protocol::oled_release(&model) {
+                    let _ = self.feature(dev, &packet);
+                }
+                wrote = true;
             }
 
-            if failures >= MAX_FAILURES {
+            if light_failures >= MAX_FAILURES || oled_failures >= MAX_FAILURES {
                 warn!("keyboard stopped accepting writes; dropping the connection");
                 return;
             }
@@ -484,12 +704,13 @@ impl KeyboardManager {
             // --- battery ---
             if model.battery && battery_at.elapsed() >= BATTERY_INTERVAL {
                 battery_at = Instant::now();
-                if let Some(percent) = self
-                    .query(dev, &protocol::battery_query())
+                if let Some((percent, charging)) = self
+                    .query(dev, &protocol::battery_query(), Self::echoes(0x92))
                     .and_then(|reply| protocol::parse_battery(&reply))
                 {
                     if let Ok(mut status) = self.status.lock() {
                         status.battery_percent = Some(percent);
+                        status.charging = charging;
                     }
                     self.emit_status();
                 }
@@ -534,14 +755,21 @@ impl KeyboardManager {
         let light = &config.lighting;
         match light.kind {
             EffectKind::Off => vec![protocol::release_to_onboard(model)],
-            EffectKind::Reactive => vec![
-                protocol::brightness(light.brightness),
-                protocol::zone_color(protocol::ZONE_ALL, light.color),
-                protocol::reactive(true),
-                protocol::apply(),
-            ],
+            // `zone_color` is deliberately absent for Gen 2+: those boards
+            // have no zone command at all, and `0x21` there is the per-key
+            // direct write. Sending it would be an undefined command rather
+            // than a colour.
+            EffectKind::Reactive => {
+                let mut packets = vec![protocol::brightness_for(model, light.brightness)];
+                if model.gen < Gen::Gen2 {
+                    packets.push(protocol::zone_color(protocol::ZONE_ALL, light.color));
+                }
+                packets.push(protocol::reactive(true));
+                packets.push(protocol::apply());
+                packets
+            }
             EffectKind::ColorShift => vec![
-                protocol::brightness(light.brightness),
+                protocol::brightness_for(model, light.brightness),
                 protocol::color_shift(light.color, light.color2, light.speed),
                 protocol::apply(),
             ],
@@ -570,10 +798,11 @@ impl KeyboardManager {
         let Some(levels) = guard.as_ref() else {
             return 0.0;
         };
+        let reader = levels.reader("keyboard");
         levels
             .names()
             .into_iter()
-            .map(|(_, slot)| levels.drain(slot, 0).max(levels.drain(slot, 1)))
+            .map(|(_, slot)| levels.drain(reader, slot, 0).max(levels.drain(reader, slot, 1)))
             .fold(0.0f32, f32::max)
             .clamp(0.0, 1.0)
     }
@@ -588,13 +817,17 @@ impl KeyboardManager {
     /// board frozen on its last frame.
     pub fn release(&self) {
         let Some(model) = self.model() else { return };
-        let _ = self.send_control(&protocol::release_to_onboard(model));
+        let _ = self.send_control(&protocol::release_to_onboard(&model));
+        if let Some(packet) = protocol::oled_release(&model) {
+            let _ = self.send_feature(&packet);
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::keyboard::protocol::Packing;
 
     #[test]
     fn a_fresh_manager_is_disconnected_but_configured() {
@@ -615,8 +848,19 @@ mod tests {
 
         config.lighting.kind = EffectKind::Reactive;
         let packets = manager.onboard_packets(&config, model);
-        assert_eq!(packets.len(), 4, "brightness, colour, reactive, apply");
-        assert_eq!(packets[2][1], 0x25);
+        // Gen 2+: brightness, reactive, apply — no zone write, because 0x21 on
+        // these boards is the per-key direct write and 0x22 is
+        // `clear_direct_write`.
+        assert_eq!(packets.len(), 3, "brightness, reactive, apply");
+        assert_eq!(packets[0][1], 0x20, "brightness via lighting_config");
+        assert_ne!(packets[0][1], 0x22, "0x22 would wipe the direct-write buffer");
+        assert_eq!(packets[1][1], 0x25);
+
+        let gen1 = protocol::model(protocol::PID_APEX_PRO).unwrap();
+        let gen1_packets = manager.onboard_packets(&config, gen1);
+        assert_eq!(gen1_packets.len(), 4, "brightness, colour, reactive, apply");
+        assert_eq!(gen1_packets[0][1], 0x22, "Gen 1 keeps the OpenRGB dialect");
+        assert_eq!(gen1_packets[1][1], 0x21);
 
         config.lighting.kind = EffectKind::Off;
         assert_eq!(manager.onboard_packets(&config, model)[0][1], 0x41);
@@ -665,12 +909,12 @@ mod tests {
             manager.wire_for(model),
             Some(OledWire::Single {
                 cmd: 0x61,
-                page: true
+                packing: Packing::Page
             })
         );
         let pinned = OledWire::Chunked {
             cmd: 0x4c,
-            page: false,
+            packing: Packing::Row,
         };
         manager.edit_config(|c| c.oled_wire = Some(pinned)).unwrap();
         assert_eq!(manager.wire_for(model), Some(pinned));

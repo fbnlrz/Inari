@@ -27,6 +27,7 @@ Usage:
   inari mute <channel|mic> [on|off]   mute, unmute, or toggle (default)
   inari volume <channel> <0-150>      set a channel's volume in percent
   inari profile <name>                load a saved profile
+  inari doctor                        report what Inari sees of your hardware
   inari --help                        this text
 
 <channel> is a channel's label (\"Chat\") or its sink name (\"sink_chat\").
@@ -42,6 +43,10 @@ pub enum Cli {
     Control(Action),
     /// Print [`USAGE`] and exit 0.
     Help,
+    /// Print the hardware report and exit 0. Unlike the control commands this
+    /// runs in *this* process, so it works when no Inari is running — which is
+    /// the situation it exists for.
+    Doctor,
     /// Bad invocation: the message says what was wrong; exit 2.
     Usage(String),
 }
@@ -92,6 +97,7 @@ pub fn parse(args: &[String]) -> Cli {
         return Cli::Launch { minimized };
     };
     match *verb {
+        "doctor" => arity(rest, 0, "doctor").unwrap_or(Cli::Doctor),
         "status" => arity(rest, 0, "status").unwrap_or(Cli::Control(Action::Status)),
         "mute" => parse_mute(rest),
         "volume" => parse_volume(rest),
@@ -254,6 +260,10 @@ fn label_of(state: &AppState, target: &Target) -> String {
 }
 
 fn status(state: &AppState) -> Result<String, String> {
+    // Same reason as the tray: this prints what the sinks are doing, so it has
+    // to ask them rather than trust a cache the window may never have
+    // refreshed.
+    state.refresh_channel_state();
     let mixer = state.lock_mixer()?;
     let engine = match (state.backend_native, state.backend.is_engine_alive()) {
         (_, false) => "stopped",
@@ -277,10 +287,13 @@ fn status(state: &AppState) -> Result<String, String> {
             if channel.muted { "  muted" } else { "" }
         ));
     }
+    // Deliberately not `sink_mic`: this is the gain of Inari's microphone
+    // chain, not that node's volume, and printing the node name beside it
+    // invited exactly the comparison against `pw-dump` that it fails.
     out.push_str(&format!(
         "  {:<12} {:<14} {:>3}%{}",
         "Microphone",
-        "sink_mic",
+        "(input gain)",
         mixer.mic.gain_percent,
         if mixer.mic.muted { "  muted" } else { "" }
     ));
@@ -299,6 +312,13 @@ pub fn early_exit(args: &[String]) -> Option<i32> {
         Cli::Usage(msg) => {
             eprintln!("inari: {msg}\n\n{USAGE}");
             Some(2)
+        }
+        // Printed here, in the caller's terminal, rather than forwarded to a
+        // running instance: the report is most useful precisely when nothing
+        // is running properly.
+        Cli::Doctor => {
+            print!("{}", crate::device::doctor::report());
+            Some(0)
         }
         _ => None,
     }
@@ -440,6 +460,12 @@ mod tests {
     fn early_exit_only_claims_the_invocations_it_answers() {
         assert_eq!(early_exit(&["--help".to_string()]), Some(0));
         assert_eq!(early_exit(&["nonsense".to_string()]), Some(2));
+        // doctor answers in this process; a control verb does not.
+        assert_eq!(parse(&["doctor".to_string()]), Cli::Doctor);
+        assert_eq!(
+            parse(&["doctor".to_string(), "x".to_string()]),
+            Cli::Usage("doctor takes no arguments".into())
+        );
         assert_eq!(early_exit(&[]), None);
         assert_eq!(early_exit(&["status".to_string()]), None);
     }

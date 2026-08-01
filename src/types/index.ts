@@ -2,6 +2,9 @@
 
 export interface AppStream {
   index: number;
+  /** PipeWire's `object.serial` — monotonic, never reused. Sent back with
+   *  every write so a delayed command cannot land on a recycled index. */
+  serial: number | null;
   app_name: string;
   /** PipeWire property the identity was read from. */
   match_prop: string;

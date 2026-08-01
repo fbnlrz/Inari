@@ -207,14 +207,7 @@ pub fn save(product_id: u16) -> Vec<u8> {
 /// answers `0xff`, which falls outside the valid range and is rejected.
 /// Confirmed against real hardware: wired reply `92 95 …` = charging, 100%.
 pub fn parse_battery(buf: &[u8]) -> Option<(u8, bool)> {
-    let raw = *buf.get(1)?;
-    let charging = raw & 0x80 != 0;
-    let level = raw & 0x7f;
-    let percent = (level as i32 - 1) * 5;
-    if !(0..=100).contains(&percent) {
-        return None;
-    }
-    Some((percent as u8, charging))
+    crate::device::parse_battery_byte(*buf.get(1)?)
 }
 
 /// Full mouse configuration as persisted and shown in the UI.

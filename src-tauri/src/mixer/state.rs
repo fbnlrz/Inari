@@ -45,7 +45,31 @@ pub struct MixerState {
     /// Stream indices already considered for auto-routing this session.
     /// Each stream is enforced once, on first sight, so a user moving a
     /// stream elsewhere (here or in pavucontrol) isn't fought every poll.
-    pub auto_routed: HashSet<u32>,
+    pub auto_routed: HashSet<StreamKey>,
+}
+
+/// How a stream is remembered in the auto-routing ledger.
+///
+/// Not the PipeWire global id: those are recycled hard — hundreds of times a
+/// session on a busy desktop — and the ledger's own "forget streams that have
+/// gone away" pass cannot tell a recycled id from a surviving one. Discord
+/// closing and Spotify opening onto the same id, both between two polls, made
+/// Spotify look already-handled and it never reached its channel for the rest
+/// of its life. `object.serial` is monotonic and never reused; the index is
+/// the fallback for the pactl backend, which does not expose one.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum StreamKey {
+    Serial(u64),
+    Index(u32),
+}
+
+impl StreamKey {
+    pub fn of(stream: &crate::audio::types::AppStream) -> Self {
+        match stream.serial {
+            Some(serial) => StreamKey::Serial(serial),
+            None => StreamKey::Index(stream.index),
+        }
+    }
 }
 
 impl MixerState {
@@ -124,6 +148,45 @@ impl MixerState {
 
 #[cfg(test)]
 mod tests {
+    use crate::audio::types::AppStream;
+
+    fn stream(index: u32, serial: Option<u64>) -> AppStream {
+        AppStream {
+            index,
+            serial,
+            app_name: "x".into(),
+            match_prop: "application.name".into(),
+            match_value: "x".into(),
+            alias: None,
+            icon_name: None,
+            icon_path: None,
+            pid: None,
+            assigned_sink: None,
+            volume_percent: 100,
+            muted: false,
+            active: true,
+        }
+    }
+
+    #[test]
+    fn a_recycled_index_is_not_mistaken_for_a_stream_already_handled() {
+        // Discord holds index 111 and has been routed. It closes, Spotify
+        // opens and PipeWire hands it the same 111 — both between two polls,
+        // so the ledger's "forget what is gone" pass sees 111 still live and
+        // keeps the entry. Keyed by index, Spotify was skipped for the rest of
+        // its life.
+        let discord = StreamKey::of(&stream(111, Some(4_001)));
+        let spotify = StreamKey::of(&stream(111, Some(4_002)));
+        assert_ne!(discord, spotify);
+
+        // Without a serial there is nothing better than the index, and that is
+        // the pactl backend's honest best.
+        assert_eq!(
+            StreamKey::of(&stream(111, None)),
+            StreamKey::of(&stream(111, None))
+        );
+    }
+
     use super::*;
 
     #[test]

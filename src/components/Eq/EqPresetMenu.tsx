@@ -35,6 +35,7 @@ export function EqPresetMenu({ sinkName, config, onApply, onError }: Readonly<Eq
   const [importText, setImportText] = useState("");
   // Name of the user preset awaiting a delete confirmation, if any.
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [filter, setFilter] = useState("");
 
   const refresh = () => {
     call<EqPresetEntry[]>("list_eq_presets")
@@ -125,8 +126,17 @@ export function EqPresetMenu({ sinkName, config, onApply, onError }: Readonly<Eq
     }
   };
 
-  const bundled = presets.filter((p) => p.source === "bundled");
-  const user = presets.filter((p) => p.source === "user");
+  // Thirty-odd presets in one flat list, with the description hidden in a
+  // tooltip, meant finding one was scrolling and guessing. Filtering matches
+  // the description too — "for open-backs" is how you remember a preset, not
+  // its name.
+  const q = filter.trim().toLowerCase();
+  const matches = (p: EqPresetEntry) =>
+    !q ||
+    p.preset.name.toLowerCase().includes(q) ||
+    (p.preset.description ?? "").toLowerCase().includes(q);
+  const bundled = presets.filter((p) => p.source === "bundled" && matches(p));
+  const user = presets.filter((p) => p.source === "user" && matches(p));
 
   // The button names whichever preset the current curve matches exactly; any
   // manual edit breaks the match and it falls back to the generic label.
@@ -153,7 +163,12 @@ export function EqPresetMenu({ sinkName, config, onApply, onError }: Readonly<Eq
         onClick={() => applyPreset(entry)}
       >
         <Ms name="graphic_eq" />
-        <span className="eqm-preset-name">{entry.preset.name}</span>
+        <span className="eqm-preset-text">
+          <span className="eqm-preset-name">{entry.preset.name}</span>
+          {entry.preset.description && (
+            <span className="eqm-preset-desc">{entry.preset.description}</span>
+          )}
+        </span>
       </button>
       {entry.source === "user" &&
         (confirmDelete === entry.preset.name ? (
@@ -216,9 +231,22 @@ export function EqPresetMenu({ sinkName, config, onApply, onError }: Readonly<Eq
         align="end"
         style={{ minWidth: 260 }}
       >
+        <div className="eqm-filter">
+          <Ms name="search" style={{ fontSize: 15 }} />
+          <input
+            type="search"
+            value={filter}
+            placeholder="Filter presets"
+            aria-label="Filter presets"
+            onChange={(e) => setFilter(e.target.value)}
+          />
+        </div>
         {/* The bundled library is long, so the list scrolls while the save
             and import/export controls below stay put. */}
         <div className="eqm-preset-list">
+          {bundled.length === 0 && user.length === 0 && (
+            <div className="eqm-preset-head">No preset matches “{filter}”</div>
+          )}
           {bundled.length > 0 && (
             <>
               <div className="eqm-preset-head">Bundled</div>

@@ -31,6 +31,42 @@ impl AppState {
             .map_err(|_| "mixer state lock poisoned".to_string())
     }
 
+    /// Pull each channel strip's volume and mute from the sink itself.
+    ///
+    /// `mixer.channels` is a cache, and three different things read it: the
+    /// window (`get_virtual_devices`), the tray's mute rows, and `inari
+    /// status`. It used to be filled once during `init_virtual_devices` and
+    /// never refreshed, so anything that changed a level outside Inari —
+    /// `pavucontrol`, `wpctl`, WirePlumber restoring a remembered level when a
+    /// device reappears — left all three reporting a number the sink had
+    /// stopped using. Refreshing in only one of the three readers would just
+    /// move the problem: whether the tray told the truth would depend on
+    /// whether the window happened to be open.
+    ///
+    /// `sink_state` is an in-memory read of what the loop thread already
+    /// mirrors, so this is a channel round trip and no server traffic. A
+    /// backend that cannot answer leaves the cached value alone, as at init.
+    pub fn refresh_channel_state(&self) {
+        let names: Vec<String> = match self.mixer.lock() {
+            Ok(mixer) => mixer.channels.iter().map(|c| c.name.clone()).collect(),
+            Err(_) => return,
+        };
+        // Read outside the lock: holding it across a backend call would stall
+        // every other command.
+        let live: Vec<(String, Option<(u8, bool)>)> = names
+            .into_iter()
+            .map(|name| {
+                let state = self.backend.sink_state(&name).unwrap_or(None);
+                (name, state)
+            })
+            .collect();
+        if let Ok(mut mixer) = self.mixer.lock() {
+            mixer.adopt_live_channel_state(|name| {
+                live.iter().find(|(n, _)| n == name).and_then(|(_, s)| *s)
+            });
+        }
+    }
+
     pub fn new(backend: Arc<dyn AudioBackend>, backend_native: bool) -> Self {
         // Saved assignments are loaded eagerly so auto-routing can enforce
         // them as soon as the sinks exist.

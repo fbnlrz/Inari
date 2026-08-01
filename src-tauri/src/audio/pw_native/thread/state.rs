@@ -168,6 +168,35 @@ pub(super) struct State {
     pub(super) eq_desired_targets: HashMap<u32, std::collections::HashSet<u32>>,
 }
 
+
+impl State {
+    /// Drop everything keyed by a channel's node name.
+    ///
+    /// Node names are derived from the label and are deterministic, so
+    /// deleting "Game" and creating it again produces `sink_game` a second
+    /// time. Anything left behind under that key is silently inherited by the
+    /// new channel — the failover-off flag survived this way, so a fresh
+    /// channel came up with automatic fallback disabled while the UI, which
+    /// had correctly forgotten the setting, showed it as on.
+    ///
+    /// One place to add to, rather than a list of removals repeated per call
+    /// site and drifting apart.
+    pub(super) fn forget_channel(&mut self, name: &str) {
+        self.desired.remove(name);
+        self.eq_configs.remove(name);
+        self.channel_links.remove(name);
+        self.bus_links.retain(|(_, ch), _| ch != name);
+        self.channel_outputs.remove(name);
+        self.channel_strict.remove(name);
+        self.channel_targets.remove(name);
+        self.monitored.remove(name);
+        self.monitor_links.remove(name);
+        if let Some(levels) = &self.levels {
+            levels.release(name);
+        }
+    }
+}
+
 impl State {
     /// Live node id of the mic playback stream. Resolved lazily - the id
     /// is only valid once the server has created the stream's node.

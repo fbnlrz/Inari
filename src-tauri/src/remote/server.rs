@@ -139,12 +139,42 @@ struct Refresh {
 pub struct Running {
     pub addr: SocketAddr,
     shutdown: Option<oneshot::Sender<()>>,
+    /// Joined by `stop`, so the listener is really closed before the caller
+    /// tries to bind the same port again.
+    thread: Option<std::thread::JoinHandle<()>>,
 }
 
+/// How long `stop` waits for the server thread to finish.
+///
+/// Long enough to cover a normal teardown, short enough that a wedged thread
+/// does not freeze the settings window.
+const STOP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
 impl Running {
+    /// Stop the server and wait for the listener to actually close.
+    ///
+    /// The waiting is the point. Signalling and returning immediately left the
+    /// close to happen on another thread, and every caller of `stop` — the
+    /// token regeneration, the bind picker, the enable toggle — binds the same
+    /// port again straight afterwards. Whether that succeeded was a thread
+    /// race: it almost always won on an idle machine, and lost 25-70% of the
+    /// time under load, which is exactly when someone reaches for the tablet.
+    /// Losing meant "Address already in use", a dead server, and the remote
+    /// switched off behind the user's back.
     pub fn stop(mut self) {
         if let Some(tx) = self.shutdown.take() {
             let _ = tx.send(());
+        }
+        if let Some(handle) = self.thread.take() {
+            let deadline = std::time::Instant::now() + STOP_TIMEOUT;
+            while !handle.is_finished() && std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            if handle.is_finished() {
+                let _ = handle.join();
+            } else {
+                log::warn!("remote server did not stop within {STOP_TIMEOUT:?}");
+            }
         }
     }
 }
@@ -184,7 +214,7 @@ pub fn start(
         refresh: Refresh::default(),
     });
 
-    std::thread::Builder::new()
+    let thread = std::thread::Builder::new()
         .name("inari-remote".into())
         .spawn(move || {
             let runtime = match tokio::runtime::Builder::new_multi_thread()
@@ -210,6 +240,7 @@ pub fn start(
     Ok(Running {
         addr,
         shutdown: Some(shutdown_tx),
+        thread: Some(thread),
     })
 }
 
@@ -419,19 +450,31 @@ fn spawn_command(
     let replies = replies.clone();
     tokio::spawn(async move {
         let _slot = slot;
-        // Closed only when the connection is going away.
-        let Ok(_permit) = ctx.in_flight.acquire().await else {
-            return;
+        // The permit is held across the work and released before the answer is
+        // handed to the socket. It exists to bound how many handlers *run*;
+        // keeping it over `replies.send()` made it bound how many wait for one
+        // client's TCP back-pressure instead. There are eight permits for all
+        // clients together, so a tablet that keeps sending and stops reading
+        // filled its 32-slot reply channel, parked all eight handlers in the
+        // send, and every other client stopped getting answers.
+        let reply = {
+            // Closed only when the connection is going away.
+            let Ok(_permit) = ctx.in_flight.acquire().await else {
+                return;
+            };
+            match Frame::parse(&text) {
+                Ok(Frame::Call(request)) => run(&ctx, request).await,
+                Ok(Frame::Pong) => PONG.to_string(),
+                // Nothing to do and nothing to say: the client is already
+                // getting every event.
+                Ok(Frame::Ignored) => return,
+                Err(e) => reply_err(&Value::Null, &e),
+            }
         };
-        let reply = match Frame::parse(&text) {
-            Ok(Frame::Call(request)) => run(&ctx, request).await,
-            Ok(Frame::Pong) => PONG.to_string(),
-            // Nothing to do and nothing to say: the client is already getting
-            // every event.
-            Ok(Frame::Ignored) => return,
-            Err(e) => reply_err(&Value::Null, &e),
-        };
-        let _ = replies.send(reply).await;
+        // And a client that will not drain its own replies pays for it alone.
+        if replies.try_send(reply).is_err() {
+            log::debug!("remote client is not reading its replies; dropping it");
+        }
     });
     true
 }

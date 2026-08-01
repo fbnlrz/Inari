@@ -41,14 +41,40 @@ pub fn add_channel(
     }
 
     defs.save().map_err(|e| e.to_string())?;
+
+    // Check what the sink ended up at, and insist if something moved it.
+    //
+    // Channel names are derived from the label, so recreating a channel you
+    // once deleted produces the same `sink_name` again — and WirePlumber
+    // remembers levels per node name and never forgets them. On this machine
+    // `stream-properties` still holds `sink_system={"channelVolumes":[0.0]}`
+    // from a channel that no longer exists. Its restore lands when the node
+    // appears, which is after our write, so a freshly created channel could
+    // come up silent while the strip claimed 100%.
+    let (volume_percent, muted) = match state.backend.sink_state(&def.name) {
+        Ok(Some((volume, muted))) if volume != 100 || muted => {
+            let _ = state.backend.set_sink_volume(&def.name, 100);
+            let _ = state.backend.set_sink_mute(&def.name, false);
+            state
+                .backend
+                .sink_state(&def.name)
+                .ok()
+                .flatten()
+                .unwrap_or((100, false))
+        }
+        Ok(Some(state_now)) => state_now,
+        // A backend that cannot say keeps the placeholder, as at init.
+        _ => (100, false),
+    };
+
     let (buses, names, snapshot) = {
         let mut mixer = state.lock_mixer()?;
         mixer.channels.push(VirtualSink {
             name: def.name,
             label: def.label,
             icon: def.icon,
-            volume_percent: 100,
-            muted: false,
+            volume_percent,
+            muted,
             stream_mix: def.stream_mix,
         });
         // The new channel joins the master mix automatically.
@@ -149,12 +175,21 @@ pub fn rename_channel(
 /// assignments are dropped, and the sink is destroyed.
 #[tauri::command]
 pub fn remove_channel(state: State<'_, AppState>, sink_name: String) -> Result<(), String> {
-    // Validate against the definition set first (also enforces "keep one").
+    // Check, but do not commit. Removing the definition here and destroying
+    // the sink afterwards meant a failure in between left the two halves of
+    // the mixer disagreeing: the strip stayed on screen while `channel_defs`
+    // had already forgotten it, so the sink was never torn down at exit,
+    // `get_channel_outputs` and `get_channel_failover` stopped listing it, and
+    // monitoring refused it — all without any file being written. The next
+    // unrelated save then made it permanent, while assignments.json and the
+    // WirePlumber fragment still pointed apps at a channel that no longer
+    // existed. `add_channel` has had a rollback for exactly this since it was
+    // written; this path simply never got one.
     {
-        let mut mixer = state.lock_mixer()?;
+        let mixer = state.lock_mixer()?;
         mixer
             .channel_defs
-            .remove(&sink_name)
+            .can_remove(&sink_name)
             .map_err(|e| e.to_string())?;
     }
 
@@ -175,8 +210,13 @@ pub fn remove_channel(state: State<'_, AppState>, sink_name: String) -> Result<(
         .destroy_virtual_sink(&sink_name)
         .map_err(|e| e.to_string())?;
 
+    // Everything that can fail has now succeeded; commit both halves together.
     let (defs, assignments, outputs, eq, buses, names, snapshot) = {
         let mut mixer = state.lock_mixer()?;
+        mixer
+            .channel_defs
+            .remove(&sink_name)
+            .map_err(|e| e.to_string())?;
         mixer.channels.retain(|c| c.name != sink_name);
         mixer
             .assignments

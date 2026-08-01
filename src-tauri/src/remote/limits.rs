@@ -191,10 +191,25 @@ impl<Io: AsyncWrite + Unpin> AsyncWrite for Guarded<Io> {
     ) -> Poll<io::Result<usize>> {
         let me = self.get_mut();
         let polled = Pin::new(&mut me.io).poll_write(cx, buf);
-        if polled.is_ready() {
-            me.touch();
+        match polled {
+            Poll::Ready(ready) => {
+                me.touch();
+                Poll::Ready(ready)
+            }
+            // A socket can be stuck here just as readily as in `poll_read`,
+            // and when it is, `poll_read` is not being polled at all — so
+            // checking the deadline only there meant a connection wedged in a
+            // write outlived the idle timeout indefinitely against a peer that
+            // keeps acknowledging without reading. It held one of the 64
+            // slots, kept `Clients::leave` from ever running (a phantom tablet
+            // in the settings), and kept the level and graph emitters pushing
+            // at 10 Hz into a window nobody was looking at.
+            Poll::Pending if me.expired(cx) => Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "the connection went idle",
+            ))),
+            Poll::Pending => Poll::Pending,
         }
-        polled
     }
 
     fn poll_write_vectored(
@@ -204,10 +219,17 @@ impl<Io: AsyncWrite + Unpin> AsyncWrite for Guarded<Io> {
     ) -> Poll<io::Result<usize>> {
         let me = self.get_mut();
         let polled = Pin::new(&mut me.io).poll_write_vectored(cx, bufs);
-        if polled.is_ready() {
-            me.touch();
+        match polled {
+            Poll::Ready(ready) => {
+                me.touch();
+                Poll::Ready(ready)
+            }
+            Poll::Pending if me.expired(cx) => Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "the connection went idle",
+            ))),
+            Poll::Pending => Poll::Pending,
         }
-        polled
     }
 
     fn is_write_vectored(&self) -> bool {

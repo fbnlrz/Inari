@@ -181,6 +181,22 @@ interface MixerStore {
 const jsonEqual = (a: unknown, b: unknown): boolean =>
   JSON.stringify(a) === JSON.stringify(b);
 
+/**
+ * Channels whose volume this store has changed but not yet written.
+ *
+ * `state-changed` fires for plenty of things that are not this fader — a
+ * hotkey, the tray, the CLI, a tablet, even showing the window — and each one
+ * makes the store refetch. The backend still holds the pre-write value during
+ * the 90 ms debounce, so the refetch handed the fader its old position back
+ * while the write went out with the new one. The sink ended up where the user
+ * put it and the strip showed something else, permanently, because nothing
+ * refetches again afterwards.
+ *
+ * Kept outside the store: it is bookkeeping for reconciliation, not state
+ * anything renders.
+ */
+const pendingVolume = new Set<string>();
+
 export const useMixerStore = create<MixerStore>((set, get) => ({
   channels: [],
   appStreams: [],
@@ -327,7 +343,15 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
   fetchChannels: async () => {
     try {
       const channels = await call<VirtualSink[]>("get_virtual_devices");
-      set({ channels });
+      // A channel with a write in flight keeps what the user set; everything
+      // else takes the backend's answer.
+      set((s) => ({
+        channels: channels.map((c) => {
+          if (!pendingVolume.has(c.name)) return c;
+          const local = s.channels.find((x) => x.name === c.name);
+          return local ? { ...c, volume_percent: local.volume_percent } : c;
+        }),
+      }));
     } catch (e) {
       set({ error: String(e) });
     }
@@ -352,13 +376,18 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
         c.name === sinkName ? { ...c, volume_percent: volume } : c,
       ),
     }));
-    debouncedInvoke(
+    pendingVolume.add(sinkName);
+    debounce(
       `chvol:${sinkName}`,
-      "set_channel_volume",
-      { sinkName, volume },
-      (e) => {
-        set({ error: String(e) });
-        void get().fetchChannels();
+      () =>
+        call("set_channel_volume", { sinkName, volume }).finally(() => {
+          pendingVolume.delete(sinkName);
+        }),
+      {
+        onError: (e) => {
+          set({ error: String(e) });
+          void get().fetchChannels();
+        },
       },
     );
   },
@@ -395,6 +424,7 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
   },
 
   routeApp: async (streamIndex, sinkName) => {
+    const serial = get().appStreams.find((a) => a.index === streamIndex)?.serial ?? null;
     set((s) => ({
       appStreams: s.appStreams.map((a) =>
         a.index === streamIndex
@@ -403,7 +433,7 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
       ),
     }));
     try {
-      await call("route_app_to_channel", { streamIndex, sinkName });
+      await call("route_app_to_channel", { streamIndex, serial, sinkName });
     } catch (e) {
       set({ error: String(e) });
     } finally {
@@ -412,6 +442,9 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
   },
 
   setAppVolume: async (streamIndex, volume) => {
+    // Captured now, sent when the debounce fires: the index may belong to a
+    // different stream by then, the serial cannot.
+    const serial = get().appStreams.find((a) => a.index === streamIndex)?.serial ?? null;
     set((s) => ({
       appStreams: s.appStreams.map((a) =>
         a.index === streamIndex ? { ...a, volume_percent: volume } : a,
@@ -420,7 +453,7 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
     debouncedInvoke(
       `appvol:${streamIndex}`,
       "set_app_volume",
-      { streamIndex, volume },
+      { streamIndex, serial, volume },
       (e) => set({ error: String(e) }),
     );
   },
@@ -511,13 +544,28 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
   setMicConfig: async (patch) => {
     const current = get().micConfig;
     if (!current) return;
-    const config = { ...current, ...patch };
-    set({ micConfig: config });
+    set({ micConfig: { ...current, ...patch } });
     // Debounced: slider drags and rename typing settle into one apply.
-    debouncedInvoke("micConfig", "set_mic_config", { config }, (e) => {
-      set({ error: String(e) });
-      void get().fetchMic();
-    });
+    //
+    // The payload is built when the timer fires, not when the call is made.
+    // `set_mic_config` writes the whole struct, so freezing it here meant any
+    // sibling field changed from outside during those 90 ms was rolled back by
+    // this write: press the mic-mute hotkey mid-drag and the microphone
+    // reopened while the UI, the tray and the status label all still said
+    // "Muted", with nothing left to correct it.
+    debounce(
+      "micConfig",
+      () => {
+        const config = get().micConfig;
+        return config ? call("set_mic_config", { config }) : Promise.resolve();
+      },
+      {
+        onError: (e) => {
+          set({ error: String(e) });
+          void get().fetchMic();
+        },
+      },
+    );
   },
 
   fetchProfiles: async () => {

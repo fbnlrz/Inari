@@ -176,7 +176,7 @@ export function MicScreen() {
             </div>
 
             <div className="section-label">Processing</div>
-            <div className="card" style={{ padding: "var(--sp-2)" }}>
+            <div className="card">
               <ToggleRow
                 icon="noise_control_off"
                 title="Noise gate"

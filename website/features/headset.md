@@ -20,16 +20,25 @@ Nova Pro Wireless and the Xbox "X" variants.
   pairing, Bluetooth, mic mute, power/charging state. Pushed live from the
   device's own event stream, plus a 2-second heartbeat.
 - **Noise control** — Off / Transparency (with passthrough level) / ANC.
-- **Audio gain** — Low / High.
+- **Audio gain** — Low / High, showing what the station is actually set to.
+  (Before v1.0.13 the control was hard-wired to "Low", so clicking "Low" to
+  toggle actually undid the change.)
 - **Anti-crackle headroom** — an optional WirePlumber fragment for setups that
   crackle. WirePlumber only reads it at startup, so it applies at next login
   (see [Troubleshooting](/troubleshooting)).
 - **Microphone** — mic volume, sidetone (Off/Low/Med/High), mute-LED brightness.
 - **Hardware equalizer** — the 10-band EQ baked into the headset, ±10 dB per
   band (the device stores it in 0.5 dB steps), plus its built-in presets and a
-  large preset library. This is separate from Inari's per-channel software EQ.
-- **Line out** — Speaker / Stream mode, with the stream main-L/R and aux
-  volumes.
+  large preset library, grouped by category. This is separate from Inari's
+  per-channel software EQ.
+
+  The faders start from the curve the station already holds and show their
+  value in dB against a 0 dB line. Before v1.0.13 they started at ten zeros,
+  which meant the first fader you touched wrote a flat curve over whatever the
+  station was playing — and followed it with a save to the headset's flash.
+- **Line out** — Speaker / Stream mode, with the stream mix: main, aux and
+  microphone shares. The station stores these in steps of 5 and floors anything
+  between, so the slider snaps to match what the device will actually keep.
 - **Power & wireless** — auto shut-off timer, 2.4 GHz Speed/Range mode.
 - **ChatMix** — the hardware wheel's game/chat balance, read live.
 

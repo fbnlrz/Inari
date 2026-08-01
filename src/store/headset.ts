@@ -24,6 +24,14 @@ export interface HeadsetStatus {
   bluetooth_connected: boolean | null;
   bluetooth_powered: boolean | null;
   volume_percent: number | null;
+  /** Stream mix, as the base station reports it in its audio-settings frame. */
+  stream_main: number | null;
+  stream_aux: number | null;
+  stream_mic: number | null;
+  /** The station's stored EQ curve in dB, so the faders start where it is. */
+  eq_bands: number[] | null;
+  eq_preset: number | null;
+  gain_high: boolean | null;
   chatmix_game: number | null;
   chatmix_chat: number | null;
   line_out: LineOutMode | null;
@@ -74,6 +82,12 @@ const emptyStatus: HeadsetStatus = {
   bluetooth_connected: null,
   bluetooth_powered: null,
   volume_percent: null,
+  stream_main: null,
+  stream_aux: null,
+  stream_mic: null,
+  eq_bands: null,
+  eq_preset: null,
+  gain_high: null,
   chatmix_game: null,
   chatmix_chat: null,
   line_out: null,
@@ -129,7 +143,7 @@ interface HeadsetState {
   setGainHigh: (high: boolean) => void;
   setWirelessRange: (range: boolean) => void;
   setLineOut: (mode: LineOutMode) => void;
-  setLineOutVolumes: (left: number, right: number, aux: number) => void;
+  setStreamMix: (main: number, aux: number, mic: number) => void;
   setEqBands: (bands: number[]) => void;
   setEqPreset: (preset: number) => void;
 
@@ -308,10 +322,15 @@ export const useHeadset = create<HeadsetState>((set, get) => {
         );
     },
     setGainHigh: (high) => {
-      // No status field mirrors gain, so there is nothing to roll back.
+      // The audio-settings frame does carry gain, at offset 4, so this is an
+      // ordinary optimistic write with a rollback like the others.
+      const prev = get().status.gain_high;
+      set((s) => ({ status: patch(s.status, { gain_high: high }) }));
       void call("headset_set_gain_high", { high })
         .then(() => get().scheduleSave())
-        .catch((e: unknown) => fail(e));
+        .catch((e: unknown) =>
+          fail(e, () => set((s) => ({ status: patch(s.status, { gain_high: prev }) }))),
+        );
     },
     setWirelessRange: (range) => {
       const prev = get().status.wireless_range_mode;
@@ -333,10 +352,8 @@ export const useHeadset = create<HeadsetState>((set, get) => {
           fail(e, () => set((s) => ({ status: patch(s.status, { line_out: prev }) }))),
         );
     },
-    setLineOutVolumes: (left, right, aux) => {
-      debounced("lineoutvol", () =>
-        call("headset_set_line_out_volumes", { left, right, aux }),
-      );
+    setStreamMix: (main, aux, mic) => {
+      debounced("streammix", () => call("headset_set_stream_mix", { main, aux, mic }));
       get().scheduleSave();
     },
     setEqBands: (bands) => {

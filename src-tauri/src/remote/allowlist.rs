@@ -51,6 +51,13 @@ impl Args {
             .ok_or_else(|| format!("missing argument `{name}`"))?;
         serde_json::from_value(value.clone()).map_err(|e| format!("argument `{name}`: {e}"))
     }
+
+    /// An argument the caller may leave out, for fields added after a client
+    /// shipped. Absent and unparseable both read as "not given".
+    fn opt<T: DeserializeOwned>(&self, name: &str) -> Option<T> {
+        let value = self.0.get(name).or_else(|| self.0.get(&camel_case(name)))?;
+        serde_json::from_value(value.clone()).ok()
+    }
 }
 
 /// `sink_name` -> `sinkName`.
@@ -149,9 +156,9 @@ sync_table! {
     toggle_channel_mute => |app, a| ok(commands::routing::toggle_channel_mute(
         app.state(), a.get("sink_name")?, a.get("muted")?)?),
     set_app_volume => |app, a| ok(commands::routing::set_app_volume(
-        app.state(), a.get("stream_index")?, a.get("volume")?)?),
+        app.state(), a.get("stream_index")?, a.opt("serial"), a.get("volume")?)?),
     route_app_to_channel => |app, a| ok(commands::routing::route_app_to_channel(
-        app.state(), a.get("stream_index")?, a.get("sink_name")?)?),
+        app.state(), a.get("stream_index")?, a.opt("serial"), a.get("sink_name")?)?),
     set_monitor => |app, a| ok(commands::routing::set_monitor(
         app.state(), a.get("sink_name")?, a.get("enabled")?)?),
     set_channel_output => |app, a| ok(commands::devices::set_channel_output(
@@ -197,8 +204,8 @@ sync_table! {
     headset_set_gain_high => |app, a| ok(commands::headset::headset_set_gain_high(app.state(), a.get("high")?)?),
     headset_set_wireless_range => |app, a| ok(commands::headset::headset_set_wireless_range(app.state(), a.get("range")?)?),
     headset_set_line_out => |app, a| ok(commands::headset::headset_set_line_out(app.state(), a.get("mode")?)?),
-    headset_set_line_out_volumes => |app, a| ok(commands::headset::headset_set_line_out_volumes(
-        app.state(), a.get("left")?, a.get("right")?, a.get("aux")?)?),
+    headset_set_stream_mix => |app, a| ok(commands::headset::headset_set_stream_mix(
+        app.state(), a.get("main")?, a.get("aux")?, a.get("mic")?)?),
     // The balance slider is a mixer control, and the ChatMix blend is one of
     // the things you actually want to reach for mid-game. Both only write
     // prefs.
@@ -271,12 +278,28 @@ fn allowed() -> Vec<&'static str> {
 
 /// Does `cmd` only read? Everything else on the list changes something, which
 /// is what the desktop UI has to be nudged about after a remote client acts.
+///
+/// The prefix rule guesses, and every read endpoint that does not happen to
+/// start with `get_` or `list_` has to be named here or it counts as a write.
+/// The media reads were not, so a tablet sitting on the media screen — which
+/// polls once a second — made the desktop and every other tablet re-read
+/// channels and microphone every second for nothing. Note
+/// `headset_oled_status` is deliberately *not* here: it changes what the panel
+/// shows.
 pub fn is_read(cmd: &str) -> bool {
     cmd.starts_with("get_")
         || cmd.starts_with("list_")
         || matches!(
             cmd,
-            "headset_eq_presets" | "headset_oled_modes" | "headset_oled_clips"
+            "headset_eq_presets"
+                | "headset_oled_modes"
+                | "headset_oled_clips"
+                | "headset_get_notify_mirror"
+                | "headset_get_notify_display"
+                | "headset_get_alsa_headroom"
+                | "media_status"
+                | "media_players"
+                | "media_art"
         )
 }
 
@@ -449,53 +472,6 @@ mod tests {
 mod frontend_contract {
     use super::*;
 
-    /// Every command the frontend can send, read out of the sources.
-    fn called_by_frontend() -> Vec<String> {
-        let mut out = Vec::new();
-        let mut stack = vec![std::path::PathBuf::from("../src")];
-        while let Some(dir) = stack.pop() {
-            let Ok(entries) = std::fs::read_dir(&dir) else { continue };
-            for e in entries.flatten() {
-                let p = e.path();
-                if p.is_dir() {
-                    stack.push(p);
-                    continue;
-                }
-                let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                if !name.ends_with(".ts") && !name.ends_with(".tsx") {
-                    continue;
-                }
-                // ipc.ts holds the union itself; tests call whatever they like.
-                if name == "ipc.ts" || name.contains(".test.") {
-                    continue;
-                }
-                let Ok(src) = std::fs::read_to_string(&p) else { continue };
-                for (i, _) in src.match_indices("call(").chain(src.match_indices("call<")) {
-                    let rest = &src[i..];
-                    let Some(open) = rest.find('(') else { continue };
-                    let Some(q) = rest.find('"') else { continue };
-                    // The name has to be the literal argument. Anything else
-                    // between the paren and the quote means this is a computed
-                    // command (a ternary, a variable) and not ours to read.
-                    if q < open || !rest[open + 1..q].trim().is_empty() {
-                        continue;
-                    }
-                    let after = &rest[q + 1..];
-                    let Some(end) = after.find('"') else { continue };
-                    let cmd = &after[..end];
-                    if !cmd.is_empty()
-                        && cmd.chars().all(|c| c.is_ascii_lowercase() || c == '_' || c.is_ascii_digit())
-                    {
-                        out.push(cmd.to_string());
-                    }
-                }
-            }
-        }
-        out.sort_unstable();
-        out.dedup();
-        out
-    }
-
     /// A command the UI can send but the remote denies is a button that fails
     /// in the user's hand — which is how `get_hotkeys`, the headset reads and
     /// `init_virtual_devices` were each found, one error at a time. Whenever
@@ -515,7 +491,7 @@ mod frontend_contract {
             "set_device_label_style", "get_default_devices", "set_default_output",
             "set_default_input", "set_onboarded",
             // take a filesystem path
-            "import_eq_file", "export_channel_eq_to_file",
+            "import_eq_file", "export_channel_eq_to_file", "headset_oled_media",
             // spawn a process / write system config
             "headset_set_notify_mirror", "headset_set_alsa_headroom",
             // the desktop instance owns the audio graph's lifetime
@@ -533,17 +509,51 @@ mod frontend_contract {
             "keyboard_set_physical", "keyboard_set_oled", "keyboard_set_oled_wire",
             "keyboard_set_screensaver", "keyboard_oled_test", "keyboard_set_actuation",
             "keyboard_set_key_actuation", "keyboard_select_profile", "keyboard_send_raw",
+            "keyboard_set_rapid_trigger", "keyboard_set_protection_mode",
+            "keyboard_set_rapid_tap", "keyboard_set_idle", "keyboard_set_power_saving",
             // structural: the remote operates the mixer, it does not rebuild it
             "add_channel", "remove_channel", "rename_channel", "reorder_channels",
             "set_channel_icon", "add_bus", "remove_bus", "rename_bus",
             "create_blank_profile", "delete_profile", "set_profile_trigger",
             "rename_app", "forget_app",
             // the tablet does not configure the remote
-            "remote_status", "remote_set_enabled", "remote_regenerate_token",
+            "get_remote_status", "get_remote_pairing", "set_remote_enabled",
+            "set_remote_bind", "regenerate_remote_token",
         ];
 
-        let unexplained: Vec<String> = called_by_frontend()
-            .into_iter()
+        // Read the `Command` union rather than scanning for `call("name")`.
+        //
+        // The scan only saw a literal first argument, so anything routed
+        // through a helper was invisible — which is the *normal* shape in the
+        // mixer store: all five of its write commands go through
+        // `debouncedInvoke`, and the remote store drives its five from a
+        // table. The proof that the net had holes is in this very test: three
+        // of the names below ("remote_status", "remote_set_enabled",
+        // "remote_regenerate_token") were not real commands at all, and
+        // nothing noticed, because the scanner never produced them either.
+        //
+        // The union is the complete list by construction —
+        // `ipc_contract::command_union_matches_the_handler_list` pins it to
+        // `generate_handler!` — so indirection cannot hide anything from it.
+        let union = command_union();
+        assert!(
+            union.len() > 100,
+            "parsed only {} commands from ipc.ts; the parser has drifted",
+            union.len()
+        );
+
+        let bogus: Vec<&str> = GATED_IN_THE_UI
+            .iter()
+            .copied()
+            .filter(|c| !union.iter().any(|u| u == c))
+            .collect();
+        assert!(
+            bogus.is_empty(),
+            "GATED_IN_THE_UI names commands that do not exist: {bogus:?}"
+        );
+
+        let unexplained: Vec<&String> = union
+            .iter()
             .filter(|c| !is_allowed(c) && !GATED_IN_THE_UI.contains(&c.as_str()))
             .collect();
         assert!(
@@ -551,5 +561,26 @@ mod frontend_contract {
             "the UI can send these but the remote denies them, and nothing says that is intended:\n  {unexplained:?}\n\
              Either add each to the allowlist, or hide its control behind `isTauri` and list it in GATED_IN_THE_UI."
         );
+    }
+
+    /// Every command name the frontend knows, from the `Command` union.
+    fn command_union() -> Vec<String> {
+        let ts = include_str!("../../../src/lib/ipc.ts");
+        let union = ts
+            .split_once("export type Command =")
+            .expect("Command union")
+            .1
+            .split_once(';')
+            .expect("union end")
+            .0;
+        let mut out: Vec<String> = union
+            .lines()
+            .filter_map(|l| l.trim().strip_prefix("| \""))
+            .filter_map(|l| l.strip_suffix('"'))
+            .map(str::to_string)
+            .collect();
+        out.sort_unstable();
+        out.dedup();
+        out
     }
 }

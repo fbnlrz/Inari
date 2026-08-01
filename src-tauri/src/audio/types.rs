@@ -202,6 +202,15 @@ mod identity_tests {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppStream {
     pub index: u32,
+    /// PipeWire's `object.serial` for this stream.
+    ///
+    /// Global ids are recycled aggressively — on a running desktop the id
+    /// space wraps hundreds of times per session — so an id captured a moment
+    /// ago may belong to something else by the time a debounced write lands.
+    /// The serial is monotonic and never reused, which makes it the only safe
+    /// thing to hold on to across a delay.
+    #[serde(default)]
+    pub serial: Option<u64>,
     /// Display name (possibly prettified - not for matching).
     pub app_name: String,
     /// PipeWire property the identity was read from (e.g. "application.name").

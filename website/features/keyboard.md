@@ -9,6 +9,13 @@ Per-key RGB, the OLED and the settings the firmware exposes, for the Apex Pro,
 Apex 7, Apex 5 and Apex 9 families — Gen 1 through Gen 3, wired or over the
 2.4 GHz dongle. The tab shows a "not connected" state when no board is present.
 
+The screen is split into four sections — **Lighting**, **Keys**, **Display**
+and **System** — switched at the top. *Display* and *Keys* only appear for
+boards that have a panel and adjustable switches. The key map sits above
+*Lighting* and *Keys*, because it is the only place you can see what the board
+is actually doing: pick an effect or a scene and the result is right there,
+rather than four cards further down.
+
 ## Lighting
 
 Ten effects. Six of them Inari renders itself and streams to the board about 30
@@ -118,16 +125,53 @@ bordered X with a filled corner block — with any shape you pick:
 
 ## Switches
 
-::: warning Experimental — and honestly, probably not working
-The actuation command (`0x2D`) comes from third-party reverse engineering. On
-the one board this could be tested against — an Apex Pro TKL Wireless 2023 on
-firmware 3.24.1 — the keyboard **accepts the command and nothing changes**. It
-is offered because it costs nothing and another model or firmware may well
-answer to it, but do not expect it to work.
+Shown for the Apex Pro TKL Wireless (2023) family, where every command below
+was verified on hardware. Other HyperMagnetic boards have adjustable switches
+too, but their firmware uses a different set of opcodes, so Inari hides this
+section rather than offering controls that would move nothing.
 
-**Rapid Trigger, Rapid Tap/SOCD and Protection Mode have never been captured by
-anyone.** No public project implements them. The command probe at the bottom of
-the tab is there so that someone with hardware can help find them.
+- **Actuation point** — 0.1 mm to 4.0 mm, per key. The slider sets every key;
+  the key map's *Per-key actuation* mode overrides individual ones on top. With
+  no global setting, only the keys you gave an override are written — painting
+  one key does not move the rest of the board.
+- **Rapid Trigger** — re-arms a key as soon as it starts travelling back up
+  instead of waiting for a fixed reset point. 0 turns it off.
+- **Protection Mode** — dampens the keys around the one you meant to press.
+- **Rapid Tap (SOCD)** — opposite keys cancel each other, using the pairs
+  stored in the keyboard's own profile. Editing those pairs is not exposed yet.
+
+These writes are deliberately not saved to the keyboard's flash, so Inari never
+edits the profile the board falls back to on another machine. The trade-off is
+that they are lost when the board loses power — Inari re-sends them whenever it
+reconnects.
+
+::: info An earlier version of this page was wrong
+It said these commands "have never been captured by anyone" and that actuation
+did not work. That was true of the third-party write-ups Inari was built from —
+`0x2D`, the command they describe, really is accepted and really does nothing.
+The actual commands exist and are ordinary: `0x2F` carries a per-key actuation
+table in tenths of a millimetre, `0x37` Rapid Trigger, `0x14` Protection Mode,
+`0x17` Rapid Tap. Writing 4.0 mm to a single key and feeling it trigger late is
+what settled it.
+:::
+
+## Idle & power
+
+These are the keyboard's own timers, stored in the board, so they keep working
+while Inari is closed — and Inari reads them back rather than assuming, so the
+sliders show what the keyboard is actually set to even if something else
+changed it.
+
+- **Dim the lighting after** — the keyboard's idle timeout (0 never dims). This
+  is the setting people mean by "the keyboard's screensaver".
+- **Brightness once dimmed** — 0 to 10.
+- **Sleep after** — minutes before the board sleeps (0 never).
+- **High-efficiency mode** — wireless boards only; trades lighting for runtime.
+
+::: tip Not the same as the display's screensaver
+The *Display* section has its own blanking timer. That one only governs what
+Inari paints on the OLED, because the firmware's own screensaver never fires
+while Inari is pushing frames. The timers here govern the keyboard.
 :::
 
 ## Command probe

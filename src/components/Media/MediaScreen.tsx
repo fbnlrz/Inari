@@ -233,7 +233,7 @@ export function MediaScreen() {
   }
 
   return (
-    <div className="content narrow">
+    <div className="content narrow device">
       <div className="screen-head">
         <h1>Media</h1>
         {players.length > 1 && (
