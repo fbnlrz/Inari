@@ -89,14 +89,7 @@ pub(super) fn handle_cmd(state: &Rc<RefCell<State>>, registry: &RegistryRc, cmd:
             };
             drop(doomed);
             let mut s = state.borrow_mut();
-            s.desired.remove(&name);
-            s.eq_configs.remove(&name);
-            s.channel_links.remove(&name);
-            s.bus_links.retain(|(_, ch), _| ch != &name);
-            s.channel_outputs.remove(&name);
-            if let Some(levels) = &s.levels {
-                levels.release(&name);
-            }
+            s.forget_channel(&name);
             if let Some(proxy) = s.owned_sinks.remove(&name) {
                 match CORE.with(|c| c.borrow().clone()) {
                     Some(core) => {
@@ -385,6 +378,13 @@ pub(super) fn handle_cmd(state: &Rc<RefCell<State>>, registry: &RegistryRc, cmd:
                     let mut s = state.borrow_mut();
                     s.desired.remove(MIC_NODE);
                     s.mic_links.clear();
+                    // Hand the meter slot back too. Left registered it kept a
+                    // permanently silent "MIC" bar in the OLED's VU mode,
+                    // which divides the panel by the number of registered
+                    // names — so it also made every real channel shorter.
+                    if let Some(levels) = &s.levels {
+                        levels.release(MIC_NODE);
+                    }
                     (s.mic_streams.take(), s.mic_source.take())
                 };
                 drop(streams);

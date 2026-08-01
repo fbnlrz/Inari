@@ -798,10 +798,11 @@ impl KeyboardManager {
         let Some(levels) = guard.as_ref() else {
             return 0.0;
         };
+        let reader = levels.reader("keyboard");
         levels
             .names()
             .into_iter()
-            .map(|(_, slot)| levels.drain(slot, 0).max(levels.drain(slot, 1)))
+            .map(|(_, slot)| levels.drain(reader, slot, 0).max(levels.drain(reader, slot, 1)))
             .fold(0.0f32, f32::max)
             .clamp(0.0, 1.0)
     }

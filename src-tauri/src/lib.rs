@@ -499,11 +499,15 @@ fn spawn_level_emitter(
                 prev_all_zero = false;
                 continue;
             }
+            // Own drain handle: the peaks are consumed on read, so sharing one
+            // with the keyboard's lighting and the OLED's VU meant this emitter
+            // reported whatever was left over since one of them last ticked.
+            let ui = levels.reader("ui");
             // The meter registry is dynamic (user-defined channels + mic).
             let payload: HashMap<String, [f32; 2]> = levels
                 .names()
                 .into_iter()
-                .map(|(name, slot)| (name, [levels.drain(slot, 0), levels.drain(slot, 1)]))
+                .map(|(name, slot)| (name, [levels.drain(ui, slot, 0), levels.drain(ui, slot, 1)]))
                 .collect();
             // Emit the first all-zero frame so the meters settle to zero, then
             // go quiet until sound returns instead of pushing silence at 10 Hz.
