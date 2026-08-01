@@ -51,4 +51,27 @@ describe("eqMath", () => {
     expect(freqToX(20)).toBe(0);
     expect(freqToX(20000)).toBe(1);
   });
+
+  it("a steep shelf draws a curve the engine can actually produce", () => {
+    // The cookbook's radicand goes negative for a steep shelf, and clamping it
+    // to zero puts both poles on the unit circle — the engine turned into an
+    // undamped resonator there. Both sides now cap the slope instead, so the
+    // drawn curve has to stay finite and bounded for every setting the UI
+    // permits, and it has to keep matching what is heard.
+    for (const kind of ["low_shelf", "high_shelf"] as const) {
+      for (let gain = -24; gain <= 24; gain += 1) {
+        for (let q = 0.1; q <= 10.0001; q += 0.1) {
+          const config = {
+            ...defaultEqConfig(),
+            enabled: true,
+            bands: [{ kind, freq_hz: 100, gain_db: gain, q: Math.round(q * 10) / 10 }],
+          };
+          for (const { db } of curvePoints(config, 24)) {
+            expect(Number.isFinite(db)).toBe(true);
+            expect(Math.abs(db)).toBeLessThan(60);
+          }
+        }
+      }
+    }
+  });
 });

@@ -44,6 +44,24 @@ pub struct BiquadCoeffs {
     pub a2: f32,
 }
 
+/// Largest shelf slope that keeps the cookbook's radicand positive.
+///
+/// `(A + 1/A)(1/S - 1) + 2 > 0` rearranges to `S < A' / (A' - 2)` with
+/// `A' = A + 1/A`; at or below unity gain (`A' <= 2`) every slope is fine.
+/// Note `A' > 2` holds for a cut as well as a boost — `A` and `1/A` are
+/// symmetric — so negative gains need the same cap.
+/// The margin keeps the poles off the unit circle rather than merely on the
+/// right side of it — the difference between those two is an oscillator.
+fn shelf_slope_limit(slope: f32, a: f32) -> f32 {
+    const MARGIN: f32 = 0.995;
+    let ap = a + 1.0 / a;
+    let slope = slope.max(0.01);
+    if ap <= 2.0 {
+        return slope;
+    }
+    slope.min(ap / (ap - 2.0) * MARGIN)
+}
+
 impl BiquadCoeffs {
     /// Pass-through (unity) filter.
     pub fn identity() -> Self {
@@ -93,9 +111,22 @@ impl BiquadCoeffs {
             EqBandKind::LowShelf | EqBandKind::HighShelf => {
                 // Shelf slope form: alpha from S, the cookbook's
                 // "shelf slope" parameterization.
-                let s = q;
-                let alpha =
-                    sin_w0 / 2.0 * ((a + 1.0 / a) * (1.0 / s - 1.0) + 2.0).max(0.0).sqrt();
+                //
+                // The radicand `(A + 1/A)(1/S - 1) + 2` goes negative once
+                // `A + 1/A > 2S/(S - 1)` — at slope 10 that is a shelf gain of
+                // only ±8.1 dB, at slope 5 it is ±12, so an ordinary steep bass
+                // boost reaches it. Clamping the radicand at zero avoids the
+                // NaN but produces `alpha == 0`, and then a0 and a2 are
+                // literally the same expression: after normalisation a2 is
+                // exactly 1.0, both poles sit on the unit circle, and the band
+                // becomes an undamped resonator. It rings on after the signal
+                // stops — measured at 77 Hz for a 100 Hz corner, at an
+                // amplitude above full scale, until the setting is changed.
+                //
+                // So clamp S instead, to the largest slope this gain can
+                // actually support, and leave the radicand alone.
+                let s = shelf_slope_limit(q, a);
+                let alpha = sin_w0 / 2.0 * ((a + 1.0 / a) * (1.0 / s - 1.0) + 2.0).sqrt();
                 let two_sqrt_a_alpha = 2.0 * a.sqrt() * alpha;
                 let (ap1, am1) = (a + 1.0, a - 1.0);
                 if kind == EqBandKind::LowShelf {
@@ -374,6 +405,114 @@ impl EqEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Pole radius of a normalised biquad (a0 == 1).
+    ///
+    /// The stability question is entirely in the denominator: with
+    /// `z^2 + a1 z + a2`, the product of the two pole radii is `|a2|`, so
+    /// `|a2| >= 1` is a filter that never stops ringing.
+    fn pole_radius(c: &BiquadCoeffs) -> f64 {
+        f64::from(c.a2).abs().sqrt()
+    }
+
+    #[test]
+    fn no_band_setting_the_ui_permits_puts_a_pole_on_the_unit_circle() {
+        // A shelf with a steep slope used to land exactly on the unit circle:
+        // the cookbook's radicand goes negative, clamping it to zero makes
+        // alpha zero, and then a0 and a2 are the same expression. The result
+        // is an undamped resonator that keeps sounding after the audio stops,
+        // at an amplitude above full scale. Slope 10 reached it at ±8.1 dB —
+        // an ordinary bass boost, not an extreme.
+        //
+        // The bar here is stability itself, `|pole| < 1`, not some comfortable
+        // distance from it: a narrow peaking band genuinely sits very close to
+        // the circle (Q 10 at 20 Hz on 192 kHz reaches 0.99999), and that is
+        // what such a filter is, not a defect. What must never happen is
+        // reaching or passing it.
+        let mut worst = (0.0f64, String::new());
+        for kind in [
+            EqBandKind::Peaking,
+            EqBandKind::LowShelf,
+            EqBandKind::HighShelf,
+            EqBandKind::LowPass,
+            EqBandKind::HighPass,
+        ] {
+            for gain_i in -24..=24 {
+                for q_i in 1..=100 {
+                    let (gain_db, q) = (gain_i as f32, q_i as f32 / 10.0);
+                    for &rate in &[44_100.0, 48_000.0, 96_000.0, 192_000.0] {
+                        for &freq in &[20.0, 100.0, 1_000.0, 10_000.0, 19_000.0] {
+                            let c = BiquadCoeffs::design(kind, freq, gain_db, q, rate);
+                            let r = pole_radius(&c);
+                            assert!(
+                                r.is_finite(),
+                                "{kind:?} {freq} Hz {gain_db} dB Q{q} @{rate}: non-finite"
+                            );
+                            if r > worst.0 {
+                                worst = (r, format!("{kind:?} {freq} Hz {gain_db} dB Q{q} @{rate}"));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(
+            worst.0 < 1.0,
+            "pole radius {} at {} — this band never stops ringing",
+            worst.0,
+            worst.1
+        );
+    }
+
+    #[test]
+    fn a_shelf_goes_quiet_after_the_audio_stops() {
+        // The user-visible half of the same bug, on the settings that were
+        // measured to ring: a second of signal, then silence, and the output
+        // has to actually fall away.
+        for &(gain_db, slope) in &[
+            (24.0f32, 2.0f32),
+            (9.0, 10.0),
+            (12.0, 10.0),
+            (-12.0, 10.0),
+            (24.0, 10.0),
+            (8.1, 10.0),
+        ] {
+            for kind in [EqBandKind::LowShelf, EqBandKind::HighShelf] {
+                let c = BiquadCoeffs::design(kind, 100.0, gain_db, slope, 48_000.0);
+                let mut st = BiquadState::default();
+                // A second of full-scale tone at the corner frequency.
+                for n in 0..48_000 {
+                    let t = n as f32 / 48_000.0;
+                    st.process((2.0 * std::f32::consts::PI * 100.0 * t).sin(), &c);
+                }
+                // Then five seconds of nothing.
+                // Peak over the last second, so a slow decay still fails.
+                let mut tail = 0.0f32;
+                for n in 0..240_000 {
+                    let y = st.process(0.0, &c).abs();
+                    if n >= 192_000 {
+                        tail = tail.max(y);
+                    }
+                }
+                assert!(
+                    tail < 1e-3,
+                    "{kind:?} {gain_db} dB slope {slope}: still at {tail} after five seconds of silence"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_shelf_slope_is_capped_by_its_gain_not_by_clamping_the_radicand() {
+        // Below unity gain every slope is representable...
+        assert_eq!(shelf_slope_limit(10.0, 1.0), 10.0);
+        // ...and above it the cap tightens as the gain grows.
+        let a24 = 10.0f32.powf(24.0 / 40.0);
+        let a6 = 10.0f32.powf(6.0 / 40.0);
+        assert!(shelf_slope_limit(10.0, a24) < shelf_slope_limit(10.0, a6));
+        // A slope the gain does support is left alone.
+        assert_eq!(shelf_slope_limit(0.7, a24), 0.7);
+    }
 
     /// Analytic magnitude response |H(e^jw)| in dB - exact, no time-domain
     /// sampling artifacts. This is the same formula the UI curve uses

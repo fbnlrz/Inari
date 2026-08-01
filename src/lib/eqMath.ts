@@ -43,9 +43,12 @@ export function biquadCoeffs(
     }
     case "low_shelf":
     case "high_shelf": {
-      const s = safeQ;
-      const alpha =
-        (sinW0 / 2) * Math.sqrt(Math.max((a + 1 / a) * (1 / s - 1) + 2, 0));
+      // Mirrors shelf_slope_limit() in src-tauri/src/audio/pw_native/eq.rs.
+      // Clamping the radicand at zero instead would draw a curve the engine
+      // cannot produce — and the engine, doing the same thing, used to turn
+      // into an undamped resonator at exactly that point.
+      const s = shelfSlopeLimit(safeQ, a);
+      const alpha = (sinW0 / 2) * Math.sqrt((a + 1 / a) * (1 / s - 1) + 2);
       const twoSqrtAAlpha = 2 * Math.sqrt(a) * alpha;
       const ap1 = a + 1;
       const am1 = a - 1;
@@ -106,6 +109,14 @@ function biquadMagnitudeDb(c: Biquad, freqHz: number, sampleRate: number): numbe
 }
 
 /** Combined response of the whole config (preamp + band cascade) at `freqHz`. */
+/** Largest shelf slope a given gain can carry; see the Rust twin. */
+function shelfSlopeLimit(slope: number, a: number): number {
+  const MARGIN = 0.995;
+  const ap = a + 1 / a;
+  const s = Math.max(slope, 0.01);
+  return ap <= 2 ? s : Math.min(s, ((ap / (ap - 2)) * MARGIN));
+}
+
 export function magnitudeDb(
   bands: EqBand[],
   preampDb: number,
