@@ -7,6 +7,7 @@ import {
   KbMode,
   OledWire,
   Rgb,
+  SCENE_SWATCHES,
   useKeyboard,
 } from "../../store/keyboard";
 
@@ -136,6 +137,27 @@ export function KeyboardScreen() {
             ))}
           </div>
           <p className="hs-hint">{effect.hint}</p>
+
+          {light.kind === "scene" && (
+            <div className="kb-scenes">
+              {kb.scenes.map((s) => (
+                <button
+                  type="button"
+                  key={s.scene}
+                  className={"kb-scene" + (light.scene === s.scene ? " active" : "")}
+                  onClick={() => void kb.setLighting({ kind: "scene", scene: s.scene })}
+                >
+                  <span className="kb-scene-strip">
+                    {(SCENE_SWATCHES[s.scene] ?? []).map((c) => (
+                      <span key={c} style={{ background: c }} />
+                    ))}
+                  </span>
+                  <span className="kb-scene-name">{s.label}</span>
+                  <span className="kb-scene-hint">{s.hint}</span>
+                </button>
+              ))}
+            </div>
+          )}
 
           <div className="kb-controls">
             {(effect.colors ?? 0) >= 1 && (

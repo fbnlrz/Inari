@@ -130,6 +130,7 @@ describe("keyboard store", () => {
       "rainbow",
       "gradient",
       "audio",
+      "scene",
       "reactive",
       "color_shift",
       "off",

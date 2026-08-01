@@ -11,5 +11,6 @@ pub mod manager;
 pub mod oled;
 pub mod oled_modes;
 pub mod protocol;
+pub mod scenes;
 
 pub use manager::KeyboardManager;

@@ -13,6 +13,7 @@ export type EffectKind =
   | "rainbow"
   | "gradient"
   | "audio"
+  | "scene"
   | "reactive"
   | "color_shift";
 
@@ -20,6 +21,7 @@ export type Rgb = [number, number, number];
 
 export interface Lighting {
   kind: EffectKind;
+  scene: Scene;
   color: Rgb;
   color2: Rgb;
   speed: number;
@@ -44,6 +46,37 @@ export type KbMode =
   | "text";
 
 export type Physical = "ansi" | "iso";
+
+/** Themed scenes, mirroring keyboard::scenes::Scene. */
+export type Scene =
+  | "tokyo_night"
+  | "osaka_neon"
+  | "sakura"
+  | "kanagawa"
+  | "foxfire"
+  | "rain"
+  | "fuji_sunrise"
+  | "ripple"
+  | "aurora"
+  | "lantern"
+  | "starfield"
+  | "slash";
+
+/** Swatches for the scene chips — the palettes the Rust scenes paint with. */
+export const SCENE_SWATCHES: Record<Scene, string[]> = {
+  tokyo_night: ["#7aa2f7", "#bb9af7", "#7dcfff", "#f7768e", "#9ece6a"],
+  osaka_neon: ["#ff28aa", "#28e6ff", "#ffaa1e", "#8cff3c"],
+  sakura: ["#3c182e", "#ff82b4", "#fff0f5"],
+  kanagawa: ["#040a30", "#102e78", "#78beeb", "#ffffff"],
+  foxfire: ["#06040e", "#5aaaff", "#e1f5ff"],
+  rain: ["#03060f", "#96dcff", "#ffffff"],
+  fuji_sunrise: ["#080a28", "#281a4e", "#be463c", "#ff963c"],
+  ripple: ["#000000", "#ff5200", "#ffffff"],
+  aurora: ["#14c88c", "#28e6c8", "#7878ff", "#b450dc"],
+  lantern: ["#ff781e", "#ffcd78"],
+  starfield: ["#050510", "#282878", "#ffffeb"],
+  slash: ["#020204", "#ff5200", "#ffffff"],
+};
 
 export interface KeyboardStatus {
   present: boolean;
@@ -91,6 +124,7 @@ interface KeyboardSnapshot {
   preview: [number, Rgb][];
   oled_modes: { mode: KbMode; label: string }[];
   oled_wires: { wire: OledWire; label: string }[];
+  scenes: { scene: Scene; label: string; hint: string }[];
 }
 
 const emptyStatus: KeyboardStatus = {
@@ -110,6 +144,7 @@ const emptyStatus: KeyboardStatus = {
 
 const defaultLighting: Lighting = {
   kind: "static",
+  scene: "tokyo_night",
   color: [255, 82, 0],
   color2: [0, 120, 255],
   speed: 50,
@@ -149,6 +184,13 @@ export const EFFECTS: {
   { kind: "gradient", label: "Gradient", hint: "Blend between two colours", colors: 2 },
   { kind: "audio", label: "Audio", hint: "Follows what is playing", colors: 1 },
   {
+    kind: "scene",
+    label: "Scenes",
+    hint: "Twelve themed scenes — Tokyo Night, Osaka neon, sakura, Kanagawa and more",
+    colors: 1,
+    speed: true,
+  },
+  {
     kind: "reactive",
     label: "Reactive",
     hint: "Keys flash on press — rendered by the keyboard",
@@ -175,6 +217,7 @@ interface KeyboardState {
   preview: Record<number, Rgb>;
   oledModes: { mode: KbMode; label: string }[];
   oledWires: { wire: OledWire; label: string }[];
+  scenes: { scene: Scene; label: string; hint: string }[];
   error: string | null;
   clearError: () => void;
   _initialized: boolean;
@@ -210,6 +253,7 @@ export const useKeyboard = create<KeyboardState>((set, get) => {
       preview: Object.fromEntries(snap.preview),
       oledModes: snap.oled_modes,
       oledWires: snap.oled_wires,
+      scenes: snap.scenes,
     });
 
   return {
@@ -221,6 +265,7 @@ export const useKeyboard = create<KeyboardState>((set, get) => {
     preview: {},
     oledModes: [],
     oledWires: [],
+    scenes: [],
     error: null,
     clearError: () => set({ error: null }),
     _initialized: false,

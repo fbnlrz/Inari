@@ -9,6 +9,7 @@ use crate::keyboard::manager::KeyboardStatus;
 use crate::keyboard::oled::{self, ALL_WIRES};
 use crate::keyboard::oled_modes::{KbMode, ALL_MODES};
 use crate::keyboard::protocol::{self, FormFactor, OledWire};
+use crate::keyboard::scenes::{Scene, ALL_SCENES};
 use crate::persistence::keyboard::KeyboardConfig;
 use crate::state::AppState;
 
@@ -17,6 +18,14 @@ use crate::state::AppState;
 pub struct WireOption {
     pub wire: OledWire,
     pub label: &'static str,
+}
+
+/// One themed scene, for the picker.
+#[derive(Serialize)]
+pub struct SceneOption {
+    pub scene: Scene,
+    pub label: &'static str,
+    pub hint: &'static str,
 }
 
 /// One OLED mode, for the picker.
@@ -40,6 +49,7 @@ pub struct KeyboardSnapshot {
     pub preview: Vec<(u8, [u8; 3])>,
     pub oled_modes: Vec<ModeOption>,
     pub oled_wires: Vec<WireOption>,
+    pub scenes: Vec<SceneOption>,
 }
 
 /// The layout to draw: the connected keyboard's, or a TKL as a stand-in so the
@@ -81,6 +91,14 @@ pub fn get_keyboard_status(state: State<'_, AppState>) -> KeyboardSnapshot {
         oled_wires: ALL_WIRES
             .iter()
             .map(|(wire, label)| WireOption { wire: *wire, label })
+            .collect(),
+        scenes: ALL_SCENES
+            .iter()
+            .map(|(scene, label, hint)| SceneOption {
+                scene: *scene,
+                label,
+                hint,
+            })
             .collect(),
     }
 }
@@ -287,6 +305,15 @@ mod tests {
         assert!(fb.get(5, 5), "the filled block");
         // The two diagonals cross in the middle.
         assert!(fb.get(64, 20) || fb.get(63, 19) || fb.get(64, 19));
+    }
+
+    #[test]
+    fn every_scene_reaches_the_picker() {
+        // A scene missing from the snapshot is a scene the user cannot select.
+        assert_eq!(ALL_SCENES.len(), 12);
+        for (_, label, hint) in ALL_SCENES {
+            assert!(!label.is_empty() && !hint.is_empty());
+        }
     }
 
     #[test]

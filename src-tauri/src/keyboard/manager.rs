@@ -551,7 +551,12 @@ impl KeyboardManager {
 
     fn status_lines(&self, config: &KeyboardConfig) -> StatusLines {
         StatusLines {
-            effect: format!("{:?}", config.lighting.kind),
+            // A scene prints its own name; "Scene" on the panel would tell the
+            // user nothing they did not already know.
+            effect: match config.lighting.kind {
+                EffectKind::Scene => config.lighting.scene.label().to_string(),
+                other => format!("{other:?}"),
+            },
             brightness: config.lighting.brightness,
             actuation: config.actuation,
         }

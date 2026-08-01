@@ -526,6 +526,13 @@ mod frontend_contract {
             "get_mouse_status", "mouse_set_dpi", "mouse_set_polling",
             "mouse_set_zone_color", "mouse_set_rainbow", "mouse_set_reactive",
             "mouse_set_sleep", "mouse_set_dim", "mouse_set_startup_lighting",
+            // and so is the keyboard: a tablet mixes audio, it does not
+            // repaint the keys of a board plugged into the PC
+            "get_keyboard_status", "keyboard_set_enabled", "keyboard_set_lighting",
+            "keyboard_set_key_color", "keyboard_fill_keys", "keyboard_clear_keys",
+            "keyboard_set_physical", "keyboard_set_oled", "keyboard_set_oled_wire",
+            "keyboard_set_screensaver", "keyboard_oled_test", "keyboard_set_actuation",
+            "keyboard_set_key_actuation", "keyboard_select_profile", "keyboard_send_raw",
             // structural: the remote operates the mixer, it does not rebuild it
             "add_channel", "remove_channel", "rename_channel", "reorder_channels",
             "set_channel_icon", "add_bus", "remove_bus", "rename_bus",

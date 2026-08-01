@@ -24,12 +24,34 @@ they keep running after Inari is closed.
 | **Rainbow** | Inari | Whole board cycles together |
 | **Gradient** | Inari | Blend between two colours |
 | **Audio** | Inari | Lights up left to right with what is playing — the same peak levels the mixer's meters read |
+| **Scenes** | Inari | Twelve themed scenes, below |
 | **Reactive** | Keyboard | Keys flash on press |
 | **Colour shift** | Keyboard | Two-colour fade |
 | **Off** | Keyboard | Hands the LEDs back to the onboard profile |
 
 Brightness is applied host-side for the Inari-rendered effects, so it never
 fights the firmware's own brightness setting.
+
+### Scenes
+
+Each scene is a small piece of shader-style maths over the key's position and a
+phase, so they animate across whatever board is attached instead of being baked
+for one layout.
+
+| Scene | What it looks like |
+| --- | --- |
+| **Tokyo Night** | The palette Inari themes with, drifting diagonally |
+| **Osaka Neon** | Dotonbori signage: saturated blocks with tube flicker and the odd dropout |
+| **Sakura** | Petals drifting down-right across a pale dusk, with sway |
+| **Kanagawa** | Hokusai's wave — indigo sea, a white foam crest that curls as it rolls through |
+| **Foxfire** | Kitsune-bi: three pale flames wandering their own paths over a dark board |
+| **Rain** | A drop per column, each with its own speed, trailing as it falls |
+| **Fuji Sunrise** | Night at the top, dawn climbing the horizon, the sun sitting on it |
+| **Ripple** | Rings spreading from the middle in your colour |
+| **Aurora** | Slow curtains of green into violet, warped and brightest up top |
+| **Lantern** | Warm amber, every key flickering on its own — no two in sync |
+| **Amanogawa** | The Milky Way as a diagonal band, with keys twinkling in it |
+| **Slash** | A blade sweeping across every few seconds, trailing light, then dark |
 
 ::: tip Direct mode is sticky
 Whatever Inari paints last stays on the board indefinitely — that is how the

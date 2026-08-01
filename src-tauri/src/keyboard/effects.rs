@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use super::keys::Physical;
 use super::protocol::{FormFactor, KEY_ORDER};
+use super::scenes::{self, Scene};
 
 /// One frame of colours, indexed like [`KEY_ORDER`].
 pub type Frame = Vec<[u8; 3]>;
@@ -39,6 +40,8 @@ pub enum EffectKind {
     Gradient,
     /// Brightness follows what is playing.
     Audio,
+    /// One of the themed scenes in [`super::scenes`].
+    Scene,
     /// Firmware effect: keys flash when pressed. Survives Inari closing.
     Reactive,
     /// Firmware effect: fade between two colours.
@@ -50,7 +53,11 @@ impl EffectKind {
     pub fn animated(self) -> bool {
         matches!(
             self,
-            EffectKind::Breathing | EffectKind::Wave | EffectKind::Rainbow | EffectKind::Audio
+            EffectKind::Breathing
+                | EffectKind::Wave
+                | EffectKind::Rainbow
+                | EffectKind::Audio
+                | EffectKind::Scene
         )
     }
 
@@ -78,11 +85,19 @@ pub struct Lighting {
     pub brightness: u8,
     /// Sweep the other way.
     pub reverse: bool,
+    /// Which themed scene [`EffectKind::Scene`] plays.
+    #[serde(default = "default_scene")]
+    pub scene: Scene,
     /// Per-key colours, keyed by HID usage id. Only used by
     /// [`EffectKind::PerKey`], but kept across effect changes so switching
     /// away and back does not lose the user's work.
     #[serde(default)]
     pub per_key: HashMap<u8, [u8; 3]>,
+}
+
+/// The scene a fresh install plays — the palette Inari already themes with.
+fn default_scene() -> Scene {
+    Scene::TokyoNight
 }
 
 impl Default for Lighting {
@@ -95,6 +110,7 @@ impl Default for Lighting {
             speed: 50,
             brightness: 100,
             reverse: false,
+            scene: default_scene(),
             per_key: HashMap::new(),
         }
     }
@@ -181,6 +197,16 @@ pub fn render(
             EffectKind::Wave => hsv(phase - x * 0.75 - y * 0.15, 1.0, 1.0),
             EffectKind::Rainbow => hsv(phase, 1.0, 1.0),
             EffectKind::Gradient => mix(lighting.color, lighting.color2, x),
+            EffectKind::Scene => scenes::render(
+                lighting.scene,
+                x,
+                y,
+                phase * 2.0,
+                // Spread the usage ids out so neighbouring keys do not get
+                // neighbouring random values; wrapping is the point here.
+                (KEY_ORDER[i] as u32).wrapping_mul(2_654_435_761),
+                lighting.color,
+            ),
             EffectKind::Audio => {
                 // Keys light up left to right as the level rises, with a soft
                 // edge so the boundary doesn't crawl one key at a time.
@@ -313,8 +339,24 @@ mod tests {
     }
 
     #[test]
+    fn a_scene_paints_the_board_and_moves() {
+        let mut l = lighting(EffectKind::Scene);
+        l.scene = Scene::Kanagawa;
+        let a = frame(&l, 0.0, 0.0);
+        let b = frame(&l, 2.0, 0.0);
+        assert_ne!(a, b, "a scene has to animate");
+        assert!(a.iter().any(|c| *c != [0, 0, 0]), "a scene has to light up");
+        // Every scene must survive the wire path, not just the default one.
+        for (scene, _, _) in super::super::scenes::ALL_SCENES {
+            l.scene = scene;
+            assert_eq!(frame(&l, 1.0, 0.0).len(), KEY_ORDER.len());
+        }
+    }
+
+    #[test]
     fn effects_declare_who_renders_them() {
         assert!(EffectKind::Wave.animated());
+        assert!(EffectKind::Scene.animated(), "scenes need a frame per tick");
         assert!(EffectKind::Audio.animated());
         assert!(!EffectKind::Static.animated());
         assert!(!EffectKind::PerKey.animated());
