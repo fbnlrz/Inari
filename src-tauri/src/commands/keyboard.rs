@@ -310,7 +310,7 @@ mod tests {
     #[test]
     fn every_scene_reaches_the_picker() {
         // A scene missing from the snapshot is a scene the user cannot select.
-        assert_eq!(ALL_SCENES.len(), 12);
+        assert_eq!(ALL_SCENES.len(), 24);
         for (_, label, hint) in ALL_SCENES {
             assert!(!label.is_empty() && !hint.is_empty());
         }

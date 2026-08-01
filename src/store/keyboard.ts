@@ -60,7 +60,19 @@ export type Scene =
   | "aurora"
   | "lantern"
   | "starfield"
-  | "slash";
+  | "slash"
+  | "hanabi"
+  | "torii"
+  | "shibuya"
+  | "neon_rain"
+  | "glitch"
+  | "vaporwave"
+  | "koi"
+  | "komorebi"
+  | "taiko"
+  | "inferno"
+  | "plasma"
+  | "kaminari";
 
 /** Swatches for the scene chips — the palettes the Rust scenes paint with. */
 export const SCENE_SWATCHES: Record<Scene, string[]> = {
@@ -76,6 +88,18 @@ export const SCENE_SWATCHES: Record<Scene, string[]> = {
   lantern: ["#ff781e", "#ffcd78"],
   starfield: ["#050510", "#282878", "#ffffeb"],
   slash: ["#020204", "#ff5200", "#ffffff"],
+  hanabi: ["#030310", "#ff5a3c", "#ffd25a", "#78dcff", "#ff78dc"],
+  torii: ["#02040f", "#dc280a", "#ff823c"],
+  shibuya: ["#040408", "#ffdc96", "#50e6ff"],
+  neon_rain: ["#06020c", "#ff28be", "#28dcff"],
+  glitch: ["#14dcff", "#b428ff", "#ff2878", "#ffdc3c"],
+  vaporwave: ["#280a46", "#ff3c8c", "#ffc83c", "#50fff0"],
+  koi: ["#020c0e", "#ff6e14", "#fff5eb"],
+  komorebi: ["#04100a", "#3caa46", "#e6ffbe"],
+  taiko: ["#100202", "#dc1e1e", "#ffc83c"],
+  inferno: ["#000000", "#5a0000", "#dc3c00", "#ffaa14", "#fffac8"],
+  plasma: ["#ff0078", "#ffb400", "#00ffa0", "#008cff", "#a000ff"],
+  kaminari: ["#060814", "#5a6ebe", "#ffffff"],
 };
 
 export interface KeyboardStatus {

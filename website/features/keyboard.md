@@ -24,7 +24,7 @@ they keep running after Inari is closed.
 | **Rainbow** | Inari | Whole board cycles together |
 | **Gradient** | Inari | Blend between two colours |
 | **Audio** | Inari | Lights up left to right with what is playing — the same peak levels the mixer's meters read |
-| **Scenes** | Inari | Twelve themed scenes, below |
+| **Scenes** | Inari | Twenty-four themed scenes, below |
 | **Reactive** | Keyboard | Keys flash on press |
 | **Colour shift** | Keyboard | Two-colour fade |
 | **Off** | Keyboard | Hands the LEDs back to the onboard profile |
@@ -34,9 +34,10 @@ fights the firmware's own brightness setting.
 
 ### Scenes
 
-Each scene is a small piece of shader-style maths over the key's position and a
-phase, so they animate across whatever board is attached instead of being baked
-for one layout.
+Twenty-four of them. Each is a small piece of shader-style maths over the key's
+position and a phase, so they animate across whatever board is attached instead
+of being baked for one layout. Speed and brightness come from the Lighting card;
+Ripple and Slash use the colour set there.
 
 | Scene | What it looks like |
 | --- | --- |
@@ -52,6 +53,18 @@ for one layout.
 | **Lantern** | Warm amber, every key flickering on its own — no two in sync |
 | **Amanogawa** | The Milky Way as a diagonal band, with keys twinkling in it |
 | **Slash** | A blade sweeping across every few seconds, trailing light, then dark |
+| **Hanabi** | Four shells in flight, each bursting into a shock front with sparks trailing |
+| **Torii** | A vermilion gate — two pillars, two beams — breathing, throwing light behind it |
+| **Shibuya** | The scramble: long streaks of traffic crossing in two directions |
+| **Neon Rain** | Blade Runner downpour in magenta and cyan, with the puddle glow at the bottom |
+| **Glitch** | Datamosh — bands tear and hold, channels split, the odd block blows out white |
+| **Vaporwave** | A sliced sun above the horizon, perspective grid scrolling below it |
+| **Koi** | Two koi circling in dark water, each with a wake |
+| **Komorebi** | Bamboo stalks with shafts of light drifting across them |
+| **Taiko** | Rings on the beat, every fourth one gold — the silence between hits is the point |
+| **Inferno** | Fire climbing from the bottom, eaten away by turbulence on the way up |
+| **Plasma** | The demoscene classic: a sum of sines into a very wide palette |
+| **Kaminari** | Dark, then a jagged bolt and a flash that lights the whole board |
 
 ::: tip Direct mode is sticky
 Whatever Inari paints last stays on the board indefinitely — that is how the

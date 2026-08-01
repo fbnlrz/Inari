@@ -40,10 +40,34 @@ pub enum Scene {
     Starfield,
     /// A blade sweeping across, leaving a fading trail.
     Slash,
+    /// Hanabi — fireworks bursting over the board.
+    Hanabi,
+    /// A vermilion torii gate, breathing.
+    Torii,
+    /// Shibuya scramble: two streams of traffic crossing.
+    Shibuya,
+    /// Blade Runner rain — magenta and cyan, with the puddle glow.
+    NeonRain,
+    /// Datamosh: bands tearing, channels splitting.
+    Glitch,
+    /// Vaporwave sun over a perspective grid.
+    Vaporwave,
+    /// Koi circling in dark water.
+    Koi,
+    /// Komorebi — light falling through bamboo.
+    Komorebi,
+    /// Taiko: rings on the beat, red and gold.
+    Taiko,
+    /// Fire climbing the board.
+    Inferno,
+    /// Demoscene plasma, all of the colours.
+    Plasma,
+    /// Kaminari — a bolt, then the dark.
+    Kaminari,
 }
 
 /// Every scene, in the order the UI lists them, with a label and a blurb.
-pub const ALL_SCENES: [(Scene, &str, &str); 12] = [
+pub const ALL_SCENES: [(Scene, &str, &str); 24] = [
     (
         Scene::TokyoNight,
         "Tokyo Night",
@@ -88,6 +112,30 @@ pub const ALL_SCENES: [(Scene, &str, &str); 12] = [
         "Slash",
         "A blade sweeping across, trailing light",
     ),
+    (Scene::Hanabi, "Hanabi", "Fireworks bursting over the board"),
+    (Scene::Torii, "Torii", "A vermilion gate, breathing"),
+    (Scene::Shibuya, "Shibuya", "Two streams of traffic crossing"),
+    (
+        Scene::NeonRain,
+        "Neon Rain",
+        "Blade Runner downpour, puddles and all",
+    ),
+    (
+        Scene::Glitch,
+        "Glitch",
+        "Datamosh: bands tearing, channels splitting",
+    ),
+    (Scene::Vaporwave, "Vaporwave", "Sun over a perspective grid"),
+    (Scene::Koi, "Koi", "Two koi circling in dark water"),
+    (Scene::Komorebi, "Komorebi", "Light falling through bamboo"),
+    (Scene::Taiko, "Taiko", "Rings on the beat, red and gold"),
+    (Scene::Inferno, "Inferno", "Fire climbing the board"),
+    (
+        Scene::Plasma,
+        "Plasma",
+        "Demoscene plasma, all of the colours",
+    ),
+    (Scene::Kaminari, "Kaminari", "A bolt, then the dark"),
 ];
 
 impl Scene {
@@ -154,6 +202,15 @@ fn ramp(palette: &[[u8; 3]], pos: f32) -> [u8; 3] {
     let p = pos.rem_euclid(1.0) * n as f32;
     let i = p.floor() as usize % n;
     lerp(palette[i], palette[(i + 1) % n], p - p.floor())
+}
+
+/// Like [`ramp`] but clamped at both ends — for gradients that are a scale
+/// (cold to hot), not a cycle.
+fn ramp_clamped(palette: &[[u8; 3]], pos: f32) -> [u8; 3] {
+    let n = palette.len();
+    let p = (pos.clamp(0.0, 1.0) * (n - 1) as f32).min((n - 1) as f32 - 0.0001);
+    let i = p.floor() as usize;
+    lerp(palette[i], palette[(i + 1).min(n - 1)], p - p.floor())
 }
 
 /// A soft round falloff: 1 at the centre, 0 past `radius`.
@@ -341,6 +398,310 @@ pub fn render(scene: Scene, x: f32, y: f32, phase: f32, seed: u32, accent: [u8; 
             }
         }
 
+        Scene::Hanabi => {
+            // Several shells in flight at once, each on its own cycle. A burst
+            // is a bright shock front with sparks trailing behind it, so the
+            // ring has to be thin and the inside has to fade fast.
+            let mut out = [3, 3, 10];
+            for shell in 0..4u32 {
+                let cycle = 2.4 + hash01(shell) * 1.6;
+                let t = (phase + hash01(shell ^ 0x30) * cycle) / cycle;
+                let epoch = t.floor() as u32;
+                let age = t.fract();
+                // A new place to burst on every cycle, or it looks mechanical.
+                let cx = 0.1 + hash01(shell ^ epoch.wrapping_mul(2_654_435_761)) * 0.8;
+                let cy = 0.15 + hash01(shell ^ epoch.wrapping_add(77)) * 0.5;
+                let d = ((x - cx).powi(2) + ((y - cy) * 0.6).powi(2)).sqrt();
+                let radius = age * 0.75;
+                let shock = 1.0 - ((d - radius).abs() / 0.09).clamp(0.0, 1.0);
+                // Sparks lag behind the front and fall.
+                let spark = if d < radius {
+                    let flick = hash01(seed ^ shell ^ (d * 90.0) as u32);
+                    (1.0 - age).powi(3) * flick
+                } else {
+                    0.0
+                };
+                let colour = ramp(
+                    &[
+                        [255, 90, 60],
+                        [255, 210, 90],
+                        [120, 220, 255],
+                        [255, 120, 220],
+                    ],
+                    hash01(shell ^ epoch),
+                );
+                let fade = (1.0 - age).powi(2);
+                out = add(out, dim(colour, (shock.powi(2) + spark * 0.7) * fade));
+            }
+            out
+        }
+
+        Scene::Torii => {
+            // Two pillars and two beams, in the vermilion Inari is named for.
+            // Drawn in board space so it lands on the same keys on any layout.
+            let breathe = 0.72 + 0.28 * (phase * 1.1).sin();
+            let pillar = ((x - 0.24).abs() < 0.055) || ((x - 0.76).abs() < 0.055);
+            let kasagi = y < 0.18; // the top beam, with its upward sweep
+            let nuki = (y - 0.42).abs() < 0.07; // the second beam
+            let on_gate = (pillar && y > 0.1) || kasagi || nuki;
+            let night = lerp([2, 4, 16], [10, 8, 34], 1.0 - y);
+            if on_gate {
+                let vermilion = lerp([220, 40, 10], [255, 130, 60], breathe);
+                add(dim(vermilion, 0.85 + 0.15 * breathe), dim([60, 20, 0], 0.4))
+            } else {
+                // The gate throws light onto what is behind it.
+                let dx = (x - 0.24).abs().min((x - 0.76).abs());
+                add(
+                    night,
+                    dim([120, 30, 10], glow(dx, 0.0, 0.22) * 0.5 * breathe),
+                )
+            }
+        }
+
+        Scene::Shibuya => {
+            // Traffic in two directions, crossing. Streaks are long and thin,
+            // which is what makes them read as movement rather than as blinks.
+            let mut out = [4, 4, 8];
+            for lane in 0..4u32 {
+                let row = 0.15 + hash01(lane) * 0.7;
+                if (y - row).abs() < 0.09 {
+                    let speed = 0.5 + hash01(lane ^ 3) * 1.1;
+                    let head = (phase * speed + hash01(lane ^ 9)).rem_euclid(1.5) - 0.25;
+                    let d = x - head;
+                    if d < 0.0 && d > -0.3 {
+                        let t = 1.0 + d / 0.3;
+                        out = add(out, dim([255, 220, 150], t.powi(3)));
+                    }
+                }
+            }
+            for lane in 0..5u32 {
+                let col = 0.1 + hash01(lane ^ 0x55) * 0.8;
+                if (x - col).abs() < 0.035 {
+                    let speed = 0.7 + hash01(lane ^ 0x77) * 1.4;
+                    let head = (phase * speed + hash01(lane)).rem_euclid(1.6) - 0.3;
+                    let d = y - head;
+                    if d < 0.0 && d > -0.6 {
+                        let t = 1.0 + d / 0.6;
+                        out = add(out, dim([80, 230, 255], t.powi(2)));
+                    }
+                }
+            }
+            out
+        }
+
+        Scene::NeonRain => {
+            // Rain, but lit by signage: every drop takes a side of the palette,
+            // and the bottom row is the puddle it lands in.
+            let col = (x * 26.0).floor() as u32;
+            let speed = 0.8 + hash01(col) * 1.4;
+            let head = (phase * speed + hash01(col ^ 0x99)).rem_euclid(1.5) - 0.2;
+            let tint = if hash01(col ^ 0x1f) > 0.5 {
+                [255, 40, 190]
+            } else {
+                [40, 220, 255]
+            };
+            let mut out = [6, 2, 12];
+            let d = y - head;
+            if d <= 0.0 && d > -0.45 {
+                let t = 1.0 + d / 0.45;
+                out = add(out, dim(tint, t * t));
+            }
+            // Puddle: the bottom rows glow whenever a drop has just landed.
+            if y > 0.72 {
+                let splash = (1.0 - (head - 1.0).abs() * 4.0).clamp(0.0, 1.0);
+                out = add(out, dim(tint, splash * 0.35 * (y - 0.72) * 3.0));
+            }
+            out
+        }
+
+        Scene::Glitch => {
+            // A clean gradient, torn. The tearing is per-band and per-epoch, so
+            // it holds still for a beat and then jumps — continuous noise reads
+            // as static, not as a glitch.
+            let epoch = (phase * 6.0) as u32;
+            let band = (y * 6.0).floor() as u32;
+            let broken = hash01(band ^ epoch.wrapping_mul(2_246_822_519)) > 0.72;
+            let shift = if broken {
+                (hash01(band ^ epoch ^ 0xabc) - 0.5) * 0.6
+            } else {
+                0.0
+            };
+            let base = ramp(
+                &[
+                    [20, 220, 255],
+                    [180, 40, 255],
+                    [255, 40, 120],
+                    [255, 220, 60],
+                ],
+                (x + shift) * 0.8 + phase * 0.15,
+            );
+            if broken {
+                // Channel split: shove red one way and blue the other.
+                let r = ramp(
+                    &[
+                        [20, 220, 255],
+                        [180, 40, 255],
+                        [255, 40, 120],
+                        [255, 220, 60],
+                    ],
+                    (x + shift + 0.05) * 0.8 + phase * 0.15,
+                );
+                let b = ramp(
+                    &[
+                        [20, 220, 255],
+                        [180, 40, 255],
+                        [255, 40, 120],
+                        [255, 220, 60],
+                    ],
+                    (x + shift - 0.05) * 0.8 + phase * 0.15,
+                );
+                let out = [r[0], base[1], b[2]];
+                // The odd blown-out block.
+                if hash01(seed ^ epoch) > 0.93 {
+                    [255, 255, 255]
+                } else {
+                    out
+                }
+            } else {
+                dim(base, 0.85)
+            }
+        }
+
+        Scene::Vaporwave => {
+            // Sun above the horizon with its slice lines, grid below.
+            let horizon = 0.45;
+            if y < horizon {
+                let sun = glow(x - 0.5, (y - horizon + 0.28) * 1.5, 0.3);
+                let sky = lerp([40, 10, 70], [10, 4, 30], y / horizon);
+                // The sun's horizontal cuts, which is the whole look.
+                let sliced = ((y * 34.0 + phase * 1.5).sin() * 0.5 + 0.5).powf(0.6);
+                let disc = lerp([255, 60, 140], [255, 200, 60], 1.0 - y / horizon);
+                add(sky, dim(disc, sun * sliced))
+            } else {
+                let depth = (y - horizon) / (1.0 - horizon);
+                // Lines converge as they recede, and scroll towards the viewer.
+                let rows = ((depth * depth * 9.0 - phase * 0.8).fract() * 4.0).min(1.0);
+                let cols = (((x - 0.5) / (depth * 0.9 + 0.12)).fract() - 0.5).abs() * 6.0;
+                let line = (1.0 - rows).max((1.0 - cols).clamp(0.0, 1.0));
+                add([8, 2, 24], dim([80, 255, 240], line.clamp(0.0, 1.0) * 0.9))
+            }
+        }
+
+        Scene::Koi => {
+            let mut out = lerp([2, 12, 14], [4, 26, 30], y);
+            for fish in 0..2u32 {
+                // A slow circle, one fish trailing the other.
+                let t = phase * 0.5 + fish as f32 * std::f32::consts::PI;
+                let fx = 0.5 + 0.34 * t.cos();
+                let fy = 0.5 + 0.3 * (t * 0.9).sin();
+                // The body is an ellipse aligned with the direction of travel.
+                let dx = x - fx;
+                let dy = (y - fy) * 0.6;
+                let body = glow(dx, dy, 0.2);
+                let colour = if fish == 0 {
+                    [255, 110, 20]
+                } else {
+                    [255, 245, 235]
+                };
+                out = add(out, dim(colour, body.powf(1.4)));
+                // Wake behind it.
+                let wake = glow(dx + t.cos() * 0.12, dy, 0.26) * 0.25;
+                out = add(out, dim([120, 200, 210], wake));
+            }
+            out
+        }
+
+        Scene::Komorebi => {
+            // Bamboo stalks, and shafts of light drifting across them.
+            let stalk = ((x * 9.0).fract() - 0.5).abs();
+            let green = if stalk < 0.22 {
+                lerp([10, 60, 20], [60, 170, 70], 1.0 - stalk / 0.22)
+            } else {
+                [4, 16, 10]
+            };
+            let shaft = (1.0 - ((x - 0.5 - (phase * 0.25).sin() * 0.4 + y * 0.3).abs() * 3.5))
+                .clamp(0.0, 1.0);
+            add(green, dim([230, 255, 190], shaft.powi(2) * 0.55))
+        }
+
+        Scene::Taiko => {
+            // On the beat, not continuously: the silence between hits is what
+            // makes a drum a drum.
+            let beat = phase * 1.6;
+            let hit = beat.fract();
+            let d = ((x - 0.5).powi(2) + ((y - 0.5) * 0.5).powi(2)).sqrt();
+            let ring = 1.0 - ((d - hit * 0.8) / 0.12).abs().clamp(0.0, 1.0);
+            let decay = (1.0 - hit).powi(2);
+            // Every fourth hit is the big one.
+            let accent_beat = (beat as u32) % 4 == 0;
+            let colour = if accent_beat {
+                [255, 200, 60]
+            } else {
+                [220, 30, 30]
+            };
+            add(dim([16, 2, 2], 1.0), dim(colour, ring.powi(2) * decay))
+        }
+
+        Scene::Inferno => {
+            // Heat rises: intensity is highest at the bottom and eaten away by
+            // noise on the way up.
+            let heat = (1.0 - y).powf(1.6);
+            let turbulence = 0.5
+                + 0.5 * ((x * 7.0 + phase * 2.2).sin() * 0.5 + (y * 9.0 - phase * 3.4).sin() * 0.5);
+            let f = (heat * (0.55 + 0.75 * turbulence)).clamp(0.0, 1.0);
+            ramp_clamped(
+                &[
+                    [0, 0, 0],
+                    [90, 0, 0],
+                    [220, 60, 0],
+                    [255, 170, 20],
+                    [255, 250, 200],
+                ],
+                f,
+            )
+        }
+
+        Scene::Plasma => {
+            // The demoscene classic: a sum of sines, straight into a wide
+            // palette. Cheap, and still the most colourful thing here.
+            let v = (x * 6.0 + phase).sin()
+                + (y * 5.0 + phase * 1.3).sin()
+                + ((x + y) * 4.0 + phase * 0.7).sin()
+                + ((x * x + y * y).sqrt() * 8.0 - phase * 1.9).sin();
+            ramp(
+                &[
+                    [255, 0, 120],
+                    [255, 180, 0],
+                    [0, 255, 160],
+                    [0, 140, 255],
+                    [160, 0, 255],
+                ],
+                v * 0.125 + 0.5,
+            )
+        }
+
+        Scene::Kaminari => {
+            // Dark, then a bolt. The flash lights the whole board for an
+            // instant, which is the part you actually notice.
+            let strike = phase * 0.55;
+            let epoch = strike as u32;
+            let age = strike.fract();
+            if age > 0.22 {
+                return dim([6, 8, 20], 1.0 - age * 0.5);
+            }
+            // The bolt is a jagged vertical path: each row offsets the last.
+            let row = (y * 6.0).floor() as u32;
+            let mut bolt_x = 0.2 + hash01(epoch) * 0.6;
+            for step in 0..=row {
+                bolt_x += (hash01(epoch ^ step.wrapping_mul(2_246_822_519)) - 0.5) * 0.22;
+            }
+            let d = (x - bolt_x).abs();
+            let flash = (1.0 - age / 0.22).powi(2);
+            let sky = dim([90, 110, 190], flash * 0.45);
+            let core = (1.0 - (d / 0.06).clamp(0.0, 1.0)).powi(2);
+            add(sky, dim([255, 255, 255], core * flash))
+        }
+
         Scene::Slash => {
             // Mostly dark, then a blade crosses. The gap between strikes is the
             // point — a constant sweep is just a wave.
@@ -387,26 +748,45 @@ mod tests {
         c[0] as u32 + c[1] as u32 + c[2] as u32
     }
 
+    /// Frames across a whole cycle. A single instant says nothing about a
+    /// scene that is deliberately dark between events — Kaminari is a bolt and
+    /// then the dark, Taiko is a hit and then silence — and two instants can
+    /// land on the same beat by pure aliasing, which is exactly what a
+    /// two-point version of these tests did.
+    fn over_time(scene: Scene) -> Vec<Vec<[u8; 3]>> {
+        (0..48).map(|i| sample(scene, i as f32 * 0.23)).collect()
+    }
+
     #[test]
     fn every_scene_lights_the_board_and_is_not_flat() {
         for (scene, label, blurb) in ALL_SCENES {
             assert!(!label.is_empty() && !blurb.is_empty());
-            let frame = sample(scene, 1.3);
-            let total: u32 = frame.iter().map(|c| brightness(*c)).sum();
-            assert!(total > 0, "{label} renders a black board");
-            // A scene that paints one colour everywhere is not a scene — that
-            // is what Static is for.
-            let distinct = frame.iter().collect::<std::collections::HashSet<_>>().len();
-            assert!(distinct > 3, "{label} has only {distinct} distinct colours");
+            let frames = over_time(scene);
+            let brightest: u32 = frames
+                .iter()
+                .map(|f| f.iter().map(|c| brightness(*c)).sum())
+                .max()
+                .unwrap_or(0);
+            assert!(brightest > 0, "{label} never lights the board");
+            // A scene that paints one colour everywhere, always, is not a
+            // scene — that is what Static is for.
+            let richest = frames
+                .iter()
+                .map(|f| f.iter().collect::<std::collections::HashSet<_>>().len())
+                .max()
+                .unwrap_or(0);
+            assert!(richest > 3, "{label} never gets past {richest} colours");
         }
     }
 
     #[test]
     fn every_scene_animates() {
         for (scene, label, _) in ALL_SCENES {
-            let a = sample(scene, 0.4);
-            let b = sample(scene, 2.9);
-            assert_ne!(a, b, "{label} does not move");
+            let frames = over_time(scene);
+            assert!(
+                frames.iter().any(|f| *f != frames[0]),
+                "{label} does not move"
+            );
         }
     }
 

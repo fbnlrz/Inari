@@ -138,27 +138,6 @@ export function KeyboardScreen() {
           </div>
           <p className="hs-hint">{effect.hint}</p>
 
-          {light.kind === "scene" && (
-            <div className="kb-scenes">
-              {kb.scenes.map((s) => (
-                <button
-                  type="button"
-                  key={s.scene}
-                  className={"kb-scene" + (light.scene === s.scene ? " active" : "")}
-                  onClick={() => void kb.setLighting({ kind: "scene", scene: s.scene })}
-                >
-                  <span className="kb-scene-strip">
-                    {(SCENE_SWATCHES[s.scene] ?? []).map((c) => (
-                      <span key={c} style={{ background: c }} />
-                    ))}
-                  </span>
-                  <span className="kb-scene-name">{s.label}</span>
-                  <span className="kb-scene-hint">{s.hint}</span>
-                </button>
-              ))}
-            </div>
-          )}
-
           <div className="kb-controls">
             {(effect.colors ?? 0) >= 1 && (
               <label className="kb-color">
@@ -218,6 +197,42 @@ export function KeyboardScreen() {
               </div>
             </>
           )}
+        </section>
+
+        {/* ---- scenes ----
+             Their own card, always on screen. Hiding them behind the "Scenes"
+             effect chip meant nobody found them. */}
+        <section className="hs-card">
+          <div className="hs-card-head">
+            <Ms name="auto_awesome" style={{ fontSize: 18 }} />
+            <h2>Scenes</h2>
+            {light.kind === "scene" && <span className="hs-card-right tag live">Playing</span>}
+          </div>
+          <div className="kb-scenes">
+            {kb.scenes.map((s) => (
+              <button
+                type="button"
+                key={s.scene}
+                className={
+                  "kb-scene" +
+                  (light.kind === "scene" && light.scene === s.scene ? " active" : "")
+                }
+                onClick={() => void kb.setLighting({ kind: "scene", scene: s.scene })}
+              >
+                <span className="kb-scene-strip">
+                  {(SCENE_SWATCHES[s.scene] ?? []).map((c) => (
+                    <span key={c} style={{ background: c }} />
+                  ))}
+                </span>
+                <span className="kb-scene-name">{s.label}</span>
+                <span className="kb-scene-hint">{s.hint}</span>
+              </button>
+            ))}
+          </div>
+          <p className="hs-hint">
+            Speed and brightness come from the Lighting card above; Ripple and
+            Slash use the colour you set there.
+          </p>
         </section>
 
         {/* ---- the board itself ---- */}
