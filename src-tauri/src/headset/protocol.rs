@@ -252,8 +252,6 @@ pub fn set_eq_bands(bands_db: &[f32]) -> Vec<u8> {
     cmd
 }
 /// Decode a device EQ byte back to dB (inverse of [`set_eq_bands`]).
-/// Kept for parsing live EQ-band events (0x0731) and used by tests.
-#[allow(dead_code)]
 pub fn eq_byte_to_db(byte: u8) -> f32 {
     (byte as f32 - EQ_BASELINE as f32) / 2.0
 }
@@ -284,6 +282,15 @@ pub struct HeadsetStatus {
     /// ChatMix game/chat balance 0 .. 100 each (from the 0x0745 event).
     pub chatmix_game: Option<u8>,
     pub chatmix_chat: Option<u8>,
+    /// The station's own EQ, decoded to dB. Without this the UI has nothing to
+    /// start its faders from, and ten zeros are indistinguishable from a flat
+    /// curve the user chose — so the first touch of any fader would flatten
+    /// whatever the station was actually playing.
+    pub eq_bands: Option<Vec<f32>>,
+    /// The selected preset slot, `EQ_CUSTOM_PRESET` for the custom one.
+    pub eq_preset: Option<u8>,
+    /// Microphone gain: the device encodes 1 = low, 2 = high.
+    pub gain_high: Option<bool>,
     pub line_out: Option<LineOut>,
 }
 
@@ -329,6 +336,12 @@ impl HeadsetStatus {
             // Reply to the 0x20 audio-settings query. Byte 3 is the station
             // volume; the stream mix sits at the end of the same frame.
             (_, CMD_VOLUME_QUERY) if buf.len() >= 4 => {
+                if buf.len() >= 17 {
+                    self.gain_high = Some(buf[4] == 2);
+                    self.eq_preset = Some(buf[6]);
+                    self.eq_bands =
+                        Some(buf[7..17].iter().copied().map(eq_byte_to_db).collect());
+                }
                 if buf.len() >= 26 {
                     self.stream_main = Some(buf[22].min(100));
                     self.stream_aux = Some(buf[24].min(100));
@@ -431,6 +444,35 @@ mod tests {
         assert_eq!(cmd[2], EQ_BASELINE + 20);
         assert_eq!(cmd[3], EQ_BASELINE - 20);
         assert!((eq_byte_to_db(EQ_BASELINE + 20) - 10.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn the_audio_settings_frame_carries_gain_and_the_whole_eq_curve() {
+        let mut status = HeadsetStatus::default();
+        let mut frame = vec![0u8; 26];
+        frame[0] = REPORT_ID;
+        frame[1] = CMD_VOLUME_QUERY;
+        frame[3] = 10; // volume
+        frame[4] = 2; // high gain
+        frame[6] = EQ_CUSTOM_PRESET;
+        // A curve that is emphatically not flat, so a fader starting from zero
+        // would be visibly wrong rather than coincidentally right.
+        for (i, byte) in frame[7..17].iter_mut().enumerate() {
+            *byte = EQ_BASELINE + (i as u8) * 2;
+        }
+        assert!(status.apply_frame(&frame));
+        assert_eq!(status.gain_high, Some(true));
+        assert_eq!(status.eq_preset, Some(EQ_CUSTOM_PRESET));
+        let bands = status.eq_bands.clone().expect("bands decoded");
+        assert_eq!(bands.len(), EQ_BANDS);
+        assert!((bands[0] - 0.0).abs() < 1e-6);
+        assert!((bands[9] - 9.0).abs() < 1e-6);
+
+        // Low gain is the other half of the encoding; it must not be inferred
+        // from a missing field.
+        frame[4] = 1;
+        status.apply_frame(&frame);
+        assert_eq!(status.gain_high, Some(false));
     }
 
     #[test]

@@ -19,9 +19,16 @@
 //!   brightness, which is exactly what a naive "write the whole struct" port
 //!   would do.
 //!
-//! All of these are bulk payloads and therefore **feature** reports, not the
-//! 65-byte output reports the small commands use — a per-key table for 70 keys
-//! is 214 bytes and could not fit otherwise.
+//! Transport is **not** uniform here, and getting it wrong is silent:
+//!
+//! * The per-key tables are bulk payloads and go out as **feature** reports —
+//!   70 keys is over 200 bytes and could not fit a 64-byte output report.
+//! * The small config commands (`0x20` lighting, `0x29` power saving, `0x17`
+//!   rapid tap) are ordinary **output** reports of 65 bytes. Their payloads are
+//!   32, 7 and 1 bytes. Sent as feature reports the ioctl still succeeds — the
+//!   length happens to be valid — and the firmware discards them, so the
+//!   setting looks applied and is not. That is exactly the failure the idle
+//!   timer was meant to fix, so it is worth being explicit about.
 
 use serde::{Deserialize, Serialize};
 
@@ -220,8 +227,8 @@ pub fn set_protection_mode(model: &Model, keys: &[(u8, bool)]) -> Vec<u8> {
 /// both]`) is specified but not exposed: without a pair editor in the UI the
 /// command has nothing to say, so enabling Rapid Tap uses whatever pairs the
 /// keyboard's own profile already holds.
-pub fn set_rapid_tap(model: &Model, enabled: bool) -> Vec<u8> {
-    feature(model, CMD_RAPID_TAP_ENABLE, &[u8::from(enabled)])
+pub fn set_rapid_tap(enabled: bool) -> Vec<u8> {
+    super::protocol::raw(CMD_RAPID_TAP_ENABLE, &[u8::from(enabled)])
 }
 
 /// The lighting settings the firmware keeps, as read back by [`parse_lighting`].
@@ -240,7 +247,6 @@ pub struct LightingConfig {
 /// Every field carries its own apply flag, so passing `None` genuinely leaves
 /// that setting alone rather than rewriting it with a stale value.
 pub fn set_lighting_config(
-    model: &Model,
     brightness: Option<u8>,
     idle_brightness: Option<u8>,
     idle_timeout_ms: Option<u32>,
@@ -261,7 +267,7 @@ pub fn set_lighting_config(
         payload[4..8].copy_from_slice(&ms.to_le_bytes());
         payload[8] = 1;
     }
-    feature(model, CMD_LIGHTING_CONFIG, &payload)
+    super::protocol::raw(CMD_LIGHTING_CONFIG, &payload)
 }
 
 /// Ask for the current lighting configuration.
@@ -295,7 +301,7 @@ pub struct PowerSaving {
     pub high_efficiency: bool,
 }
 
-pub fn set_power_saving(model: &Model, timeout_ms: u32, high_efficiency: bool) -> Vec<u8> {
+pub fn set_power_saving(timeout_ms: u32, high_efficiency: bool) -> Vec<u8> {
     let mut payload = Vec::with_capacity(7);
     payload.extend_from_slice(&timeout_ms.to_le_bytes());
     payload.push(u8::from(high_efficiency));
@@ -303,7 +309,7 @@ pub fn set_power_saving(model: &Model, timeout_ms: u32, high_efficiency: bool) -
     // defaults, and nothing here exposes them.
     payload.push(1);
     payload.push(1);
-    feature(model, CMD_POWER_SAVING, &payload)
+    super::protocol::raw(CMD_POWER_SAVING, &payload)
 }
 
 pub fn read_power_query() -> Vec<u8> {
@@ -410,24 +416,29 @@ mod tests {
     }
 
     #[test]
-    fn the_rapid_tap_switch_is_a_single_byte() {
-        assert_eq!(&set_rapid_tap(board(), true)[..2], &[0x17, 1]);
-        assert_eq!(&set_rapid_tap(board(), false)[..2], &[0x17, 0]);
+    fn the_rapid_tap_switch_is_a_single_byte_output_report() {
+        assert_eq!(&set_rapid_tap(true)[..3], &[0x00, 0x17, 1]);
+        assert_eq!(&set_rapid_tap(false)[..3], &[0x00, 0x17, 0]);
+        assert_eq!(set_rapid_tap(true).len(), crate::keyboard::protocol::COMMAND_LEN);
     }
 
     #[test]
     fn lighting_config_only_applies_the_fields_it_was_given() {
         // The whole point: changing the idle timer must not touch brightness.
-        let only_idle = set_lighting_config(board(), None, None, Some(0));
-        assert_eq!(only_idle[0], 0x20);
-        assert_eq!(only_idle[2], 0, "brightness apply flag stays clear");
-        assert_eq!(only_idle[4], 0, "idle brightness apply flag stays clear");
-        assert_eq!(&only_idle[5..9], &[0, 0, 0, 0], "timeout 0 = never dim");
-        assert_eq!(only_idle[9], 1, "and its apply flag is set");
+        // An OUTPUT report: [0x00 report id][cmd][payload…], 65 bytes. Sent as
+        // a feature report the device accepts the ioctl and ignores the
+        // command, which is how a setting comes to look applied and is not.
+        let only_idle = set_lighting_config(None, None, Some(0));
+        assert_eq!(only_idle.len(), crate::keyboard::protocol::COMMAND_LEN);
+        assert_eq!(&only_idle[..2], &[0x00, 0x20]);
+        assert_eq!(only_idle[3], 0, "brightness apply flag stays clear");
+        assert_eq!(only_idle[5], 0, "idle brightness apply flag stays clear");
+        assert_eq!(&only_idle[6..10], &[0, 0, 0, 0], "timeout 0 = never dim");
+        assert_eq!(only_idle[10], 1, "and its apply flag is set");
 
-        let only_brightness = set_lighting_config(board(), Some(7), None, None);
-        assert_eq!(&only_brightness[1..3], &[7, 1]);
-        assert_eq!(only_brightness[9], 0, "timeout apply flag stays clear");
+        let only_brightness = set_lighting_config(Some(7), None, None);
+        assert_eq!(&only_brightness[2..4], &[7, 1]);
+        assert_eq!(only_brightness[10], 0, "timeout apply flag stays clear");
     }
 
     #[test]
@@ -461,9 +472,10 @@ mod tests {
         assert!(!power.high_efficiency);
         assert_eq!(parse_power_saving(&[0xa0, 0, 0, 0, 0, 0]), None);
 
-        let packet = set_power_saving(board(), 300_000, true);
-        assert_eq!(packet[0], 0x29);
-        assert_eq!(&packet[1..5], &300_000u32.to_le_bytes());
-        assert_eq!(packet[5], 1);
+        let packet = set_power_saving(300_000, true);
+        assert_eq!(packet.len(), crate::keyboard::protocol::COMMAND_LEN);
+        assert_eq!(&packet[..2], &[0x00, 0x29]);
+        assert_eq!(&packet[2..6], &300_000u32.to_le_bytes());
+        assert_eq!(packet[6], 1);
     }
 }

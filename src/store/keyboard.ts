@@ -392,11 +392,15 @@ export const useKeyboard = create<KeyboardState>((set, get) => {
     },
 
     fillKeys: async (rgb) => {
+      // A per-key colour queued moments ago would otherwise land after this
+      // and repaint that one key, with the UI showing the fill colour.
+      debounced.cancel("key:");
       await call("keyboard_fill_keys", { rgb });
       await get().refresh();
     },
 
     clearKeys: async () => {
+      debounced.cancel("key:");
       await call("keyboard_clear_keys");
       await get().refresh();
     },

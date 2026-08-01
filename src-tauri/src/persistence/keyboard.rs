@@ -165,6 +165,7 @@ pub fn save(config: &KeyboardConfig) -> Result<(), SinkError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::keyboard::protocol::Packing;
     use crate::keyboard::effects::EffectKind;
 
     #[test]
@@ -207,7 +208,7 @@ mod tests {
         config.oled_mode = Some(KbMode::Clock);
         config.oled_wire = Some(OledWire::Chunked {
             cmd: 0x0c,
-            page: false,
+            packing: Packing::Row,
         });
         let raw = serde_json::to_string(&config).unwrap();
         let back: KeyboardConfig = serde_json::from_str(&raw).unwrap();

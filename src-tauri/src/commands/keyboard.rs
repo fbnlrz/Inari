@@ -191,6 +191,7 @@ pub fn keyboard_set_oled_wire(
     state: State<'_, AppState>,
     wire: Option<OledWire>,
 ) -> Result<(), String> {
+    state.keyboard.reset_oled_choice();
     state.keyboard.update_config(|c| c.oled_wire = wire)
 }
 
@@ -241,12 +242,29 @@ fn all_keys(state: &AppState) -> Vec<u8> {
 
 /// Send the actuation table the current configuration describes: the global
 /// value everywhere, with per-key overrides on top.
+/// Write the actuation table.
+///
+/// `0x2F` addresses keys individually, so when there is no global setting the
+/// overrides are sent on their own. Inventing a board-wide baseline to hang
+/// them off would silently move every other key — painting one key would
+/// change the whole keyboard's feel.
+/// Falls back only for keys that carry an override while nothing global is
+/// set — in that case it is never actually used, but the table builder wants a
+/// number. 1.5 mm is the hardware-verified normal travel.
+const DEFAULT_ACTUATION: u8 = 15;
+
 fn push_actuation(state: &AppState) -> Result<(), String> {
     let config = state.keyboard.config();
-    let Some(global) = config.actuation else {
-        return Ok(());
+    let hids: Vec<u8> = match config.actuation {
+        Some(_) => all_keys(state),
+        None if !config.per_key_actuation.is_empty() => {
+            let mut keys: Vec<u8> = config.per_key_actuation.keys().copied().collect();
+            keys.sort_unstable();
+            keys
+        }
+        None => return Ok(()),
     };
-    let hids = all_keys(state);
+    let global = config.actuation.unwrap_or(DEFAULT_ACTUATION);
     // Built inside the closure: travel-to-wire is per model, because the wired
     // Gen 3 boards want raw sensor counts rather than tenths of a millimetre.
     state.keyboard.send_feature_with_model(|model| {
@@ -297,10 +315,6 @@ pub fn keyboard_set_key_actuation(
             Some(value) => c.per_key_actuation.insert(hid, value),
             None => c.per_key_actuation.remove(&hid),
         };
-        // A per-key value is meaningless without a baseline to layer it on.
-        if c.actuation.is_none() {
-            c.actuation = Some(15);
-        }
     })?;
     push_actuation(&state)
 }
@@ -353,9 +367,7 @@ pub fn keyboard_set_protection_mode(state: State<'_, AppState>, on: bool) -> Res
 #[tauri::command]
 pub fn keyboard_set_rapid_tap(state: State<'_, AppState>, on: bool) -> Result<(), String> {
     state.keyboard.update_config(|c| c.rapid_tap = on)?;
-    state
-        .keyboard
-        .send_feature_with_model(|model| firmware::set_rapid_tap(model, on))
+    state.keyboard.send_control(&firmware::set_rapid_tap(on))
 }
 
 /// The keyboard's own idle dimming — the timer that actually controls the
@@ -370,9 +382,22 @@ pub fn keyboard_set_idle(
         c.idle_timeout_secs = seconds;
         c.idle_brightness = brightness;
     })?;
-    state.keyboard.send_feature_with_model(|model| {
-        firmware::set_lighting_config(model, None, Some(brightness), Some(seconds * 1000))
-    })
+    state
+        .keyboard
+        .send_control(&firmware::set_lighting_config(
+            None,
+            Some(brightness),
+            Some(seconds * 1000),
+        ))?;
+    // The board is not re-read after a write, so mirror what it now holds;
+    // otherwise the next status event restores the connect-time snapshot.
+    state.keyboard.patch_status(|s| {
+        if let Some(lighting) = s.lighting.as_mut() {
+            lighting.idle_brightness = brightness;
+            lighting.idle_timeout_ms = seconds * 1000;
+        }
+    });
+    Ok(())
 }
 
 /// Sleep timeout and high-efficiency mode.
@@ -386,9 +411,16 @@ pub fn keyboard_set_power_saving(
         c.sleep_minutes = minutes;
         c.high_efficiency = high_efficiency;
     })?;
-    state.keyboard.send_feature_with_model(|model| {
-        firmware::set_power_saving(model, minutes * 60_000, high_efficiency)
-    })
+    state
+        .keyboard
+        .send_control(&firmware::set_power_saving(minutes * 60_000, high_efficiency))?;
+    state.keyboard.patch_status(|s| {
+        if let Some(power) = s.power.as_mut() {
+            power.timeout_ms = minutes * 60_000;
+            power.high_efficiency = high_efficiency;
+        }
+    });
+    Ok(())
 }
 
 /// Switch the keyboard to one of its onboard profiles.

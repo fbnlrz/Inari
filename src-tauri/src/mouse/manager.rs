@@ -146,13 +146,28 @@ impl MouseManager {
                     if let Ok(mut slot) = self.dev.lock() {
                         *slot = Some(path.clone());
                     }
-                    if first_time {
-                        if let Ok(mut s) = self.status.lock() {
-                            s.present = true;
-                            s.wireless = wireless;
-                            s.model = Some(model.to_string());
+                    // Written on every scan, not only the first: swapping the
+                    // cable for the dongle (or back) changes the product id
+                    // without ever leaving a gap where the mouse is absent, so
+                    // `first_time` stays false and the transport shown in the
+                    // UI would keep describing the connection that ended.
+                    let changed = {
+                        match self.status.lock() {
+                            Ok(mut s) => {
+                                let changed =
+                                    !s.present || s.wireless != wireless || s.model.as_deref() != Some(model);
+                                s.present = true;
+                                s.wireless = wireless;
+                                s.model = Some(model.to_string());
+                                changed
+                            }
+                            Err(_) => false,
                         }
+                    };
+                    if first_time {
                         self.emit_presence(true);
+                    } else if changed {
+                        self.emit_status();
                     }
                     self.refresh_battery(&path);
                     std::thread::sleep(Duration::from_secs(30));

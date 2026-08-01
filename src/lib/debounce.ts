@@ -17,7 +17,11 @@ export interface DebounceOptions {
  */
 export function createDebouncer(delayMs: number, onError: DebounceErrorHandler) {
   const pending = new Map<string, ReturnType<typeof setTimeout>>();
-  return (key: string, fn: () => Promise<unknown>, opts?: DebounceOptions): void => {
+  const debounce = (
+    key: string,
+    fn: () => Promise<unknown>,
+    opts?: DebounceOptions,
+  ): void => {
     const existing = pending.get(key);
     if (existing !== undefined) clearTimeout(existing);
     pending.set(
@@ -30,4 +34,21 @@ export function createDebouncer(delayMs: number, onError: DebounceErrorHandler) 
       }, opts?.ms ?? delayMs),
     );
   };
+  /**
+   * Drop every pending call whose key starts with `prefix`.
+   *
+   * For the case where a bulk action supersedes queued per-item writes: a
+   * pending single-key colour that lands *after* "Clear" would repaint that key
+   * on the device and re-add it to the stored config, with nothing left to tell
+   * the UI about it.
+   */
+  debounce.cancel = (prefix: string): void => {
+    for (const [key, timer] of pending) {
+      if (key.startsWith(prefix)) {
+        clearTimeout(timer);
+        pending.delete(key);
+      }
+    }
+  };
+  return debounce;
 }

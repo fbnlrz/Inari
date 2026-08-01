@@ -65,13 +65,22 @@ over `/dev/hidraw` on 2026-08-01. The vendor interface (USB interface 3, usage
 page `0xFFC0`) declares exactly three reports, and probing confirmed each:
 
 - **Output, 64 bytes** — configuration. Written as 65 bytes,
-  `[0x00 report id][cmd][payload…]`: zone colour `0x21`, brightness `0x22`
-  (0–100), apply `0x09`, reactive `0x25`, colour shift `0x26`, profile `0x89`,
-  firmware query `0x90`, battery `0x92`, region `0xF5`.
+  `[0x00 report id][cmd][payload…]`: apply `0x11`, reactive `0x25`, colour
+  shift `0x26`, profile `0x89`, firmware query `0x90`, battery `0x92`, region
+  `0xF5`.
+
+  Zone colour `0x21` and brightness `0x22` are the **Gen 1** dialect and must
+  not be sent here: on this board `0x21` is the per-key direct write and `0x22`
+  is `clear_direct_write`. A brightness command is therefore not ignored, it is
+  a byte-identical valid command that wipes the direct-write buffer. These
+  boards set brightness through `0x20` below, on a 0–10 scale.
 - **Input, 64 bytes** — query replies, which arrive **one command behind**.
   Drain the queue before trusting an answer. `0x90` replies with bare ASCII
-  (`3.24.1`); `0x92` replies `92 95`, where `0x95` is 95 % as two BCD digits —
-  matching what the keyboard's own indicator showed.
+  (`3.24.1`); `0x92` replies `92 95`, decoded like the Aerox: bit 7 is the
+  charging flag and the remaining `0x15` counts in steps of 5 from 1, so
+  `0x95` is 100 % on the cable — matching what the keyboard's own indicator
+  showed. Reading it as two BCD digits gives a plausible 95 % and is wrong;
+  BCD cannot express 100 at all.
 - **Feature, 641 bytes** — bulk payloads, with the **command byte first**:
   `[cmd][payload…]`, padded to exactly 641. This is the part that bites:
   prefixing a `0x00` report id instead (what OpenRGB and hidapi's convention
@@ -109,17 +118,33 @@ The firmware composites its own status strip — profile name and battery — ov
 the top of whatever is sent, so Inari's screens start 10 px down. It also
 repaints on its own events, so frames are re-sent about twice a second.
 
+Direct writes stick: going quiet leaves the last picture in the content area
+indefinitely. `0x0B` hands the panel back (`0x69` on the wired and older
+boards), and Inari sends it when the OLED mode is switched off and on exit.
+
 ### Switches
 
-All of these are **feature** reports, because a per-key table for 70 keys is
-over 200 bytes and cannot fit in a 64-byte output report.
+The per-key **tables** are feature reports, because a table for 70 keys is over
+200 bytes and cannot fit in a 64-byte output report. The small switches
+(`0x17`, and `0x20`/`0x29` below) are ordinary **output** reports — sent as
+feature reports the ioctl still succeeds, since the length happens to be valid,
+and the firmware discards them. A setting that looks applied and is not.
+
+These opcodes are the **2023 wireless** dialect, and Inari only offers the
+switches tab on boards where it knows the dialect. The vendor specification
+gives the Gen 3 *wired* boards a different set — `0x31` rather than `0x2F`,
+`0x34` rather than `0x37`, `0x32` rather than `0x36`, `0x35` rather than
+`0x14`, `0x1A` rather than `0x17`, no power-saving command at all, a per-key
+struct in the other byte order and a driver-mode command wrapping the whole
+exchange. Guessing one dialect from the other yields controls that move
+nothing.
 
 | Command | Shape |
 | --- | --- |
 | `0x2F` | Actuation: `[layer][num_keys][hid, press, release] × n`, travel in **tenths of a millimetre**. Layer 0 is the actuation point, 1 the second actuation. |
 | `0x37` | Rapid Trigger: `[num_keys][hid, sensitivity] × n` |
 | `0x14` | Protection Mode: `[num_keys][hid, mode] × n` |
-| `0x17` | Rapid Tap on/off; `0x18` carries ten four-byte pairs |
+| `0x17` | Rapid Tap on/off — an **output** report, not a feature report; `0x18` carries ten four-byte pairs |
 
 `num_keys` is honest — writing a single key works, which is how the unit was
 measured: 40 on one key made it trigger visibly later, 15 restored it.
@@ -134,8 +159,7 @@ own apply flag, so a single field can be changed without disturbing the others:
 brightness, idle brightness, and the idle timeout in milliseconds. `0x29`
 carries the sleep timeout and high-efficiency mode.
 
-Both read back — `0xA0` and `0xA9` — and, unlike the tables above, the **reads
-are ordinary output reports**. The measured board answered with brightness 10,
+Both are output reports, as are their reads — `0xA0` and `0xA9`. The measured board answered with brightness 10,
 idle brightness 10, a 60 s idle timeout and a 5 min sleep timeout.
 
 ## Adding a device

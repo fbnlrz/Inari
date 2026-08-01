@@ -178,6 +178,16 @@ export function HeadsetScreen() {
     setMixSeeded(true);
   }, [mixSeeded, s.stream_main, s.stream_aux, s.stream_mic]);
 
+  // Same story for the EQ, and it matters more: the faders write all ten bands
+  // at once and follow up with a flash save, so touching one of them while the
+  // others sit at a made-up zero flattens the station's stored curve for good.
+  const [eqSeeded, setEqSeeded] = useState(false);
+  useEffect(() => {
+    if (eqSeeded || !s.eq_bands || s.eq_bands.length !== 10) return;
+    setEq(s.eq_bands);
+    setEqSeeded(true);
+  }, [eqSeeded, s.eq_bands]);
+
   const autoOffIdx = useMemo(() => {
     const i = AUTO_OFF_STEPS.indexOf((s.auto_off_minutes ?? 30) as never);
     return i < 0 ? 5 : i;
@@ -251,7 +261,7 @@ export function HeadsetScreen() {
         <div className="hs-row">
           <span>Audio gain</span>
           <Segmented
-            value={0}
+            value={s.gain_high ? 1 : 0}
             onChange={(v) => h.setGainHigh(v === 1)}
             options={[
               { value: 0, label: "Low" },

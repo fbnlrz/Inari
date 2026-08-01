@@ -18,7 +18,7 @@
 
 use crate::headset::oled::{Framebuffer, WIDTH};
 
-use super::protocol::OledWire;
+use super::protocol::{OledWire, Packing};
 
 /// Panel height. Half the base station's, which is why the keyboard has its
 /// own renderers rather than reusing the headset's.
@@ -53,13 +53,32 @@ fn page_major(fb: &Framebuffer) -> [u8; FRAME_BYTES] {
     out
 }
 
-/// The framebuffer row by row, MSB first — the 2019 panels' layout.
+/// The framebuffer row by row, MSB first — the leftmost pixel of each group of
+/// eight is the high bit.
 fn row_major(fb: &Framebuffer) -> [u8; FRAME_BYTES] {
     let mut out = [0u8; FRAME_BYTES];
     for y in 0..HEIGHT.min(fb.height()) {
         for x in 0..WIDTH {
             if fb.get(x, y) {
                 out[y * (WIDTH / 8) + (x >> 3)] |= 0x80 >> (x & 7);
+            }
+        }
+    }
+    out
+}
+
+/// Row major with the bits inside each byte the other way round — the vendor
+/// software calls this "reverse bytepacking" and uses it for these panels.
+///
+/// The difference is invisible on a border or a big diagonal, which is exactly
+/// what the first hardware test drew: reversing the bits mirrors each group of
+/// eight pixels in place, so solid shapes survive it and text does not.
+fn row_major_reversed(fb: &Framebuffer) -> [u8; FRAME_BYTES] {
+    let mut out = [0u8; FRAME_BYTES];
+    for y in 0..HEIGHT.min(fb.height()) {
+        for x in 0..WIDTH {
+            if fb.get(x, y) {
+                out[y * (WIDTH / 8) + (x >> 3)] |= 1 << (x & 7);
             }
         }
     }
@@ -73,17 +92,21 @@ const GEN3_WIRED_PREFIX: [u8; 4] = [0x38, 0x83, 0x00, 0x00];
 /// `feature_len` is the model's declared report size — the hardware is strict
 /// about it, and a report shorter than the payload is never produced.
 pub fn frame_packets(fb: &Framebuffer, wire: OledWire, feature_len: usize) -> Vec<Vec<u8>> {
-    let bitmap = |page: bool| if page { page_major(fb) } else { row_major(fb) };
+    let bitmap = |packing: Packing| match packing {
+        Packing::Row => row_major(fb),
+        Packing::RowReversed => row_major_reversed(fb),
+        Packing::Page => page_major(fb),
+    };
     match wire {
-        OledWire::Single { cmd, page } => {
-            vec![single_report(&[cmd], &bitmap(page), feature_len)]
+        OledWire::Single { cmd, packing } => {
+            vec![single_report(&[cmd], &bitmap(packing), feature_len)]
         }
         OledWire::Gen3Wired => vec![single_report(
             &GEN3_WIRED_PREFIX,
             &page_major(fb),
             feature_len,
         )],
-        OledWire::Chunked { cmd, page } => chunked(&bitmap(page), cmd, feature_len),
+        OledWire::Chunked { cmd, packing } => chunked(&bitmap(packing), cmd, feature_len),
     }
 }
 
@@ -129,59 +152,73 @@ pub fn candidates(preferred: OledWire) -> Vec<OledWire> {
 /// Every transport the UI offers, with a label. Ordered by how likely each is
 /// to be the right one on an unknown board: the verified shape first, then the
 /// ones OmniLED and apex-tux ship working configs for.
-pub const ALL_WIRES: [(OledWire, &str); 8] = [
+pub const ALL_WIRES: [(OledWire, &str); 10] = [
     (
         OledWire::Chunked {
             cmd: 0x0c,
-            page: false,
+            packing: Packing::Row,
         },
-        "Chunked 0x0C, row-major (2023 wireless, verified)",
-    ),
-    (
-        OledWire::Chunked {
-            cmd: 0x4c,
-            page: false,
-        },
-        "Chunked 0x4C, row-major (2023 dongle)",
+        "Chunked 0x0C, row (2023 wireless — verified here)",
     ),
     (
         OledWire::Single {
             cmd: 0x0a,
-            page: true,
+            packing: Packing::RowReversed,
         },
-        "Single 0x0A, page-major (Gen 3 wireless, cable)",
+        "Single 0x0A, row reversed (the vendor's own path, cable)",
     ),
     (
         OledWire::Single {
             cmd: 0x4a,
-            page: true,
+            packing: Packing::RowReversed,
         },
-        "Single 0x4A, page-major (Gen 3 wireless, dongle)",
-    ),
-    (
-        OledWire::Gen3Wired,
-        "Single 0x38 0x83, page-major (Gen 3 TKL wired)",
+        "Single 0x4A, row reversed (the vendor's own path, dongle)",
     ),
     (
         OledWire::Single {
-            cmd: 0x61,
-            page: true,
+            cmd: 0x0a,
+            packing: Packing::Row,
         },
-        "Single 0x61, page-major (Apex Pro Gen 3)",
-    ),
-    (
-        OledWire::Single {
-            cmd: 0x61,
-            page: false,
-        },
-        "Single 0x61, row-major (Apex Pro / 7 / 5)",
+        "Single 0x0A, row",
     ),
     (
         OledWire::Chunked {
             cmd: 0x0c,
-            page: true,
+            packing: Packing::RowReversed,
         },
-        "Chunked 0x0C, page-major",
+        "Chunked 0x0C, row reversed",
+    ),
+    (
+        OledWire::Chunked {
+            cmd: 0x4c,
+            packing: Packing::Row,
+        },
+        "Chunked 0x4C, row (2023 dongle)",
+    ),
+    (
+        OledWire::Gen3Wired,
+        "Single 0x38 0x83, page (Gen 3 TKL wired)",
+    ),
+    (
+        OledWire::Single {
+            cmd: 0x61,
+            packing: Packing::Row,
+        },
+        "Single 0x61, row (Apex Pro / 7 / 5)",
+    ),
+    (
+        OledWire::Single {
+            cmd: 0x61,
+            packing: Packing::Page,
+        },
+        "Single 0x61, page",
+    ),
+    (
+        OledWire::Chunked {
+            cmd: 0x0c,
+            packing: Packing::Page,
+        },
+        "Chunked 0x0C, page",
     ),
 ];
 
@@ -202,7 +239,7 @@ mod tests {
             &tall,
             OledWire::Single {
                 cmd: 0x61,
-                page: false,
+                packing: Packing::Row,
             },
             642,
         );
@@ -220,8 +257,8 @@ mod tests {
     #[test]
     fn single_reports_lead_with_their_command_and_fill_the_declared_size() {
         let fb = framebuffer();
-        for page in [true, false] {
-            let packets = frame_packets(&fb, OledWire::Single { cmd: 0x61, page }, 642);
+        for packing in [Packing::Row, Packing::Page] {
+            let packets = frame_packets(&fb, OledWire::Single { cmd: 0x61, packing }, 642);
             assert_eq!(packets.len(), 1);
             assert_eq!(packets[0].len(), 642);
             assert_eq!(packets[0][0], 0x61);
@@ -246,11 +283,11 @@ mod tests {
         // Row major: leftmost pixel of the first row is the high bit.
         let row = OledWire::Single {
             cmd: 0x61,
-            page: false,
+            packing: Packing::Row,
         };
         let page = OledWire::Single {
             cmd: 0x61,
-            page: true,
+            packing: Packing::Page,
         };
         assert_eq!(frame_packets(&fb, row, 642)[0][1], 0x80);
         // Page major: first column of page 0, topmost pixel is bit 0.
@@ -268,7 +305,7 @@ mod tests {
             &fb,
             OledWire::Single {
                 cmd: 0x61,
-                page: true,
+                packing: Packing::Page,
             },
             642,
         )
@@ -285,7 +322,7 @@ mod tests {
             &fb,
             OledWire::Single {
                 cmd: 0x61,
-                page: false,
+                packing: Packing::Row,
             },
             642,
         )
@@ -302,7 +339,7 @@ mod tests {
             &fb,
             OledWire::Chunked {
                 cmd: 0x0c,
-                page: false,
+                packing: Packing::Row,
             },
             LEN,
         );
@@ -328,11 +365,11 @@ mod tests {
         let fb = framebuffer();
         let dongle = OledWire::Chunked {
             cmd: 0x4c,
-            page: false,
+            packing: Packing::Row,
         };
         let cable = OledWire::Chunked {
             cmd: 0x0c,
-            page: false,
+            packing: Packing::Row,
         };
         assert_eq!(frame_packets(&fb, dongle, LEN)[0][0], 0x4c);
         assert_eq!(frame_packets(&fb, cable, LEN)[0][0], 0x0c);

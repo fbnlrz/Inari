@@ -118,15 +118,25 @@ bordered X with a filled corner block — with any shape you pick:
 
 ## Switches
 
-For the HyperMagnetic boards, all of it verified on hardware:
+Shown for the Apex Pro TKL Wireless (2023) family, where every command below
+was verified on hardware. Other HyperMagnetic boards have adjustable switches
+too, but their firmware uses a different set of opcodes, so Inari hides this
+section rather than offering controls that would move nothing.
 
 - **Actuation point** — 0.1 mm to 4.0 mm, per key. The slider sets every key;
-  the key map's *Per-key actuation* mode overrides individual ones on top.
+  the key map's *Per-key actuation* mode overrides individual ones on top. With
+  no global setting, only the keys you gave an override are written — painting
+  one key does not move the rest of the board.
 - **Rapid Trigger** — re-arms a key as soon as it starts travelling back up
   instead of waiting for a fixed reset point. 0 turns it off.
 - **Protection Mode** — dampens the keys around the one you meant to press.
 - **Rapid Tap (SOCD)** — opposite keys cancel each other, using the pairs
   stored in the keyboard's own profile. Editing those pairs is not exposed yet.
+
+These writes are deliberately not saved to the keyboard's flash, so Inari never
+edits the profile the board falls back to on another machine. The trade-off is
+that they are lost when the board loses power — Inari re-sends them whenever it
+reconnects.
 
 ::: info An earlier version of this page was wrong
 It said these commands "have never been captured by anyone" and that actuation
