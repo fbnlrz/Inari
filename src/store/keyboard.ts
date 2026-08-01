@@ -115,6 +115,9 @@ export interface KeyboardStatus {
   has_oled: boolean;
   has_actuation: boolean;
   oled_wire: OledWire | null;
+  /** What the keyboard itself reports, so the sliders start on reality. */
+  lighting: { brightness: number; idle_brightness: number; idle_timeout_ms: number } | null;
+  power: { timeout_ms: number; high_efficiency: boolean } | null;
 }
 
 export interface KeyboardConfig {
@@ -128,6 +131,16 @@ export interface KeyboardConfig {
   oled_screensaver_minutes: number;
   actuation: number | null;
   per_key_actuation: Record<number, number>;
+  /** Rapid Trigger sensitivity for every key; 0 is off. */
+  rapid_trigger: number;
+  protection_mode: boolean;
+  rapid_tap: boolean;
+  /** The keyboard's OWN dim timer, in seconds; 0 never dims. */
+  idle_timeout_secs: number;
+  idle_brightness: number;
+  /** Minutes before the board sleeps; 0 never sleeps. */
+  sleep_minutes: number;
+  high_efficiency: boolean;
 }
 
 export interface KeyDef {
@@ -164,6 +177,8 @@ const emptyStatus: KeyboardStatus = {
   has_oled: false,
   has_actuation: false,
   oled_wire: null,
+  lighting: null,
+  power: null,
 };
 
 const defaultLighting: Lighting = {
@@ -188,6 +203,13 @@ const defaultConfig: KeyboardConfig = {
   oled_screensaver_minutes: 10,
   actuation: null,
   per_key_actuation: {},
+  rapid_trigger: 0,
+  protection_mode: false,
+  rapid_tap: false,
+  idle_timeout_secs: 60,
+  idle_brightness: 3,
+  sleep_minutes: 5,
+  high_efficiency: false,
 };
 
 /** Effects the user can pick, with what each one needs from the UI. */
@@ -260,7 +282,26 @@ interface KeyboardState {
   testOled: (wire: OledWire) => Promise<void>;
   setActuation: (tenths: number) => Promise<void>;
   setKeyActuation: (hid: number, tenths: number | null) => Promise<void>;
+  setRapidTrigger: (sensitivity: number) => Promise<void>;
+  setProtectionMode: (on: boolean) => Promise<void>;
+  setRapidTap: (on: boolean) => Promise<void>;
+  setIdle: (seconds: number, brightness: number) => Promise<void>;
+  setPowerSaving: (minutes: number, highEfficiency: boolean) => Promise<void>;
   sendRaw: (cmd: number, payload: number[]) => Promise<void>;
+}
+
+/** Overlay the settings the keyboard reports onto the stored configuration. */
+function fromDevice(config: KeyboardConfig, status: KeyboardStatus): KeyboardConfig {
+  const merged = { ...config };
+  if (status.lighting) {
+    merged.idle_timeout_secs = Math.round(status.lighting.idle_timeout_ms / 1000);
+    merged.idle_brightness = status.lighting.idle_brightness;
+  }
+  if (status.power) {
+    merged.sleep_minutes = Math.round(status.power.timeout_ms / 60000);
+    merged.high_efficiency = status.power.high_efficiency;
+  }
+  return merged;
 }
 
 export const useKeyboard = create<KeyboardState>((set, get) => {
@@ -271,7 +312,11 @@ export const useKeyboard = create<KeyboardState>((set, get) => {
     set({
       connected: snap.connected,
       status: snap.status,
-      config: snap.config,
+      // The keyboard stores its own idle and power timers, so what it reports
+      // wins over what Inari last wrote. Otherwise the sliders would show a
+      // remembered value while the board sits on something else — changed by
+      // SteelSeries GG, another machine, or a factory reset.
+      config: fromDevice(snap.config, snap.status),
       layout: snap.layout,
       extent: snap.extent,
       preview: Object.fromEntries(snap.preview),
@@ -398,6 +443,41 @@ export const useKeyboard = create<KeyboardState>((set, get) => {
         return { config: { ...s.config, per_key_actuation } };
       });
       debounced(`act:${hid}`, () => call("keyboard_set_key_actuation", { hid, tenths }));
+    },
+
+    setRapidTrigger: async (sensitivity) => {
+      set((s) => ({ config: { ...s.config, rapid_trigger: sensitivity } }));
+      debounced("rapidtrigger", () => call("keyboard_set_rapid_trigger", { sensitivity }));
+    },
+    setProtectionMode: async (on) => {
+      set((s) => ({ config: { ...s.config, protection_mode: on } }));
+      try {
+        await call("keyboard_set_protection_mode", { on });
+      } catch (e) {
+        set((s) => ({ config: { ...s.config, protection_mode: !on }, error: String(e) }));
+      }
+    },
+    setRapidTap: async (on) => {
+      set((s) => ({ config: { ...s.config, rapid_tap: on } }));
+      try {
+        await call("keyboard_set_rapid_tap", { on });
+      } catch (e) {
+        set((s) => ({ config: { ...s.config, rapid_tap: !on }, error: String(e) }));
+      }
+    },
+    setIdle: async (seconds, brightness) => {
+      set((s) => ({
+        config: { ...s.config, idle_timeout_secs: seconds, idle_brightness: brightness },
+      }));
+      debounced("idle", () => call("keyboard_set_idle", { seconds, brightness }));
+    },
+    setPowerSaving: async (minutes, highEfficiency) => {
+      set((s) => ({
+        config: { ...s.config, sleep_minutes: minutes, high_efficiency: highEfficiency },
+      }));
+      debounced("power", () =>
+        call("keyboard_set_power_saving", { minutes, highEfficiency }),
+      );
     },
 
     sendRaw: async (cmd, payload) => {

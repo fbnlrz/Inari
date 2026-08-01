@@ -78,8 +78,13 @@ pub const FEATURE_LEN_APEX9: usize = 512;
 
 // --- command bytes ------------------------------------------------------
 
-/// Save the current configuration (`0x09`).
-const CMD_APPLY: u8 = 0x09;
+/// Persist volatile settings into the keyboard's flash (`0x11`).
+///
+/// Not `0x09` — that is the Arctis base station's save command, and the
+/// third-party write-up Inari started from used it here too. The vendor's own
+/// specification is explicit: `0x11` on the Apex keyboards and the Aerox,
+/// `0x09` on the Arctis.
+const CMD_APPLY: u8 = 0x11;
 /// Zone colour (`0x21 zone R G B`), zone `0xFF` = every zone at once.
 const CMD_ZONE: u8 = 0x21;
 /// Lighting brightness in percent (`0x22 pct`).
@@ -88,9 +93,6 @@ const CMD_BRIGHTNESS: u8 = 0x22;
 const CMD_REACTIVE: u8 = 0x25;
 /// Colour shift between two colours (`0x26 R G B R G B speed`).
 const CMD_COLOR_SHIFT: u8 = 0x26;
-/// Actuation point in 0.1 mm steps (`0x2D value`). Accepted but ineffective on
-/// firmware 3.24.1 — see the module docs.
-const CMD_ACTUATION: u8 = 0x2d;
 /// Direct per-key lighting, generation 1.
 const CMD_DIRECT_GEN1: u8 = 0x3a;
 /// Hand the LEDs back to the onboard profile, generation 1.
@@ -180,6 +182,10 @@ pub struct Model {
     pub feature_len: usize,
     /// Adjustable (HyperMagnetic / OmniPoint) switches.
     pub actuation: bool,
+    /// The actuation table wants raw sensor counts rather than tenths of a
+    /// millimetre. True for the wired Gen 3 boards, which speak the vendor's
+    /// legacy dialect; see [`super::firmware`].
+    pub raw_actuation: bool,
 }
 
 /// Every Apex keyboard Inari speaks to.
@@ -202,6 +208,7 @@ pub static MODELS: &[Model] = &[
         }),
         feature_len: FEATURE_LEN_WIRED,
         actuation: true,
+        raw_actuation: false,
     },
     Model {
         product_id: PID_APEX_PRO_TKL,
@@ -217,6 +224,7 @@ pub static MODELS: &[Model] = &[
         }),
         feature_len: FEATURE_LEN_WIRED,
         actuation: true,
+        raw_actuation: false,
     },
     Model {
         product_id: PID_APEX_7,
@@ -232,6 +240,7 @@ pub static MODELS: &[Model] = &[
         }),
         feature_len: FEATURE_LEN_WIRED,
         actuation: false,
+        raw_actuation: false,
     },
     Model {
         product_id: PID_APEX_7_TKL,
@@ -247,6 +256,7 @@ pub static MODELS: &[Model] = &[
         }),
         feature_len: FEATURE_LEN_WIRED,
         actuation: false,
+        raw_actuation: false,
     },
     Model {
         product_id: PID_APEX_5,
@@ -262,6 +272,7 @@ pub static MODELS: &[Model] = &[
         }),
         feature_len: FEATURE_LEN_WIRED,
         actuation: false,
+        raw_actuation: false,
     },
     Model {
         product_id: PID_APEX_9_MINI,
@@ -274,6 +285,7 @@ pub static MODELS: &[Model] = &[
         oled: None,
         feature_len: FEATURE_LEN_APEX9,
         actuation: false,
+        raw_actuation: false,
     },
     Model {
         product_id: PID_APEX_9_TKL,
@@ -286,6 +298,7 @@ pub static MODELS: &[Model] = &[
         oled: None,
         feature_len: FEATURE_LEN_APEX9,
         actuation: false,
+        raw_actuation: false,
     },
     Model {
         product_id: PID_APEX_PRO_TKL_2023,
@@ -303,6 +316,7 @@ pub static MODELS: &[Model] = &[
         }),
         feature_len: FEATURE_LEN_WIRED,
         actuation: true,
+        raw_actuation: false,
     },
     Model {
         product_id: PID_APEX_PRO_TKL_2023_WL_DONGLE,
@@ -318,6 +332,7 @@ pub static MODELS: &[Model] = &[
         }),
         feature_len: FEATURE_LEN_WIRELESS,
         actuation: true,
+        raw_actuation: false,
     },
     Model {
         product_id: PID_APEX_PRO_TKL_2023_WL_WIRED,
@@ -334,6 +349,7 @@ pub static MODELS: &[Model] = &[
         }),
         feature_len: FEATURE_LEN_WIRELESS,
         actuation: true,
+        raw_actuation: false,
     },
     Model {
         product_id: PID_APEX_PRO_GEN3,
@@ -350,6 +366,7 @@ pub static MODELS: &[Model] = &[
         }),
         feature_len: FEATURE_LEN_WIRED,
         actuation: true,
+        raw_actuation: true,
     },
     Model {
         product_id: PID_APEX_PRO_TKL_GEN3,
@@ -363,6 +380,7 @@ pub static MODELS: &[Model] = &[
         oled: Some(OledWire::Gen3Wired),
         feature_len: FEATURE_LEN_WIRED,
         actuation: true,
+        raw_actuation: true,
     },
     Model {
         product_id: PID_APEX_PRO_TKL_GEN3_WL_DONGLE,
@@ -378,6 +396,7 @@ pub static MODELS: &[Model] = &[
         }),
         feature_len: FEATURE_LEN_WIRELESS,
         actuation: true,
+        raw_actuation: false,
     },
     Model {
         product_id: PID_APEX_PRO_TKL_GEN3_WL_WIRED,
@@ -393,6 +412,7 @@ pub static MODELS: &[Model] = &[
         }),
         feature_len: FEATURE_LEN_WIRELESS,
         actuation: true,
+        raw_actuation: false,
     },
 ];
 
@@ -571,15 +591,10 @@ pub fn color_shift(a: [u8; 3], b: [u8; 3], speed: u8) -> Vec<u8> {
     )
 }
 
-/// Actuation point in tenths of a millimetre (1 = 0.1 mm … 40 = 4.0 mm).
-///
-/// **Does nothing on the one board this could be tried on** (Apex Pro TKL
-/// Wireless 2023, firmware 3.24.1): the write is accepted, the switches do not
-/// move. Kept because it costs nothing and a different model or firmware may
-/// well answer to it — but the UI must not present it as working.
-pub fn actuation(tenths: u8) -> Vec<u8> {
-    control(CMD_ACTUATION, &[tenths.clamp(1, 40)])
-}
+// Actuation, Rapid Trigger, Protection Mode and Rapid Tap live in
+// `super::firmware`. The `0x2D` command this module used to carry came from a
+// third-party write-up: the hardware accepts it and does nothing. The real
+// per-key table is `0x2F`, and that one is verified.
 
 /// Switch to one of the keyboard's onboard profiles.
 pub fn select_profile(index: u8) -> Vec<u8> {
@@ -843,13 +858,6 @@ mod tests {
     }
 
     #[test]
-    fn actuation_clamps_to_the_switchs_travel() {
-        assert_eq!(actuation(0)[2], 1, "0.0 mm is not a thing");
-        assert_eq!(actuation(8)[2], 8);
-        assert_eq!(actuation(255)[2], 40, "4.0 mm is the bottom of the switch");
-    }
-
-    #[test]
     fn zone_and_shift_payloads_match_the_captured_layout() {
         assert_eq!(
             &zone_color(ZONE_ALL, [1, 2, 3])[..6],
@@ -860,7 +868,7 @@ mod tests {
             &[0, 0x26, 1, 2, 3, 4, 5, 6, 100, 0]
         );
         assert_eq!(&reactive(true)[..3], &[0, 0x25, 1]);
-        assert_eq!(&apply()[..2], &[0, 0x09]);
+        assert_eq!(&apply()[..2], &[0, 0x11], "the keyboard saves with 0x11");
     }
 
     #[test]

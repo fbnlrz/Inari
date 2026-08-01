@@ -445,6 +445,7 @@ export function KeyboardScreen() {
               <Ms name="tune" style={{ fontSize: 18 }} />
               <h2>Switches</h2>
             </div>
+
             <div className="hs-slider-top">
               <span>Actuation point</span>
               <span className="hs-slider-val">
@@ -455,17 +456,129 @@ export function KeyboardScreen() {
               type="range"
               min={1}
               max={40}
-              value={cfg.actuation ?? 8}
+              value={cfg.actuation ?? 15}
               onChange={(ev) => void kb.setActuation(Number(ev.target.value))}
             />
-            <p className="hs-hint kb-warn">
-              <Ms name="science" style={{ fontSize: 14 }} />
-              Experimental — see the note above. Rapid Trigger, Rapid Tap and
-              Protection Mode have never been captured by anyone; use the probe
-              below if you want to help find them.
+            <p className="hs-hint">
+              How far a key travels before it registers. Per-key overrides live
+              on the key map above; this is the value every other key uses.
             </p>
+
+            <div className="hs-slider-top">
+              <span>Rapid Trigger</span>
+              <span className="hs-slider-val">
+                {cfg.rapid_trigger === 0 ? "off" : cfg.rapid_trigger}
+              </span>
+            </div>
+            <input
+              type="range"
+              min={0}
+              max={10}
+              value={cfg.rapid_trigger}
+              onChange={(ev) => void kb.setRapidTrigger(Number(ev.target.value))}
+            />
+            <p className="hs-hint">
+              Re-arms a key as soon as it moves back up, instead of waiting for
+              it to pass a fixed reset point. Higher reacts to smaller movements.
+            </p>
+
+            <div className="row">
+              <div className="rtext">
+                <div className="rtitle">Protection Mode</div>
+                <div className="rsub">
+                  Dampens the keys around the one you meant to press.
+                </div>
+              </div>
+              <Toggle
+                on={cfg.protection_mode}
+                onClick={() => void kb.setProtectionMode(!cfg.protection_mode)}
+              />
+            </div>
+
+            <div className="row">
+              <div className="rtext">
+                <div className="rtitle">Rapid Tap (SOCD)</div>
+                <div className="rsub">
+                  Opposite keys cancel each other, using the pairs stored in the
+                  keyboard&apos;s own profile.
+                </div>
+              </div>
+              <Toggle on={cfg.rapid_tap} onClick={() => void kb.setRapidTap(!cfg.rapid_tap)} />
+            </div>
           </section>
         )}
+
+        {/* ---- the keyboard's own power and dimming ---- */}
+        <section className="hs-card">
+          <div className="hs-card-head">
+            <Ms name="bedtime" style={{ fontSize: 18 }} />
+            <h2>Idle &amp; power</h2>
+          </div>
+          <p className="hs-hint">
+            These are the keyboard&apos;s own timers, stored in the board — they
+            keep working when Inari is closed.
+          </p>
+
+          <div className="hs-slider-top">
+            <span>Dim the lighting after</span>
+            <span className="hs-slider-val">
+              {cfg.idle_timeout_secs === 0 ? "never" : `${cfg.idle_timeout_secs} s`}
+            </span>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={600}
+            step={10}
+            value={cfg.idle_timeout_secs}
+            onChange={(ev) =>
+              void kb.setIdle(Number(ev.target.value), cfg.idle_brightness)
+            }
+          />
+
+          <div className="hs-slider-top">
+            <span>Brightness once dimmed</span>
+            <span className="hs-slider-val">{cfg.idle_brightness}/10</span>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={10}
+            value={cfg.idle_brightness}
+            onChange={(ev) =>
+              void kb.setIdle(cfg.idle_timeout_secs, Number(ev.target.value))
+            }
+          />
+
+          <div className="hs-slider-top">
+            <span>Sleep after</span>
+            <span className="hs-slider-val">
+              {cfg.sleep_minutes === 0 ? "never" : `${cfg.sleep_minutes} min`}
+            </span>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={60}
+            value={cfg.sleep_minutes}
+            onChange={(ev) =>
+              void kb.setPowerSaving(Number(ev.target.value), cfg.high_efficiency)
+            }
+          />
+
+          {kb.status.wireless && (
+            <div className="row">
+              <div className="rtext">
+                <div className="rtitle">High-efficiency mode</div>
+                <div className="rsub">Trades lighting for battery life.</div>
+              </div>
+              <Toggle
+                on={cfg.high_efficiency}
+                onClick={() => void kb.setPowerSaving(cfg.sleep_minutes, !cfg.high_efficiency)}
+              />
+            </div>
+          )}
+        </section>
 
         {/* ---- raw probe ---- */}
         <section className="hs-card">

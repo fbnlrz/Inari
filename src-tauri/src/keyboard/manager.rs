@@ -22,6 +22,7 @@ use crate::headset::oled::Framebuffer;
 use crate::persistence::keyboard::{self, KeyboardConfig};
 
 use super::effects::{self, EffectKind};
+use super::firmware::{self, LightingConfig, PowerSaving};
 use super::oled;
 use super::oled_modes::{Screens, StatusLines};
 use super::protocol::{self, FormFactor, Gen, Model, OledWire};
@@ -70,6 +71,11 @@ pub struct KeyboardStatus {
     pub has_actuation: bool,
     /// Which OLED transport ended up being used, for the UI to show.
     pub oled_wire: Option<OledWire>,
+    /// The keyboard's own lighting timers, as it reports them. The UI shows
+    /// these rather than Inari's stored guess, so the sliders start on what
+    /// the board is actually doing.
+    pub lighting: Option<LightingConfig>,
+    pub power: Option<PowerSaving>,
 }
 
 pub struct KeyboardManager {
@@ -198,6 +204,19 @@ impl KeyboardManager {
         let mut dev = HidDevice::open(&path).map_err(|e| format!("open keyboard: {e}"))?;
         self.feature(&mut dev, packet)
             .map_err(|e| format!("write keyboard: {e}"))
+    }
+
+    /// Build a feature report from the connected model and send it.
+    ///
+    /// The per-key tables and the firmware config all need the model to size
+    /// their report, so the caller gets it handed to them rather than having
+    /// to ask for it and handle the "nothing connected" case itself.
+    pub fn send_feature_with_model<F>(&self, build: F) -> Result<(), String>
+    where
+        F: FnOnce(&Model) -> Vec<u8>,
+    {
+        let model = self.model().ok_or("no SteelSeries keyboard connected")?;
+        self.send_feature(&build(model))
     }
 
     /// Write a command and read the answer that belongs to it.
@@ -345,6 +364,12 @@ impl KeyboardManager {
             Some((percent, charging)) => (Some(percent), charging),
             None => (None, false),
         };
+        let lighting = self
+            .query(dev, &firmware::read_lighting_query(), Self::echoes(0xa0))
+            .and_then(|reply| firmware::parse_lighting(&reply));
+        let power = self
+            .query(dev, &firmware::read_power_query(), Self::echoes(0xa9))
+            .and_then(|reply| firmware::parse_power_saving(&reply));
         info!(
             "keyboard: {} ({:#06x}) on interface {}, firmware {}, region {}",
             model.name,
@@ -368,6 +393,8 @@ impl KeyboardManager {
                 has_oled: model.oled.is_some(),
                 has_actuation: model.actuation,
                 oled_wire: self.wire_for(&model),
+                lighting,
+                power,
             };
         }
         // Gen 3 documents an init before direct lighting is accepted. The

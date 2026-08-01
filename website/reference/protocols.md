@@ -109,12 +109,34 @@ The firmware composites its own status strip — profile name and battery — ov
 the top of whatever is sent, so Inari's screens start 10 px down. It also
 repaints on its own events, so frames are re-sent about twice a second.
 
-### What nobody has
+### Switches
 
-**Rapid Trigger, Rapid Tap/SOCD and Protection Mode have never been captured.**
-The actuation command `0x2D` from third-party reverse engineering is accepted by
-the hardware and changes nothing on firmware 3.24.1. The keyboard tab has a raw
-command probe for anyone who wants to help find them.
+All of these are **feature** reports, because a per-key table for 70 keys is
+over 200 bytes and cannot fit in a 64-byte output report.
+
+| Command | Shape |
+| --- | --- |
+| `0x2F` | Actuation: `[layer][num_keys][hid, press, release] × n`, travel in **tenths of a millimetre**. Layer 0 is the actuation point, 1 the second actuation. |
+| `0x37` | Rapid Trigger: `[num_keys][hid, sensitivity] × n` |
+| `0x14` | Protection Mode: `[num_keys][hid, mode] × n` |
+| `0x17` | Rapid Tap on/off; `0x18` carries ten four-byte pairs |
+
+`num_keys` is honest — writing a single key works, which is how the unit was
+measured: 40 on one key made it trigger visibly later, 15 restored it.
+
+The third-party `0x2D` "actuation" command that Inari used to send is accepted
+by the hardware and does nothing.
+
+### Idle, brightness and power
+
+`0x20` (`lighting_config`) carries every lighting setting at once, each with its
+own apply flag, so a single field can be changed without disturbing the others:
+brightness, idle brightness, and the idle timeout in milliseconds. `0x29`
+carries the sleep timeout and high-efficiency mode.
+
+Both read back — `0xA0` and `0xA9` — and, unlike the tables above, the **reads
+are ordinary output reports**. The measured board answered with brightness 10,
+idle brightness 10, a 60 s idle timeout and a 5 min sleep timeout.
 
 ## Adding a device
 

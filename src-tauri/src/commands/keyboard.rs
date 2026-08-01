@@ -4,6 +4,7 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::keyboard::effects::{EffectKind, Lighting};
+use crate::keyboard::firmware::{self, KeyActuation};
 use crate::keyboard::keys::{self, Key, Physical};
 use crate::keyboard::manager::KeyboardStatus;
 use crate::keyboard::oled::{self, ALL_WIRES};
@@ -225,24 +226,61 @@ fn test_pattern() -> crate::headset::oled::Framebuffer {
     fb
 }
 
-/// Global actuation point, in tenths of a millimetre.
-///
-/// Experimental on purpose: the command is accepted by the one board this could
-/// be tried on and changes nothing there. The UI says so; this only refuses
-/// values the switch could not travel to.
-#[tauri::command]
-pub fn keyboard_set_actuation(state: State<'_, AppState>, tenths: u8) -> Result<(), String> {
-    if !(1..=40).contains(&tenths) {
-        return Err("actuation must be between 0.1 mm and 4.0 mm".into());
-    }
-    state.keyboard.send_control(&protocol::actuation(tenths))?;
-    state.keyboard.send_control(&protocol::apply())?;
-    state.keyboard.update_config(|c| c.actuation = Some(tenths))
+/// Every key the connected board draws, for the per-key tables. The device
+/// takes a `num_keys` count and honours it, so sending exactly the keys that
+/// exist is both correct and smaller than padding to 70.
+fn all_keys(state: &AppState) -> Vec<u8> {
+    let status = state.keyboard.status();
+    let config = state.keyboard.config();
+    let form = status.form.unwrap_or(FormFactor::Tkl);
+    keys::layout(form, config.physical)
+        .into_iter()
+        .map(|k| k.hid)
+        .collect()
 }
 
-/// Per-key actuation. Same experimental caveat, plus one more: no capture of a
-/// per-key actuation command exists at all, so this stores the value and sends
-/// the global command's per-key form as a best guess.
+/// Send the actuation table the current configuration describes: the global
+/// value everywhere, with per-key overrides on top.
+fn push_actuation(state: &AppState) -> Result<(), String> {
+    let config = state.keyboard.config();
+    let Some(global) = config.actuation else {
+        return Ok(());
+    };
+    let hids = all_keys(state);
+    // Built inside the closure: travel-to-wire is per model, because the wired
+    // Gen 3 boards want raw sensor counts rather than tenths of a millimetre.
+    state.keyboard.send_feature_with_model(|model| {
+        let table: Vec<KeyActuation> = hids
+            .into_iter()
+            .map(|hid| {
+                let tenths = config
+                    .per_key_actuation
+                    .get(&hid)
+                    .copied()
+                    .unwrap_or(global);
+                KeyActuation::uniform(model, hid, tenths)
+            })
+            .collect();
+        firmware::set_actuation(model, &table, 0)
+    })
+}
+
+/// Global actuation point, in tenths of a millimetre (1 = 0.1 mm).
+///
+/// Verified on hardware: 40 makes a key trigger visibly later, 15 restores
+/// normal behaviour. Per-key overrides are layered on top of this.
+#[tauri::command]
+pub fn keyboard_set_actuation(state: State<'_, AppState>, tenths: u8) -> Result<(), String> {
+    if !(firmware::ACTUATION_MIN..=firmware::ACTUATION_MAX).contains(&tenths) {
+        return Err("actuation must be between 0.1 mm and 4.0 mm".into());
+    }
+    state
+        .keyboard
+        .update_config(|c| c.actuation = Some(tenths))?;
+    push_actuation(&state)
+}
+
+/// Override one key's actuation, or drop the override with `None`.
 #[tauri::command]
 pub fn keyboard_set_key_actuation(
     state: State<'_, AppState>,
@@ -250,18 +288,106 @@ pub fn keyboard_set_key_actuation(
     tenths: Option<u8>,
 ) -> Result<(), String> {
     if let Some(tenths) = tenths {
-        if !(1..=40).contains(&tenths) {
+        if !(firmware::ACTUATION_MIN..=firmware::ACTUATION_MAX).contains(&tenths) {
             return Err("actuation must be between 0.1 mm and 4.0 mm".into());
         }
-        state
-            .keyboard
-            .send_control(&protocol::raw(0x2d, &[tenths, hid]))?;
     }
     state.keyboard.update_config(|c| {
         match tenths {
             Some(value) => c.per_key_actuation.insert(hid, value),
             None => c.per_key_actuation.remove(&hid),
         };
+        // A per-key value is meaningless without a baseline to layer it on.
+        if c.actuation.is_none() {
+            c.actuation = Some(15);
+        }
+    })?;
+    push_actuation(&state)
+}
+
+/// Rapid Trigger for every key; 0 turns it off.
+///
+/// Two commands, not one: the sensitivity table says how far a key must travel
+/// back before it re-arms, and the release-mode table is what actually enables
+/// the feature per key. Sending only the sensitivity looks right and does
+/// nothing — which is the kind of bug that gets blamed on the hardware.
+#[tauri::command]
+pub fn keyboard_set_rapid_trigger(
+    state: State<'_, AppState>,
+    sensitivity: u8,
+) -> Result<(), String> {
+    state
+        .keyboard
+        .update_config(|c| c.rapid_trigger = sensitivity)?;
+    let hids = all_keys(&state);
+    let for_sensitivity = hids.clone();
+    state.keyboard.send_feature_with_model(|model| {
+        let table: Vec<(u8, u8)> = for_sensitivity
+            .into_iter()
+            .map(|hid| (hid, sensitivity))
+            .collect();
+        firmware::set_rapid_trigger_sensitivity(model, &table)
+    })?;
+    state.keyboard.send_feature_with_model(|model| {
+        let on = if sensitivity == 0 {
+            0
+        } else {
+            firmware::rapid_trigger_on_value(model)
+        };
+        let table: Vec<(u8, u8)> = hids.into_iter().map(|hid| (hid, on)).collect();
+        firmware::set_release_mode(model, &table)
+    })
+}
+
+/// Protection Mode across the board.
+#[tauri::command]
+pub fn keyboard_set_protection_mode(state: State<'_, AppState>, on: bool) -> Result<(), String> {
+    state.keyboard.update_config(|c| c.protection_mode = on)?;
+    let table: Vec<(u8, bool)> = all_keys(&state).into_iter().map(|hid| (hid, on)).collect();
+    state
+        .keyboard
+        .send_feature_with_model(|model| firmware::set_protection_mode(model, &table))
+}
+
+/// Rapid Tap / SOCD master switch.
+#[tauri::command]
+pub fn keyboard_set_rapid_tap(state: State<'_, AppState>, on: bool) -> Result<(), String> {
+    state.keyboard.update_config(|c| c.rapid_tap = on)?;
+    state
+        .keyboard
+        .send_feature_with_model(|model| firmware::set_rapid_tap(model, on))
+}
+
+/// The keyboard's own idle dimming — the timer that actually controls the
+/// board, as opposed to Inari's OLED blanking.
+#[tauri::command]
+pub fn keyboard_set_idle(
+    state: State<'_, AppState>,
+    seconds: u32,
+    brightness: u8,
+) -> Result<(), String> {
+    state.keyboard.update_config(|c| {
+        c.idle_timeout_secs = seconds;
+        c.idle_brightness = brightness;
+    })?;
+    state.keyboard.send_feature_with_model(|model| {
+        firmware::set_lighting_config(model, None, Some(brightness), Some(seconds * 1000))
+    })
+}
+
+/// Sleep timeout and high-efficiency mode.
+#[tauri::command]
+pub fn keyboard_set_power_saving(
+    state: State<'_, AppState>,
+    minutes: u32,
+    high_efficiency: bool,
+) -> Result<(), String> {
+    state.keyboard.update_config(|c| {
+        c.sleep_minutes = minutes;
+        c.high_efficiency = high_efficiency;
+    })?;
+    state.keyboard.send_feature_with_model(|model| {
+        firmware::set_power_saving(model, minutes * 60_000, high_efficiency)
     })
 }
 

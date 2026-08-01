@@ -118,16 +118,43 @@ bordered X with a filled corner block — with any shape you pick:
 
 ## Switches
 
-::: warning Experimental — and honestly, probably not working
-The actuation command (`0x2D`) comes from third-party reverse engineering. On
-the one board this could be tested against — an Apex Pro TKL Wireless 2023 on
-firmware 3.24.1 — the keyboard **accepts the command and nothing changes**. It
-is offered because it costs nothing and another model or firmware may well
-answer to it, but do not expect it to work.
+For the HyperMagnetic boards, all of it verified on hardware:
 
-**Rapid Trigger, Rapid Tap/SOCD and Protection Mode have never been captured by
-anyone.** No public project implements them. The command probe at the bottom of
-the tab is there so that someone with hardware can help find them.
+- **Actuation point** — 0.1 mm to 4.0 mm, per key. The slider sets every key;
+  the key map's *Per-key actuation* mode overrides individual ones on top.
+- **Rapid Trigger** — re-arms a key as soon as it starts travelling back up
+  instead of waiting for a fixed reset point. 0 turns it off.
+- **Protection Mode** — dampens the keys around the one you meant to press.
+- **Rapid Tap (SOCD)** — opposite keys cancel each other, using the pairs
+  stored in the keyboard's own profile. Editing those pairs is not exposed yet.
+
+::: info An earlier version of this page was wrong
+It said these commands "have never been captured by anyone" and that actuation
+did not work. That was true of the third-party write-ups Inari was built from —
+`0x2D`, the command they describe, really is accepted and really does nothing.
+The actual commands exist and are ordinary: `0x2F` carries a per-key actuation
+table in tenths of a millimetre, `0x37` Rapid Trigger, `0x14` Protection Mode,
+`0x17` Rapid Tap. Writing 4.0 mm to a single key and feeling it trigger late is
+what settled it.
+:::
+
+## Idle & power
+
+These are the keyboard's own timers, stored in the board, so they keep working
+while Inari is closed — and Inari reads them back rather than assuming, so the
+sliders show what the keyboard is actually set to even if something else
+changed it.
+
+- **Dim the lighting after** — the keyboard's idle timeout (0 never dims). This
+  is the setting people mean by "the keyboard's screensaver".
+- **Brightness once dimmed** — 0 to 10.
+- **Sleep after** — minutes before the board sleeps (0 never).
+- **High-efficiency mode** — wireless boards only; trades lighting for runtime.
+
+::: tip Not the same as the display's screensaver
+The *Display* section has its own blanking timer. That one only governs what
+Inari paints on the OLED, because the firmware's own screensaver never fires
+while Inari is pushing frames. The timers here govern the keyboard.
 :::
 
 ## Command probe

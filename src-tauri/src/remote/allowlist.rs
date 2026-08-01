@@ -533,6 +533,8 @@ mod frontend_contract {
             "keyboard_set_physical", "keyboard_set_oled", "keyboard_set_oled_wire",
             "keyboard_set_screensaver", "keyboard_oled_test", "keyboard_set_actuation",
             "keyboard_set_key_actuation", "keyboard_select_profile", "keyboard_send_raw",
+            "keyboard_set_rapid_trigger", "keyboard_set_protection_mode",
+            "keyboard_set_rapid_tap", "keyboard_set_idle", "keyboard_set_power_saving",
             // structural: the remote operates the mixer, it does not rebuild it
             "add_channel", "remove_channel", "rename_channel", "reorder_channels",
             "set_channel_icon", "add_bus", "remove_bus", "rename_bus",

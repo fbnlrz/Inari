@@ -6,6 +6,7 @@
 //! trust from OpenRGB and `apex-tux`.
 
 pub mod effects;
+pub mod firmware;
 pub mod keys;
 pub mod manager;
 pub mod oled;
