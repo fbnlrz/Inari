@@ -287,10 +287,13 @@ fn status(state: &AppState) -> Result<String, String> {
             if channel.muted { "  muted" } else { "" }
         ));
     }
+    // Deliberately not `sink_mic`: this is the gain of Inari's microphone
+    // chain, not that node's volume, and printing the node name beside it
+    // invited exactly the comparison against `pw-dump` that it fails.
     out.push_str(&format!(
         "  {:<12} {:<14} {:>3}%{}",
         "Microphone",
-        "sink_mic",
+        "(input gain)",
         mixer.mic.gain_percent,
         if mixer.mic.muted { "  muted" } else { "" }
     ));
