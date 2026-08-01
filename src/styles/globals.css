@@ -3063,3 +3063,132 @@ input[type="range"]::-webkit-slider-thumb:hover { background: var(--accent-hover
   outline: 2px solid var(--accent-hover);
   outline-offset: 4px;
 }
+
+/* ============================================================
+   Keyboard screen (.kb-*)
+   The key map is absolutely positioned from key units the backend
+   computes, so the picture and the effect engine agree on where every
+   key sits — a wave that sweeps right here sweeps right on the board.
+   ============================================================ */
+
+.kb-map-wrap {
+  overflow-x: auto;
+  padding: var(--sp-2) 0;
+}
+.kb-map {
+  position: relative;
+  background: var(--bg-main);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 0;
+  flex: none;
+}
+.kb-key {
+  position: absolute;
+  border: 1px solid rgba(0, 0, 0, 0.45);
+  border-radius: 4px;
+  padding: 0;
+  font: inherit;
+  font-size: 9px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  transition: filter 90ms ease, outline-color 90ms ease;
+  outline: 2px solid transparent;
+}
+.kb-key:hover {
+  filter: brightness(1.35);
+  outline-color: var(--accent);
+}
+.kb-key:focus-visible {
+  outline-color: var(--accent);
+}
+.kb-key.tuned {
+  border-color: var(--accent);
+}
+.kb-key-label {
+  pointer-events: none;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.5);
+  white-space: nowrap;
+}
+
+.kb-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--sp-3);
+}
+.kb-color,
+.kb-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--fs-small);
+  color: var(--fg-secondary);
+}
+.kb-color input[type="color"] {
+  width: 46px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: transparent;
+  cursor: pointer;
+}
+.kb-field input {
+  width: 130px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg-main);
+  color: var(--fg-primary);
+  font-family: var(--font-mono, monospace);
+  font-size: var(--fs-small);
+}
+.kb-text {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg-main);
+  color: var(--fg-primary);
+  font-family: var(--font-mono, monospace);
+  font-size: var(--fs-small);
+  resize: vertical;
+}
+
+.kb-chip-tag {
+  margin-left: 5px;
+  font-size: 9px;
+  opacity: 0.65;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  padding: 0 3px;
+}
+
+.kb-wires {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.kb-wire-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.kb-wire-row .hs-chip {
+  flex: 1;
+  text-align: left;
+}
+
+/* Experimental notes: visibly not a normal hint. */
+.kb-warn {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  border-left: 2px solid var(--warn, #e0a030);
+  padding-left: var(--sp-3);
+}

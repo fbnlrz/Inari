@@ -96,6 +96,7 @@ export default defineConfig({
           { text: "Headset", link: "/features/headset" },
           { text: "OLED display", link: "/features/oled" },
           { text: "Mouse", link: "/features/mouse" },
+          { text: "Keyboard", link: "/features/keyboard" },
         ],
       },
       {

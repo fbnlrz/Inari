@@ -58,6 +58,64 @@ The protocols were learned and cross-checked from
   charging. Reject out-of-range values (a disconnected wireless mouse reports
   `0xff`).
 
+## Apex keyboards
+
+Measured on an **Apex Pro TKL Wireless (2023)** (`1038:1632`, firmware 3.24.1)
+over `/dev/hidraw` on 2026-08-01. The vendor interface (USB interface 3, usage
+page `0xFFC0`) declares exactly three reports, and probing confirmed each:
+
+- **Output, 64 bytes** — configuration. Written as 65 bytes,
+  `[0x00 report id][cmd][payload…]`: zone colour `0x21`, brightness `0x22`
+  (0–100), apply `0x09`, reactive `0x25`, colour shift `0x26`, profile `0x89`,
+  firmware query `0x90`, battery `0x92`, region `0xF5`.
+- **Input, 64 bytes** — query replies, which arrive **one command behind**.
+  Drain the queue before trusting an answer. `0x90` replies with bare ASCII
+  (`3.24.1`); `0x92` replies `92 95`, where `0x95` is 95 % as two BCD digits —
+  matching what the keyboard's own indicator showed.
+- **Feature, 641 bytes** — bulk payloads, with the **command byte first**:
+  `[cmd][payload…]`, padded to exactly 641. This is the part that bites:
+  prefixing a `0x00` report id instead (what OpenRGB and hidapi's convention
+  produce) makes this device stall the transfer, and 640, 644 or 64 bytes are
+  refused outright. Enough stalls in a row make the keyboard re-enumerate.
+
+### Per-key lighting
+
+`[cmd][count][hid R G B]…` in a feature report. The command is `0x3A` on the
+2019 boards, `0x40` on wired 2023/Gen 3 ones and `0x61` on the wireless ones.
+One packet carries all **112 HID usage ids** in a fixed order (OpenRGB's
+`SteelSeriesApexController`); the firmware picks the ones its board has and
+ignores the rest, which is why the same packet drives full-size, TKL and mini
+boards. Verified by lighting four scattered keys and leaving the other 108 dark.
+
+Direct mode is **sticky**: the board holds the last frame indefinitely, so
+`0x41` (`0x3B` on the 2019 boards) has to be sent to hand the LEDs back.
+
+Gen 3 firmware wants `0x4B` first. The measured board accepted direct frames
+with and without it. A Gen 1/2 board on firmware 1.19.7 or newer speaks the
+Gen 3 dialect — the product id does not change with the update, so the firmware
+string decides.
+
+### The 128×40 OLED
+
+Two independent choices: addressing (one report, or eight offset-addressed
+80-byte chunks) and pixel packing (row-major, or SSD1306 page-major). Verified
+on the 2023 wireless board: **eight chunks, command `0x0C`, row-major** —
+`[cmd][0x01][offset LE][0x50][pad][80 bytes]`. `apex-tux` and OmniLED use other
+combinations for other models (single reports with `0x61`, `0x0A`, `0x4A`, or a
+four-byte `38 83 00 00` header), so Inari keeps all of them and the Display tab
+can send a test picture with each.
+
+The firmware composites its own status strip — profile name and battery — over
+the top of whatever is sent, so Inari's screens start 10 px down. It also
+repaints on its own events, so frames are re-sent about twice a second.
+
+### What nobody has
+
+**Rapid Trigger, Rapid Tap/SOCD and Protection Mode have never been captured.**
+The actuation command `0x2D` from third-party reverse engineering is accepted by
+the hardware and changes nothing on firmware 3.24.1. The keyboard tab has a raw
+command probe for anyone who wants to help find them.
+
 ## Adding a device
 
 1. Confirm the USB `Vendor:Product` id, then work out how to recognise the

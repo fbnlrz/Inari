@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 use crate::headset::protocol::{self, HeadsetStatus};
 use crate::headset::protocol_apw;
+use crate::keyboard::protocol as kbd_protocol;
 use crate::mouse::protocol as mouse_protocol;
 
 /// SteelSeries. The single definition — the headset and mouse protocol
@@ -60,6 +61,7 @@ impl Caps {
 pub enum DeviceClass {
     Headset,
     Mouse,
+    Keyboard,
 }
 
 /// How a candidate hidraw node is confirmed to be the one we want. A product
@@ -239,6 +241,33 @@ pub static DEVICES: &[DeviceEntry] = &[
         probe: Probe::InterfaceNumber(mouse_protocol::CONTROL_INTERFACE),
         report_len: 0,
         caps: Caps::RGB.with(Caps::DPI),
+        priority: 10,
+        ops: None,
+    },
+    DeviceEntry {
+        product_ids: &kbd_protocol::PRODUCT_IDS_WIRELESS,
+        name: "SteelSeries Apex (wireless)",
+        class: DeviceClass::Keyboard,
+        // Six HID interfaces on the board that was measured, and only the one
+        // opening with the vendor usage page 0xFFC0 takes configuration. That
+        // is interface 3 there, but the descriptor is the honest test — it is
+        // what tells the vendor collection apart from the plain keyboard, the
+        // media keys and the mouse-emulation collection.
+        probe: Probe::DescriptorPrefix(&[0x06, 0xc0, 0xff]),
+        report_len: kbd_protocol::COMMAND_LEN,
+        caps: Caps::RGB.with(Caps::OLED),
+        // Beats the wired entry: a board that exposes both is on its cable,
+        // and this is the entry that knows the wireless opcodes.
+        priority: 20,
+        ops: None,
+    },
+    DeviceEntry {
+        product_ids: &kbd_protocol::PRODUCT_IDS_WIRED,
+        name: "SteelSeries Apex",
+        class: DeviceClass::Keyboard,
+        probe: Probe::InterfaceNumber(1),
+        report_len: kbd_protocol::COMMAND_LEN,
+        caps: Caps::RGB.with(Caps::OLED),
         priority: 10,
         ops: None,
     },

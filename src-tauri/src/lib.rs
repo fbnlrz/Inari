@@ -3,6 +3,7 @@ mod commands;
 mod device;
 mod error;
 mod headset;
+mod keyboard;
 mod mixer;
 mod mouse;
 mod persistence;
@@ -279,6 +280,21 @@ pub fn run() {
             commands::media::media_next,
             commands::media::media_previous,
             commands::media::media_seek,
+            commands::keyboard::get_keyboard_status,
+            commands::keyboard::keyboard_set_enabled,
+            commands::keyboard::keyboard_set_lighting,
+            commands::keyboard::keyboard_set_key_color,
+            commands::keyboard::keyboard_fill_keys,
+            commands::keyboard::keyboard_clear_keys,
+            commands::keyboard::keyboard_set_physical,
+            commands::keyboard::keyboard_set_oled,
+            commands::keyboard::keyboard_set_oled_wire,
+            commands::keyboard::keyboard_set_screensaver,
+            commands::keyboard::keyboard_oled_test,
+            commands::keyboard::keyboard_set_actuation,
+            commands::keyboard::keyboard_set_key_actuation,
+            commands::keyboard::keyboard_select_profile,
+            commands::keyboard::keyboard_send_raw,
             commands::update::check_update,
             commands::update::apply_update,
             commands::update::restart_app,
@@ -328,6 +344,8 @@ pub fn run() {
             if let Some(levels) = levels {
                 // The OLED VU mode reads the same peak store as the UI meters.
                 app.state::<AppState>().headset.set_levels(levels.clone());
+                // The keyboard's audio-reactive effect reads the same store.
+                app.state::<AppState>().keyboard.set_levels(levels.clone());
                 spawn_level_emitter(app.handle().clone(), levels, remote_clients.clone());
             }
             if let Some(graph) = graph {
@@ -341,6 +359,10 @@ pub fn run() {
             // Same for the SteelSeries mouse (no-op without one attached).
             app.state::<AppState>()
                 .mouse
+                .start(app.handle().clone());
+            // And the Apex keyboard: per-key lighting, its OLED and settings.
+            app.state::<AppState>()
+                .keyboard
                 .start(app.handle().clone());
             // Feed the OLED the data it can't read itself (mouse, app list).
             spawn_oled_aux_feeder(app.handle().clone());
@@ -677,6 +699,10 @@ fn build_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                     for err in state.teardown_virtual_sinks() {
                         warn!("teardown of virtual sinks: {err}");
                     }
+                    // Hand the keyboard's LEDs back to its own profile. Direct
+                    // mode is sticky: without this the board keeps Inari's last
+                    // frame frozen on it long after Inari is gone.
+                    state.keyboard.release();
                     app.exit(0);
                 }
                 _ => {}
