@@ -25,6 +25,22 @@ use audio::pw_native::levels::LevelStore;
 use audio::pw_native::{GraphCoalescer, GraphNotify, PipeWireBackend, GRAPH_MAX_WAIT, GRAPH_QUIET};
 use state::AppState;
 
+/// Bring the main window to the user, from wherever it currently is.
+///
+/// `show()` alone is a no-op for a window that is visible but minimised, and
+/// `set_focus()` on a minimised window does not restore it under KWin — it
+/// blinks the task-bar entry at best. Both call sites need the same three
+/// steps in the same order, and the tray's "Show Window" was missing the first
+/// one, so clicking it did nothing at all for a minimised window.
+fn reveal_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+
 /// Global level for the logger. Info by default: lifecycle events only, since
 /// the OLED draw loop (25 Hz) and the audio poll log at debug/trace and would
 /// otherwise churn through the rotating file in minutes. `RUST_LOG=debug`
@@ -136,11 +152,7 @@ pub fn run() {
             if args.iter().any(|a| a == "--minimized") {
                 return;
             }
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.unminimize();
-                let _ = window.show();
-                let _ = window.set_focus();
-            }
+            reveal_window(app);
         }))
         .plugin(log_plugin())
         .plugin(tauri_plugin_dialog::init())
@@ -695,12 +707,7 @@ fn build_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 return;
             }
             match id {
-                "show" => {
-                    if let Some(window) = app.get_webview_window("main") {
-                        let _ = window.show();
-                        let _ = window.set_focus();
-                    }
-                }
+                "show" => reveal_window(app),
                 "quit" => {
                     // Clean up our virtual sinks before exiting. Best-effort:
                     // log failures but never block quitting.
