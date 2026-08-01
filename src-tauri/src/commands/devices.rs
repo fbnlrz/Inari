@@ -24,27 +24,8 @@ const SEEN_FLUSH_SECS: u64 = 15 * 60;
 /// cannot answer leaves the cached value alone, as at init.
 #[tauri::command]
 pub fn get_virtual_devices(state: State<'_, AppState>) -> Result<Vec<VirtualSink>, String> {
-    let names: Vec<String> = {
-        let mixer = state.lock_mixer()?;
-        mixer.channels.iter().map(|c| c.name.clone()).collect()
-    };
-    // Read outside the mixer lock: the backend call can block, and holding the
-    // lock across it would stall every other command.
-    let live: Vec<(String, Option<(u8, bool)>)> = names
-        .into_iter()
-        .map(|name| {
-            let state_of = state.backend.sink_state(&name).unwrap_or(None);
-            (name, state_of)
-        })
-        .collect();
-
-    let mut mixer = state.lock_mixer()?;
-    mixer.adopt_live_channel_state(|name| {
-        live.iter()
-            .find(|(n, _)| n == name)
-            .and_then(|(_, s)| *s)
-    });
-    Ok(mixer.channels.clone())
+    state.refresh_channel_state();
+    Ok(state.lock_mixer()?.channels.clone())
 }
 
 /// All running app audio streams.

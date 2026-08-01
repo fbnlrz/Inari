@@ -29,11 +29,19 @@
       "assetProtocol": {
         "enable": true,
         "scope": [
-          "/usr/share/icons/**",
-          "/usr/share/pixmaps/**",
-          "/var/lib/flatpak/exports/share/icons/**",
-          "$HOME/.local/share/icons/**",
-          "$HOME/.local/share/flatpak/exports/share/icons/**"
+          "/usr/share/**/*.png",
+          "/usr/share/**/*.svg",
+          "/usr/share/**/*.xpm",
+          "/usr/local/share/**/*.png",
+          "/usr/local/share/**/*.svg",
+          "/usr/local/share/**/*.xpm",
+          "/var/lib/flatpak/**/*.png",
+          "/var/lib/flatpak/**/*.svg",
+          "/var/lib/snapd/desktop/**/*.png",
+          "/var/lib/snapd/desktop/**/*.svg",
+          "$HOME/.local/share/**/*.png",
+          "$HOME/.local/share/**/*.svg",
+          "$HOME/.local/share/**/*.xpm"
         ]
       }
     }

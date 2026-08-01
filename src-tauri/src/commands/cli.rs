@@ -260,6 +260,10 @@ fn label_of(state: &AppState, target: &Target) -> String {
 }
 
 fn status(state: &AppState) -> Result<String, String> {
+    // Same reason as the tray: this prints what the sinks are doing, so it has
+    // to ask them rather than trust a cache the window may never have
+    // refreshed.
+    state.refresh_channel_state();
     let mixer = state.lock_mixer()?;
     let engine = match (state.backend_native, state.backend.is_engine_alive()) {
         (_, false) => "stopped",

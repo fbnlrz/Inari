@@ -573,11 +573,10 @@ fn build_tray_menu(
 
     let show = MenuItem::with_id(app, "show", "Show Window", true, None::<&str>)?;
 
-    let mutes = app
-        .state::<AppState>()
-        .lock_mixer()
-        .map(|m| tray_mutes(&m))
-        .unwrap_or_default();
+    // The tray's check marks are a claim about the sinks, so read them first.
+    let state = app.state::<AppState>();
+    state.refresh_channel_state();
+    let mutes = state.lock_mixer().map(|m| tray_mutes(&m)).unwrap_or_default();
     let mute_items: Vec<CheckMenuItem<tauri::Wry>> = mutes
         .iter()
         .map(|row| {

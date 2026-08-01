@@ -239,26 +239,42 @@ fn icon_name_to_path(name: &str) -> Option<String> {
         for size in SIZES {
             let p = theme.join(size).join("apps").join(format!("{name}.png"));
             if p.exists() {
-                return Some(p.to_string_lossy().into_owned());
+                return Some(asset_path(&p));
             }
             // Some themes nest the size the other way around (apps/<size>).
             let p = theme.join("apps").join(size).join(format!("{name}.svg"));
             if p.exists() {
-                return Some(p.to_string_lossy().into_owned());
+                return Some(asset_path(&p));
             }
         }
         let svg = theme.join("scalable/apps").join(format!("{name}.svg"));
         if svg.exists() {
-            return Some(svg.to_string_lossy().into_owned());
+            return Some(asset_path(&svg));
         }
     }
     for ext in ["png", "svg", "xpm"] {
         let p = PathBuf::from("/usr/share/pixmaps").join(format!("{name}.{ext}"));
         if p.exists() {
-            return Some(p.to_string_lossy().into_owned());
+            return Some(asset_path(&p));
         }
     }
     None
+}
+
+/// The path to hand the webview, with symlinks resolved.
+///
+/// `/usr/share/pixmaps` is full of links into the application's own directory
+/// — Discord's entry there points at `/usr/share/discord/discord.png` — and the
+/// asset protocol checks the *canonical* path against its allowed scope. Handing
+/// over the link meant the scope was matched against a path the caller never
+/// saw, and the icon silently failed to load with only a line in the log to
+/// show for it. Resolving here makes the path we pass and the path that gets
+/// checked the same thing.
+fn asset_path(path: &Path) -> String {
+    std::fs::canonicalize(path)
+        .unwrap_or_else(|_| path.to_path_buf())
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// Resolve the best icon path + display name for a stream.
@@ -346,6 +362,36 @@ pub fn resolve(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn an_icon_path_is_handed_over_with_its_symlinks_resolved() {
+        // The asset protocol matches its allowed scope against the canonical
+        // path, so a link is checked as its target. `/usr/share/pixmaps` is
+        // full of links into the application's own directory — Discord's
+        // points at `/usr/share/discord/discord.png` — and handing over the
+        // link meant the scope was matched against a path the caller never
+        // saw. The icon then just did not appear, with one line in the log.
+        let dir = std::env::temp_dir().join(format!("inari-icons-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("real")).expect("temp dir");
+        let target = dir.join("real/app.png");
+        std::fs::write(&target, b"x").expect("write");
+        let link = dir.join("link.png");
+        std::os::unix::fs::symlink(&target, &link).expect("symlink");
+
+        let resolved = super::asset_path(&link);
+        assert_eq!(
+            std::path::Path::new(&resolved),
+            std::fs::canonicalize(&target).expect("canonical")
+        );
+
+        // A path that cannot be canonicalised is passed through rather than
+        // dropped: being unable to resolve it is not a reason to show nothing.
+        let missing = dir.join("gone.png");
+        assert_eq!(super::asset_path(&missing), missing.to_string_lossy());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     use super::*;
 
     #[test]
