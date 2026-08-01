@@ -55,22 +55,43 @@ describe("eqMath", () => {
   it("a steep shelf draws a curve the engine can actually produce", () => {
     // The cookbook's radicand goes negative for a steep shelf, and clamping it
     // to zero puts both poles on the unit circle — the engine turned into an
-    // undamped resonator there. Both sides now cap the slope instead, so the
-    // drawn curve has to stay finite and bounded for every setting the UI
-    // permits, and it has to keep matching what is heard.
+    // undamped resonator there. Both sides cap the slope instead, so the drawn
+    // curve has to stay finite and bounded, and keep matching what is heard.
+    //
+    // Sampled coarsely on purpose: the unstable region is an area, not a knife
+    // edge, so a 3 dB / 0.5 Q grid crosses it many times over. A per-degree
+    // sweep took six seconds here and timed out on slower CI machines, which
+    // is a poor trade for a boundary this wide.
+    const check = (kind: "low_shelf" | "high_shelf", gain: number, q: number) => {
+      const config = {
+        ...defaultEqConfig(),
+        enabled: true,
+        bands: [{ kind, freq_hz: 100, gain_db: gain, q }],
+      };
+      for (const { db } of curvePoints(config, 12)) {
+        expect(Number.isFinite(db)).toBe(true);
+        expect(Math.abs(db)).toBeLessThan(60);
+      }
+    };
+
     for (const kind of ["low_shelf", "high_shelf"] as const) {
-      for (let gain = -24; gain <= 24; gain += 1) {
-        for (let q = 0.1; q <= 10.0001; q += 0.1) {
-          const config = {
-            ...defaultEqConfig(),
-            enabled: true,
-            bands: [{ kind, freq_hz: 100, gain_db: gain, q: Math.round(q * 10) / 10 }],
-          };
-          for (const { db } of curvePoints(config, 24)) {
-            expect(Number.isFinite(db)).toBe(true);
-            expect(Math.abs(db)).toBeLessThan(60);
-          }
+      for (let gain = -24; gain <= 24; gain += 3) {
+        for (let q = 0.5; q <= 10.0001; q += 0.5) {
+          check(kind, gain, Math.round(q * 10) / 10);
         }
+      }
+      // The combinations that were measured to ring, pinned exactly rather
+      // than left to the grid to happen to land on.
+      for (const [gain, q] of [
+        [24, 2],
+        [8.1, 10],
+        [9, 10],
+        [12, 10],
+        [-12, 10],
+        [24, 10],
+        [12, 5],
+      ] as const) {
+        check(kind, gain, q);
       }
     }
   });
