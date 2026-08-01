@@ -74,7 +74,7 @@ export type Command =
   | "headset_set_eq_preset"
   | "headset_set_gain_high"
   | "headset_set_line_out"
-  | "headset_set_line_out_volumes"
+  | "headset_set_stream_mix"
   | "headset_set_mic_led"
   | "headset_set_mic_volume"
   | "headset_set_notify_display"

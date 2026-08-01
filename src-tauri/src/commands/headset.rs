@@ -121,16 +121,16 @@ pub fn headset_set_line_out(state: State<'_, AppState>, mode: String) -> Result<
         .send(&protocol::set_line_out(line_out_mode(&mode)?))
 }
 
+/// Stream mix: how much of the main, aux and microphone signal the stream
+/// output carries. Only meaningful while line-out is in stream mode.
 #[tauri::command]
-pub fn headset_set_line_out_volumes(
+pub fn headset_set_stream_mix(
     state: State<'_, AppState>,
-    left: u8,
-    right: u8,
+    main: u8,
     aux: u8,
+    mic: u8,
 ) -> Result<(), String> {
-    state
-        .headset
-        .send(&protocol::set_line_out_volumes(left, right, aux))
+    state.headset.send(&protocol::set_stream_mix(main, aux, mic))
 }
 
 /// Write the 10-band hardware EQ (values in dB, ±10). Selects the custom

@@ -38,6 +38,10 @@ const BATTERY_INTERVAL: Duration = Duration::from_secs(60);
 const RESCAN_INTERVAL: Duration = Duration::from_secs(5);
 /// Consecutive failed writes before the device is treated as gone.
 const MAX_FAILURES: u32 = 8;
+/// How long to wait for the reply that matches a query. Generous, because the
+/// device interleaves answers and this loop discards the ones that belong to
+/// other commands.
+const QUERY_TIMEOUT: Duration = Duration::from_millis(700);
 /// How often an unchanged OLED frame is re-sent. The keyboard's firmware
 /// repaints its own screen whenever it feels like it — a volume change, a
 /// profile switch — and would otherwise leave Inari's picture half overwritten.
@@ -54,6 +58,8 @@ pub struct KeyboardStatus {
     pub wireless: bool,
     pub firmware: Option<String>,
     pub battery_percent: Option<u8>,
+    /// On the cable and charging.
+    pub charging: bool,
     /// The keyboard's region byte. Gen 2+ boards have no serial; this stands
     /// in for one, and it also hints at the physical layout.
     pub region: Option<u8>,
@@ -194,19 +200,50 @@ impl KeyboardManager {
             .map_err(|e| format!("write keyboard: {e}"))
     }
 
-    /// Write a command and read what it answers. Query replies arrive one
-    /// command behind on this hardware, so the input queue is drained first.
-    fn query(&self, dev: &mut HidDevice, packet: &[u8]) -> Option<Vec<u8>> {
+    /// Write a command and read the answer that belongs to it.
+    ///
+    /// This hardware answers one command behind: a read straight after a write
+    /// returns the previous command's reply. Draining first is not enough
+    /// either — a live probe found 24 stale replies queued, and a read after
+    /// `0xBC` returned the firmware string left over from an earlier `0x90`.
+    /// So the caller says what a valid answer looks like and everything else
+    /// is discarded.
+    ///
+    /// `accept` differs per command because the device is not consistent:
+    /// most replies echo the command in byte 0, but the firmware query answers
+    /// with bare ASCII and no echo at all. Insisting on the echo everywhere
+    /// silently turned the firmware into "unknown".
+    fn query(
+        &self,
+        dev: &mut HidDevice,
+        packet: &[u8],
+        accept: impl Fn(&[u8]) -> bool,
+    ) -> Option<Vec<u8>> {
         let mut reader = dev.open_reader().ok()?;
         // The reader hands back whole input reports; this device's are 64 B.
         let mut buf = [0u8; crate::headset::protocol::COMMAND_LEN];
-        // Drain anything stale.
+        // Clear whatever the last conversation left behind.
         while let Ok(Some(_)) = reader.read_report(&mut buf, Duration::from_millis(5)) {}
         dev.write_command(packet).ok()?;
-        let n = reader
-            .read_report(&mut buf, Duration::from_millis(300))
-            .ok()??;
-        Some(buf[..n].to_vec())
+        let deadline = Instant::now() + QUERY_TIMEOUT;
+        while Instant::now() < deadline {
+            match reader.read_report(&mut buf, Duration::from_millis(60)) {
+                Ok(Some(n)) if n > 0 && accept(&buf[..n]) => return Some(buf[..n].to_vec()),
+                // Somebody else's answer, or an unsolicited frame: keep looking.
+                Ok(Some(_)) | Ok(None) => continue,
+                Err(_) => return None,
+            }
+        }
+        debug!(
+            "keyboard did not answer command {:#04x}",
+            packet.get(1).copied().unwrap_or(0)
+        );
+        None
+    }
+
+    /// Accept a reply that echoes `cmd` in its first byte — the common case.
+    fn echoes(cmd: u8) -> impl Fn(&[u8]) -> bool {
+        move |reply: &[u8]| reply.first() == Some(&cmd)
     }
 
     pub fn start(self: &Arc<Self>, app: AppHandle) {
@@ -276,8 +313,12 @@ impl KeyboardManager {
     /// Identify the board, correct its protocol generation from the firmware
     /// version, and take control of its LEDs. Returns the model to drive.
     fn on_connect(&self, dev: &mut HidDevice, model: Model) -> Model {
+        // The firmware answers with bare ASCII, so "is this a version string"
+        // is the only thing that identifies its reply.
         let firmware = self
-            .query(dev, &protocol::firmware_query())
+            .query(dev, &protocol::firmware_query(), |reply| {
+                protocol::parse_firmware(reply).is_some()
+            })
             .and_then(|reply| protocol::parse_firmware(&reply));
         // A Gen 1/2 board on 1.19.7 or newer speaks the Gen 3 dialect, and only
         // the firmware string says so — the product id does not change with the
@@ -291,15 +332,19 @@ impl KeyboardManager {
             _ => model,
         };
         let region = self
-            .query(dev, &protocol::region_query())
-            .and_then(|reply| (reply.first() == Some(&0xf5)).then(|| reply[2]));
+            .query(dev, &protocol::region_query(), Self::echoes(0xf5))
+            .and_then(|reply| reply.get(2).copied());
         let battery = model
             .battery
             .then(|| {
-                self.query(dev, &protocol::battery_query())
+                self.query(dev, &protocol::battery_query(), Self::echoes(0x92))
                     .and_then(|reply| protocol::parse_battery(&reply))
             })
             .flatten();
+        let (battery_percent, charging) = match battery {
+            Some((percent, charging)) => (Some(percent), charging),
+            None => (None, false),
+        };
         info!(
             "keyboard: {} ({:#06x}) on interface {}, firmware {}, region {}",
             model.name,
@@ -317,7 +362,8 @@ impl KeyboardManager {
                 generation: Some(model.gen),
                 wireless: model.wireless,
                 firmware,
-                battery_percent: battery,
+                battery_percent,
+                charging,
                 region,
                 has_oled: model.oled.is_some(),
                 has_actuation: model.actuation,
@@ -484,12 +530,13 @@ impl KeyboardManager {
             // --- battery ---
             if model.battery && battery_at.elapsed() >= BATTERY_INTERVAL {
                 battery_at = Instant::now();
-                if let Some(percent) = self
-                    .query(dev, &protocol::battery_query())
+                if let Some((percent, charging)) = self
+                    .query(dev, &protocol::battery_query(), Self::echoes(0x92))
                     .and_then(|reply| protocol::parse_battery(&reply))
                 {
                     if let Ok(mut status) = self.status.lock() {
                         status.battery_percent = Some(percent);
+                        status.charging = charging;
                     }
                     self.emit_status();
                 }

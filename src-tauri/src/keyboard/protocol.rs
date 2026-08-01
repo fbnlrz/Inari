@@ -644,26 +644,23 @@ pub fn firmware_is_gen3(version: &str) -> bool {
     }
 }
 
-/// Battery level from a `0x92` reply.
+/// Battery level from a `0x92` reply, as `(percent, charging)`.
 ///
-/// The verified board answered `92 95 …` while its own OLED showed **95 %**,
-/// so the byte is read as two BCD digits. That also fits the shape of the
-/// reply — echo, then value. 100 % has no BCD encoding in one byte, so a value
-/// outside 0x00..0x99 (or with a nibble above 9) is reported as full rather
-/// than as a wrong number.
-pub fn parse_battery(buf: &[u8]) -> Option<u8> {
+/// The reply echoes the command in byte 0 — which matters more than it looks:
+/// this device answers queries **one command behind**, so a caller that reads
+/// whatever arrives next gets the previous answer. Checking the echo is what
+/// makes that harmless.
+///
+/// The byte itself is decoded exactly like every other SteelSeries battery
+/// (see [`crate::device::parse_battery_byte`]). An earlier version read it as
+/// two BCD digits, which agrees at 95 % and disagrees everywhere else; the
+/// vendor's own specification and the Aerox reading both say otherwise, and
+/// BCD cannot express 100 % at all.
+pub fn parse_battery(buf: &[u8]) -> Option<(u8, bool)> {
     if buf.first() != Some(&CMD_BATTERY) {
         return None;
     }
-    let raw = *buf.get(1)?;
-    if raw == 0 {
-        return None;
-    }
-    let (hi, lo) = (raw >> 4, raw & 0x0f);
-    if hi > 9 || lo > 9 {
-        return Some(100);
-    }
-    Some((hi * 10 + lo).min(100))
+    crate::device::parse_battery_byte(*buf.get(1)?)
 }
 
 #[cfg(test)]
@@ -886,15 +883,15 @@ mod tests {
     }
 
     #[test]
-    fn battery_replies_decode_as_bcd_percent() {
-        // The captured reply, next to the 95 % its own OLED was showing.
-        assert_eq!(parse_battery(&[0x92, 0x95, 0x00]), Some(95));
-        assert_eq!(parse_battery(&[0x92, 0x07]), Some(7));
-        // Not a battery reply at all.
+    fn battery_replies_decode_like_every_other_steelseries_device() {
+        // The captured reply: full, and charging over the cable.
+        assert_eq!(parse_battery(&[0x92, 0x95, 0x00]), Some((100, true)));
+        assert_eq!(parse_battery(&[0x92, 0x0b]), Some((50, false)));
+        // Another command's answer must never be read as a battery level —
+        // this device replies one command behind, so this happens for real.
         assert_eq!(parse_battery(&[0x90, 0x95]), None);
-        assert_eq!(parse_battery(&[0x92, 0x00]), None, "0 means no reading");
+        assert_eq!(parse_battery(&[0x92, 0x00]), None, "0 is not a reading");
+        assert_eq!(parse_battery(&[0x92, 0xff]), None, "0xff means no reading");
         assert_eq!(parse_battery(&[]), None);
-        // Nibbles past 9 cannot be BCD; report full rather than nonsense.
-        assert_eq!(parse_battery(&[0x92, 0xff]), Some(100));
     }
 }

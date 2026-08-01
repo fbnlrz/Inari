@@ -229,7 +229,7 @@ pub fn run() {
             commands::headset::headset_set_gain_high,
             commands::headset::headset_set_wireless_range,
             commands::headset::headset_set_line_out,
-            commands::headset::headset_set_line_out_volumes,
+            commands::headset::headset_set_stream_mix,
             commands::headset::headset_set_eq_bands,
             commands::headset::headset_set_eq_preset,
             commands::headset::headset_eq_presets,

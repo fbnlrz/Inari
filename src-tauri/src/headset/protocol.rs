@@ -38,7 +38,10 @@ const CMD_AUTO_OFF: u8 = 0xc1;
 const CMD_WIRELESS_MODE: u8 = 0xc3;
 const CMD_MIC_LED: u8 = 0xbf;
 const CMD_LINE_OUT: u8 = 0x43;
-const CMD_LINE_OUT_VOL: u8 = 0x47;
+/// Stream mix: main / aux / mic, each 0..100. Named `line_out_volumes` here
+/// until the vendor's own specification showed the real layout — byte 3 is
+/// unused and byte 5 is the microphone share, which Inari never set.
+const CMD_STREAM_MIX: u8 = 0x47;
 const CMD_CHATMIX: u8 = 0x49;
 /// Two opcodes replayed verbatim from the vendor software's connect sequence.
 /// Neither appears in any of the reverse-engineering write-ups, and the station
@@ -94,7 +97,11 @@ pub enum LineOut {
 }
 impl LineOut {
     fn from_raw(v: u8) -> Self {
-        if v == 2 { LineOut::Stream } else { LineOut::Speaker }
+        if v == 2 {
+            LineOut::Stream
+        } else {
+            LineOut::Speaker
+        }
     }
     pub fn to_raw(self) -> u8 {
         match self {
@@ -197,14 +204,26 @@ pub fn set_wireless_range(range: bool) -> Vec<u8> {
 pub fn set_line_out(mode: LineOut) -> Vec<u8> {
     vec![REPORT_ID, CMD_LINE_OUT, mode.to_raw()]
 }
-/// Stream-mode line-out volumes (main L/R and aux), each 0 .. 100.
-pub fn set_line_out_volumes(left: u8, right: u8, aux: u8) -> Vec<u8> {
+/// Stream mix, each share 0 .. 100.
+///
+/// The layout is `[main][unused][aux][mic]` — verified against a live base
+/// station, whose `0x20` reply reads back exactly these three values with a
+/// zero between the first two. Inari used to send `[left][right][aux]`, so the
+/// second slider wrote into the unused byte and the microphone share could not
+/// be set at all.
+pub fn set_stream_mix(main: u8, aux: u8, mic: u8) -> Vec<u8> {
+    // The station stores these in steps of 5 and floors anything between:
+    // sending 42 reads back as 40, 47 as 45, 99 as 95. Snapping here rather
+    // than in the UI keeps the value shown, the value stored and the value on
+    // the device the same number.
+    let snap = |v: u8| (v.min(100) / 5) * 5;
     vec![
         REPORT_ID,
-        CMD_LINE_OUT_VOL,
-        left.min(100),
-        right.min(100),
-        aux.min(100),
+        CMD_STREAM_MIX,
+        snap(main),
+        0,
+        snap(aux),
+        snap(mic),
     ]
 }
 /// Enable/disable the hardware ChatMix wheel reporting.
@@ -223,7 +242,11 @@ pub fn select_custom_eq() -> Vec<u8> {
 pub fn set_eq_bands(bands_db: &[f32]) -> Vec<u8> {
     let mut cmd = vec![REPORT_ID, CMD_EQ_BANDS];
     for i in 0..EQ_BANDS {
-        let db = bands_db.get(i).copied().unwrap_or(0.0).clamp(EQ_DB_MIN, EQ_DB_MAX);
+        let db = bands_db
+            .get(i)
+            .copied()
+            .unwrap_or(0.0)
+            .clamp(EQ_DB_MIN, EQ_DB_MAX);
         cmd.push(((EQ_BASELINE as f32) + 2.0 * db).round() as u8);
     }
     cmd
@@ -254,6 +277,10 @@ pub struct HeadsetStatus {
     pub bluetooth_powered: Option<bool>,
     /// Station output volume 0 .. 100 (from the 0x0725 event / 0x20 query).
     pub volume_percent: Option<u8>,
+    /// Stream mix shares, read back from the audio-settings frame.
+    pub stream_main: Option<u8>,
+    pub stream_aux: Option<u8>,
+    pub stream_mic: Option<u8>,
     /// ChatMix game/chat balance 0 .. 100 each (from the 0x0745 event).
     pub chatmix_game: Option<u8>,
     pub chatmix_chat: Option<u8>,
@@ -291,8 +318,7 @@ impl HeadsetStatus {
                 self.auto_off_minutes = Some(auto_off_minutes(buf[12]));
                 self.wireless_range_mode = Some(buf[13] == 1);
                 self.wireless_paired = Some(buf[14] == 8);
-                self.power_status =
-                    Some(serde_json_str(&PowerStatus::from_raw(buf[15])));
+                self.power_status = Some(serde_json_str(&PowerStatus::from_raw(buf[15])));
                 true
             }
             // Station volume change event.
@@ -300,8 +326,14 @@ impl HeadsetStatus {
                 self.volume_percent = Some(volume_percent(buf[2]));
                 true
             }
-            // Reply to the 0x20 volume query: raw volume sits in byte 3.
+            // Reply to the 0x20 audio-settings query. Byte 3 is the station
+            // volume; the stream mix sits at the end of the same frame.
             (_, CMD_VOLUME_QUERY) if buf.len() >= 4 => {
+                if buf.len() >= 26 {
+                    self.stream_main = Some(buf[22].min(100));
+                    self.stream_aux = Some(buf[24].min(100));
+                    self.stream_mic = Some(buf[25].min(100));
+                }
                 self.volume_percent = Some(volume_percent(buf[3]));
                 true
             }
@@ -354,6 +386,44 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_stream_mix_leaves_byte_three_alone_and_carries_the_microphone() {
+        // Verified against a live base station: its audio-settings reply reads
+        // back main/aux/mic with a zero between the first two. The old shape
+        // was [left][right][aux], which put a slider's value into the unused
+        // byte and never set the microphone share at all.
+        let packet = set_stream_mix(80, 60, 40);
+        assert_eq!(packet, vec![REPORT_ID, 0x47, 80, 0, 60, 40]);
+        // Out-of-range values clamp rather than wrapping into a tiny share.
+        assert_eq!(set_stream_mix(200, 200, 200)[2..], [100, 0, 100, 100]);
+        // The device floors to steps of five — measured, not assumed: 42 came
+        // back as 40 and 99 as 95. Snap so the UI cannot show a value the
+        // station is not on.
+        assert_eq!(set_stream_mix(42, 47, 99)[2..], [40, 0, 45, 95]);
+        assert_eq!(set_stream_mix(3, 7, 12)[2..], [0, 0, 5, 10]);
+    }
+
+    #[test]
+    fn the_audio_settings_frame_yields_the_stream_mix() {
+        // The real frame captured from the station, trimmed to length.
+        let mut frame = vec![0u8; 26];
+        frame[0] = REPORT_ID;
+        frame[1] = CMD_VOLUME_QUERY;
+        frame[3] = 0; // loudest
+        frame[22] = 100;
+        frame[24] = 75;
+        frame[25] = 30;
+        let mut status = HeadsetStatus::default();
+        assert!(status.apply_frame(&frame));
+        assert_eq!(status.stream_main, Some(100));
+        assert_eq!(status.stream_aux, Some(75));
+        assert_eq!(status.stream_mic, Some(30));
+        // A short frame must not panic or invent values.
+        let mut short = HeadsetStatus::default();
+        assert!(short.apply_frame(&[REPORT_ID, CMD_VOLUME_QUERY, 0, 0]));
+        assert_eq!(short.stream_main, None);
+    }
+
+    #[test]
     fn eq_encoding_roundtrips() {
         assert_eq!(set_eq_bands(&[0.0; 10])[2..], [EQ_BASELINE; 10]);
         // +10 dB -> baseline + 20; -10 dB -> baseline - 20.
@@ -374,8 +444,8 @@ mod tests {
     fn parses_real_status_frame() {
         // Captured live from a real base station.
         let frame = [
-            0x06, 0xb0, 0x00, 0x00, 0x01, 0x00, 0x02, 0x08, 0x08, 0x01, 0x02, 0x0a, 0x05,
-            0x01, 0x08, 0x08,
+            0x06, 0xb0, 0x00, 0x00, 0x01, 0x00, 0x02, 0x08, 0x08, 0x01, 0x02, 0x0a, 0x05, 0x01,
+            0x08, 0x08,
         ];
         let mut s = HeadsetStatus::default();
         assert!(s.apply_frame(&frame));

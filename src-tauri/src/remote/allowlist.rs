@@ -197,8 +197,8 @@ sync_table! {
     headset_set_gain_high => |app, a| ok(commands::headset::headset_set_gain_high(app.state(), a.get("high")?)?),
     headset_set_wireless_range => |app, a| ok(commands::headset::headset_set_wireless_range(app.state(), a.get("range")?)?),
     headset_set_line_out => |app, a| ok(commands::headset::headset_set_line_out(app.state(), a.get("mode")?)?),
-    headset_set_line_out_volumes => |app, a| ok(commands::headset::headset_set_line_out_volumes(
-        app.state(), a.get("left")?, a.get("right")?, a.get("aux")?)?),
+    headset_set_stream_mix => |app, a| ok(commands::headset::headset_set_stream_mix(
+        app.state(), a.get("main")?, a.get("aux")?, a.get("mic")?)?),
     // The balance slider is a mixer control, and the ChatMix blend is one of
     // the things you actually want to reach for mid-game. Both only write
     // prefs.

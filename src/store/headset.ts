@@ -24,6 +24,10 @@ export interface HeadsetStatus {
   bluetooth_connected: boolean | null;
   bluetooth_powered: boolean | null;
   volume_percent: number | null;
+  /** Stream mix, as the base station reports it in its audio-settings frame. */
+  stream_main: number | null;
+  stream_aux: number | null;
+  stream_mic: number | null;
   chatmix_game: number | null;
   chatmix_chat: number | null;
   line_out: LineOutMode | null;
@@ -74,6 +78,9 @@ const emptyStatus: HeadsetStatus = {
   bluetooth_connected: null,
   bluetooth_powered: null,
   volume_percent: null,
+  stream_main: null,
+  stream_aux: null,
+  stream_mic: null,
   chatmix_game: null,
   chatmix_chat: null,
   line_out: null,
@@ -129,7 +136,7 @@ interface HeadsetState {
   setGainHigh: (high: boolean) => void;
   setWirelessRange: (range: boolean) => void;
   setLineOut: (mode: LineOutMode) => void;
-  setLineOutVolumes: (left: number, right: number, aux: number) => void;
+  setStreamMix: (main: number, aux: number, mic: number) => void;
   setEqBands: (bands: number[]) => void;
   setEqPreset: (preset: number) => void;
 
@@ -333,10 +340,8 @@ export const useHeadset = create<HeadsetState>((set, get) => {
           fail(e, () => set((s) => ({ status: patch(s.status, { line_out: prev }) }))),
         );
     },
-    setLineOutVolumes: (left, right, aux) => {
-      debounced("lineoutvol", () =>
-        call("headset_set_line_out_volumes", { left, right, aux }),
-      );
+    setStreamMix: (main, aux, mic) => {
+      debounced("streammix", () => call("headset_set_stream_mix", { main, aux, mic }));
       get().scheduleSave();
     },
     setEqBands: (bands) => {

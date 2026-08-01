@@ -146,9 +146,11 @@ export function HeadsetScreen() {
   const [micVolume, setMicVolume] = useState(10);
   const [sidetone, setSidetone] = useState(0);
   const [eq, setEq] = useState<number[]>(() => new Array(10).fill(0));
-  const [lineL, setLineL] = useState(100);
-  const [lineR, setLineR] = useState(100);
-  const [lineAux, setLineAux] = useState(100);
+  // Stream mix, seeded from the device once it reports (the base station sends
+  // these back in its audio-settings frame) and then owned by the sliders.
+  const [mixMain, setMixMain] = useState(100);
+  const [mixAux, setMixAux] = useState(100);
+  const [mixMic, setMixMic] = useState(0);
   const [eqCategory, setEqCategory] = useState("All");
   const [activePreset, setActivePreset] = useState<string | null>(null);
 
@@ -163,6 +165,18 @@ export function HeadsetScreen() {
     // init is stable; run once.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Seed the stream-mix sliders from the device the first time it reports.
+  // Without this, moving one slider would send the other two at their default
+  // values and silently overwrite whatever the station had.
+  const [mixSeeded, setMixSeeded] = useState(false);
+  useEffect(() => {
+    if (mixSeeded || s.stream_main == null) return;
+    setMixMain(s.stream_main);
+    setMixAux(s.stream_aux ?? 100);
+    setMixMic(s.stream_mic ?? 0);
+    setMixSeeded(true);
+  }, [mixSeeded, s.stream_main, s.stream_aux, s.stream_mic]);
 
   const autoOffIdx = useMemo(() => {
     const i = AUTO_OFF_STEPS.indexOf((s.auto_off_minutes ?? 30) as never);
@@ -375,12 +389,12 @@ export function HeadsetScreen() {
         />
         {lineOut === "stream" && (
           <>
-            <Slider label="Main left" value={lineL} min={0} max={100} suffix="%"
-              onChange={(v) => { setLineL(v); h.setLineOutVolumes(v, lineR, lineAux); }} />
-            <Slider label="Main right" value={lineR} min={0} max={100} suffix="%"
-              onChange={(v) => { setLineR(v); h.setLineOutVolumes(lineL, v, lineAux); }} />
-            <Slider label="Aux" value={lineAux} min={0} max={100} suffix="%"
-              onChange={(v) => { setLineAux(v); h.setLineOutVolumes(lineL, lineR, v); }} />
+            <Slider label="Main" step={5} value={mixMain} min={0} max={100} suffix="%"
+              onChange={(v) => { setMixMain(v); h.setStreamMix(v, mixAux, mixMic); }} />
+            <Slider label="Aux" step={5} value={mixAux} min={0} max={100} suffix="%"
+              onChange={(v) => { setMixAux(v); h.setStreamMix(mixMain, v, mixMic); }} />
+            <Slider label="Microphone" step={5} value={mixMic} min={0} max={100} suffix="%"
+              onChange={(v) => { setMixMic(v); h.setStreamMix(mixMain, mixAux, v); }} />
           </>
         )}
       </Card>

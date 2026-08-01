@@ -74,11 +74,38 @@ overridden somewhere in your session.
 
 ## A SteelSeries device shows "not connected"
 
-**Cause.** The udev rule hasn't applied to the already-plugged device yet.
+**Start here, before guessing:**
 
-**Fix.** Re-plug the device once, then reopen the tab. Confirm your user can
-read/write the device's `/dev/hidraw*` node — the installer's `uaccess` rule
-handles this (see [Supported hardware](/reference/hardware)).
+```sh
+inari doctor
+```
+
+It runs in your terminal — no running Inari needed, which is the point — and
+prints every SteelSeries HID node, which one Inari's table claims, which passed
+the interface/descriptor probe, whether it can be opened at all, and, for each
+candidate, whether the device actually answers. Reading it top to bottom
+usually names the cause outright.
+
+**Cause 1 — permissions.** A node reading `cannot open (permission denied)`
+means the udev rule has not been applied to an already-plugged device.
+
+**Fix.** Re-plug the device once, or:
+
+```sh
+sudo udevadm control --reload && sudo udevadm trigger --subsystem-match=hidraw
+```
+
+**Cause 2 — nothing passed the probe.** The report says a product id matched
+but no node passed. The device exposes its configuration collection on a
+different interface than the table expects; that is a bug worth reporting, with
+the report attached.
+
+**Cause 3 — the device is silent.** A node opens but never answers. Inari
+handles this by itself since 1.0.12: it only reports "connected" once the
+device has actually replied, and moves on to the next candidate node otherwise.
+Older versions announced the first node that merely *opened*, which is why a
+headset could sit there showing nothing until it was unplugged and the app
+restarted.
 
 ## The OLED tab says "display not supported"
 

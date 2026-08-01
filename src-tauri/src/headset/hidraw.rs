@@ -10,7 +10,7 @@ use std::os::unix::io::{AsRawFd, RawFd};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use crate::device::{self, DeviceClass, DeviceEntry};
+use crate::device::{self, DeviceEntry};
 
 use super::protocol::COMMAND_LEN;
 
@@ -120,7 +120,6 @@ pub type DevicePath = device::Found;
 /// feature reports (OLED). Cheap to clone the path; the file is the resource.
 pub struct HidDevice {
     file: File,
-    pub product_id: u16,
     pub entry: &'static DeviceEntry,
     pub path: PathBuf,
 }
@@ -134,31 +133,9 @@ impl HidDevice {
             .open(&path.dev)?;
         Ok(Self {
             file,
-            product_id: path.product_id,
             entry: path.entry,
             path: path.dev.clone(),
         })
-    }
-
-    /// Discover and open the base station in one step.
-    pub fn discover() -> io::Result<Self> {
-        let path = device::scan(DeviceClass::Headset).ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::NotFound,
-                "no Arctis Nova Pro Wireless base station found",
-            )
-        })?;
-        Self::open(&path)
-    }
-
-    /// Reconstruct the discovery path so a second fd (reader/OLED) can be
-    /// opened for the same node.
-    pub fn device_path(&self) -> DevicePath {
-        DevicePath {
-            dev: self.path.clone(),
-            product_id: self.product_id,
-            entry: self.entry,
-        }
     }
 
     /// Write a command as a HID **output** report, zero-padded to this

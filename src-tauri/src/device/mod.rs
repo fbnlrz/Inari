@@ -6,6 +6,8 @@
 //! modules. Everything a new model needs now lives in [`DEVICES`] plus — for
 //! headsets — one [`HeadsetOps`] impl.
 
+pub mod doctor;
+
 use std::path::{Path, PathBuf};
 
 use crate::headset::protocol::{self, HeadsetStatus};
@@ -19,6 +21,23 @@ pub const VENDOR_ID: u16 = 0x1038;
 
 /// Where the kernel publishes hidraw nodes and their metadata.
 const HIDRAW_CLASS: &str = "/sys/class/hidraw";
+
+/// Decode a SteelSeries battery byte: bit 7 is the charging flag, the low
+/// seven bits are a level in 5 % steps starting at 1.
+///
+/// One decoder for every family on purpose. It was verified on the Aerox 9
+/// (`0x95` -> 100 %, charging) and matches the vendor software's own
+/// specification for the Apex keyboards. The keyboard code briefly read the
+/// byte as two BCD digits instead, which happens to agree at 95 % and is
+/// wrong everywhere else — not least because BCD cannot express 100 %.
+pub fn parse_battery_byte(raw: u8) -> Option<(u8, bool)> {
+    let charging = raw & 0x80 != 0;
+    let percent = (raw & 0x7f) as i32;
+    let percent = (percent - 1) * 5;
+    (0..=100)
+        .contains(&percent)
+        .then_some((percent as u8, charging))
+}
 
 // --- capabilities -------------------------------------------------------
 
@@ -201,7 +220,10 @@ pub static DEVICES: &[DeviceEntry] = &[
         // keys) starts with a different page, which is what separates them.
         probe: Probe::DescriptorPrefix(&[0x06, 0xc0, 0xff]),
         report_len: protocol::COMMAND_LEN,
-        caps: Caps::OLED.with(Caps::EQ).with(Caps::ANC).with(Caps::CHATMIX),
+        caps: Caps::OLED
+            .with(Caps::EQ)
+            .with(Caps::ANC)
+            .with(Caps::CHATMIX),
         // Beats the pre-Nova generation when both are somehow present: it is
         // the richer device.
         priority: 20,
@@ -294,24 +316,42 @@ pub struct Found {
 /// Replaces the per-family scans that used to live in `headset::hidraw` and
 /// `mouse::manager`.
 pub fn scan(class: DeviceClass) -> Option<Found> {
-    pick(candidates(class))
+    scan_all(class).into_iter().next()
 }
 
-/// Resolve competing nodes: highest priority wins, first seen breaks a tie.
-/// Kept free of I/O so "Nova Pro over Arctis Pro" and "cable over dongle" are
+/// Every matching node, best candidate first.
+///
+/// The order is deliberate and total: priority descending, then by hidraw
+/// index. `read_dir` returns entries in whatever order the filesystem feels
+/// like, so a device exposing several matching nodes used to be a coin flip
+/// that could land differently on every boot — which is exactly what "it only
+/// works after I unplug it and restart" looks like from the outside. Callers
+/// that can tell a silent node from a live one walk this list instead of
+/// trusting the first answer.
+pub fn scan_all(class: DeviceClass) -> Vec<Found> {
+    let mut found = candidates(class);
+    found.sort_by(rank);
+    found
+}
+
+/// The candidate order: priority descending, then node number ascending.
+/// Free of I/O so "Nova Pro over Arctis Pro" and "cable over dongle" stay
 /// testable without hardware.
-pub fn pick(candidates: Vec<Found>) -> Option<Found> {
-    let mut best: Option<Found> = None;
-    for found in candidates {
-        let better = match &best {
-            None => true,
-            Some(b) => found.entry.priority > b.entry.priority,
-        };
-        if better {
-            best = Some(found);
-        }
-    }
-    best
+fn rank(a: &Found, b: &Found) -> std::cmp::Ordering {
+    b.entry
+        .priority
+        .cmp(&a.entry.priority)
+        .then_with(|| hidraw_index(&a.dev).cmp(&hidraw_index(&b.dev)))
+}
+
+/// The number in `/dev/hidrawN`, for a stable ordering. Unparseable names sort
+/// last rather than panicking.
+fn hidraw_index(dev: &Path) -> u32 {
+    dev.file_name()
+        .and_then(|n| n.to_str())
+        .and_then(|n| n.strip_prefix("hidraw"))
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(u32::MAX)
 }
 
 /// Every hidraw node of `class` the table claims, unresolved.
@@ -379,7 +419,7 @@ fn probe_matches(probe: &Probe, sys_device: &Path) -> bool {
 /// than parsed out of the path: the HID node's own directory name looks like
 /// `0003:1038:185A.0020`, whose trailing number is a HID device index, not an
 /// interface — reading that instead silently matches the wrong node.
-fn interface_number(sys_device: &Path) -> Option<u8> {
+pub(crate) fn interface_number(sys_device: &Path) -> Option<u8> {
     let real = std::fs::canonicalize(sys_device).ok()?;
     // Walk up until a directory exposes bInterfaceNumber (usually the parent).
     let mut dir = real.as_path();
@@ -398,8 +438,18 @@ mod tests {
     use super::*;
 
     fn found(class: DeviceClass, pid: u16) -> Found {
+        found_at(class, pid, &format!("/dev/hidraw{pid:x}"))
+    }
+
+    /// The winner of a candidate set, by the same ordering discovery uses.
+    fn best(mut candidates: Vec<Found>) -> u16 {
+        candidates.sort_by(rank);
+        candidates.first().expect("a candidate").product_id
+    }
+
+    fn found_at(class: DeviceClass, pid: u16, dev: &str) -> Found {
         Found {
-            dev: PathBuf::from(format!("/dev/hidraw{pid:x}")),
+            dev: PathBuf::from(dev),
             product_id: pid,
             entry: lookup(class, pid).expect("pid is in the table"),
         }
@@ -414,11 +464,8 @@ mod tests {
     fn nova_pro_wins_over_arctis_pro_either_way_round() {
         let nova = found(DeviceClass::Headset, NOVA_PRO);
         let apw = found(DeviceClass::Headset, ARCTIS_PRO);
-        assert_eq!(
-            pick(vec![apw.clone(), nova.clone()]).unwrap().product_id,
-            NOVA_PRO
-        );
-        assert_eq!(pick(vec![nova, apw]).unwrap().product_id, NOVA_PRO);
+        assert_eq!(best(vec![apw.clone(), nova.clone()]), NOVA_PRO);
+        assert_eq!(best(vec![nova, apw]), NOVA_PRO);
     }
 
     #[test]
@@ -426,32 +473,53 @@ mod tests {
         let wired = found(DeviceClass::Mouse, mouse_protocol::PID_WIRED);
         let dongle = found(DeviceClass::Mouse, mouse_protocol::PID_WIRELESS);
         assert_eq!(
-            pick(vec![dongle.clone(), wired.clone()]).unwrap().product_id,
+            best(vec![dongle.clone(), wired.clone()]),
             mouse_protocol::PID_WIRED
         );
-        assert_eq!(
-            pick(vec![wired, dongle]).unwrap().product_id,
-            mouse_protocol::PID_WIRED
-        );
+        assert_eq!(best(vec![wired, dongle]), mouse_protocol::PID_WIRED);
         // The WOW variants share the same two entries, so the same rule holds.
         let wired = found(DeviceClass::Mouse, mouse_protocol::PID_WIRED_WOW);
         let dongle = found(DeviceClass::Mouse, mouse_protocol::PID_WIRELESS_WOW);
-        assert_eq!(
-            pick(vec![dongle, wired]).unwrap().product_id,
-            mouse_protocol::PID_WIRED_WOW
-        );
+        assert_eq!(best(vec![dongle, wired]), mouse_protocol::PID_WIRED_WOW);
     }
 
     #[test]
-    fn equal_priority_keeps_the_first_node_seen() {
-        let a = found(DeviceClass::Headset, 0x12e0);
-        let b = found(DeviceClass::Headset, 0x12e5);
-        assert_eq!(pick(vec![a, b]).unwrap().product_id, 0x12e0);
+    fn equal_priority_falls_back_to_the_lower_node_number() {
+        // Two nodes of the same family used to be resolved by whatever
+        // read_dir listed first, which could differ between boots.
+        let a = found_at(DeviceClass::Headset, 0x12e0, "/dev/hidraw8");
+        let b = found_at(DeviceClass::Headset, 0x12e5, "/dev/hidraw3");
+        assert_eq!(best(vec![a, b]), 0x12e5, "hidraw3 sorts before hidraw8");
     }
 
     #[test]
-    fn pick_of_nothing_is_none() {
-        assert!(pick(Vec::new()).is_none());
+    fn candidates_are_ordered_by_priority_then_node_number() {
+        // Priority still wins, but two nodes of equal priority now have a
+        // defined order instead of whatever read_dir handed back.
+        let mut list = [
+            found_at(DeviceClass::Headset, NOVA_PRO, "/dev/hidraw9"),
+            found_at(DeviceClass::Headset, ARCTIS_PRO, "/dev/hidraw2"),
+            found_at(DeviceClass::Headset, NOVA_PRO, "/dev/hidraw4"),
+        ];
+        list.sort_by(rank);
+        let order: Vec<_> = list
+            .iter()
+            .map(|f| f.dev.to_string_lossy().to_string())
+            .collect();
+        assert_eq!(order, ["/dev/hidraw4", "/dev/hidraw9", "/dev/hidraw2"]);
+    }
+
+    #[test]
+    fn an_unparseable_node_name_sorts_last_instead_of_panicking() {
+        assert_eq!(hidraw_index(Path::new("/dev/hidraw7")), 7);
+        assert_eq!(hidraw_index(Path::new("/dev/weird")), u32::MAX);
+    }
+
+    #[test]
+    fn ranking_nothing_yields_nothing() {
+        let mut empty: Vec<Found> = Vec::new();
+        empty.sort_by(rank);
+        assert!(empty.is_empty());
     }
 
     // --- table lookup ----------------------------------------------------
@@ -508,6 +576,19 @@ mod tests {
             assert!(mouse.caps.has(Caps::RGB.with(Caps::DPI)));
             assert!(!mouse.caps.has(Caps::OLED));
         }
+    }
+
+    #[test]
+    fn the_battery_byte_decodes_the_same_way_for_every_family() {
+        // The reading verified on the Aerox 9: full and on the cable.
+        assert_eq!(parse_battery_byte(0x95), Some((100, true)));
+        assert_eq!(parse_battery_byte(0x15), Some((100, false)));
+        assert_eq!(parse_battery_byte(0x01), Some((0, false)));
+        assert_eq!(parse_battery_byte(0x0b), Some((50, false)));
+        // A disconnected wireless device answers 0xff; decoding that as 630 %
+        // is exactly the bug this range check exists to prevent.
+        assert_eq!(parse_battery_byte(0xff), None);
+        assert_eq!(parse_battery_byte(0x00), None);
     }
 
     #[test]
