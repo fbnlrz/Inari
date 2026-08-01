@@ -33,7 +33,7 @@ export function MouseScreen() {
 
   if (!m.connected) {
     return (
-      <div className="content narrow">
+      <div className="content narrow device">
         <div className="screen-head">
           <h1>Mouse</h1>
         </div>
@@ -54,7 +54,7 @@ export function MouseScreen() {
   const tone = batteryTone(battery);
 
   return (
-    <div className="content narrow">
+    <div className="content narrow device">
       <div className="screen-head">
         <h1>{m.status.model ?? "Mouse"}</h1>
         <div className="screen-head-actions">

@@ -232,7 +232,7 @@ export const EFFECTS: {
   {
     kind: "scene",
     label: "Scenes",
-    hint: "Twelve themed scenes — Tokyo Night, Osaka neon, sakura, Kanagawa and more",
+    hint: "Twenty-four themed scenes — Tokyo Night, Osaka neon, sakura, Kanagawa and more",
     colors: 1,
     speed: true,
   },

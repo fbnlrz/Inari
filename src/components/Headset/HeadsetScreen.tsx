@@ -110,22 +110,41 @@ function batteryTone(pct: number): "low" | "mid" | "ok" {
 }
 
 /** A battery pill with a fill bar. */
-function Battery({ label, pct }: Readonly<{ label: string; pct: number | null }>) {
-  if (pct === null) return null;
-  const tone = batteryTone(pct);
+function Battery({
+  label,
+  pct,
+  charging = false,
+}: Readonly<{ label: string; pct: number | null; charging?: boolean }>) {
+  // Rendering nothing while the first status frame is still in flight made the
+  // card open empty and then grow, pushing everything below it down. The row
+  // keeps its height and says it has no reading yet.
+  const tone = pct === null ? "" : batteryTone(pct);
   return (
     <div className="hs-batt">
       <span className="hs-batt-label">{label}</span>
       <div className="hs-batt-bar">
-        <div className={"hs-batt-fill " + tone} style={{ width: `${pct}%` }} />
+        {pct !== null && (
+          <div
+            className={"hs-batt-fill " + tone + (charging ? " charging" : "")}
+            style={{ width: `${pct}%` }}
+          />
+        )}
       </div>
-      <span className="hs-batt-pct">{pct}%</span>
+      <span className={"hs-batt-pct" + (pct === null ? " pending" : "")}>
+        {pct === null ? "–" : `${pct}%`}
+      </span>
     </div>
   );
 }
 
 // Ten EQ bands track these centre frequencies (device custom preset slot).
 const EQ_FREQS = ["31", "62", "125", "250", "500", "1k", "2k", "4k", "8k", "16k"];
+
+function powerTone(status: string | null): string {
+  if (status === "online") return "live";
+  if (status === "cable_charging") return "tag-charging";
+  return "tag-off";
+}
 
 function powerLabel(status: string | null): string {
   if (status === "online") return "Online";
@@ -195,7 +214,7 @@ export function HeadsetScreen() {
 
   if (!h.connected) {
     return (
-      <div className="content narrow">
+      <div className="content narrow device">
         <div className="hs-empty">
           <Ms name="headphones" style={{ fontSize: 46, opacity: 0.5 }} />
           <p>No Arctis Nova Pro Wireless base station detected.</p>
@@ -213,12 +232,17 @@ export function HeadsetScreen() {
   const lineOut: LineOutMode = s.line_out ?? "speaker";
 
   return (
-    <div className="content narrow">
+    <div className="content narrow device">
       <div className="screen-head">
         <h1>{h.model ?? "Headset"}</h1>
         <div className="screen-head-actions">
-          <span className={"tag" + (s.power_status === "online" ? " live" : " tag-off")}>
-            <Ms name="bolt" style={{ fontSize: 11 }} />
+          {/* Three states, not two: "Charging" used to get the same grey as
+              "Offline" because the check only asked whether it was online. */}
+          <span className={"tag " + powerTone(s.power_status)}>
+            <Ms
+              name={s.power_status === "cable_charging" ? "battery_charging_full" : "bolt"}
+              style={{ fontSize: 11 }}
+            />
             {powerLabel(s.power_status)}
           </span>
         </div>
@@ -228,14 +252,39 @@ export function HeadsetScreen() {
       {/* ---- status ---- */}
       <Card title="Status" icon="monitoring">
         <div className="hs-batts">
-          <Battery label="Headset" pct={s.headset_battery_percent} />
+          <Battery
+            label="Headset"
+            pct={s.headset_battery_percent}
+            charging={s.power_status === "cable_charging"}
+          />
           <Battery label="Charge slot" pct={s.charge_slot_battery_percent} />
         </div>
+        {/* Tinted by state, the same way the battery bar already is.
+            Rendering "Unpaired" and "Muted" in the same weight as "Paired" and
+            "Live" made the row something you had to read rather than see. */}
         <div className="hs-status-grid">
-          <div><span>Volume</span><b>{s.volume_percent ?? "–"}%</b></div>
-          <div><span>Wireless</span><b>{s.wireless_paired ? "Paired" : "Unpaired"}</b></div>
-          <div><span>Bluetooth</span><b>{bluetoothLabel(s.bluetooth_connected, s.bluetooth_powered)}</b></div>
-          <div><span>Mic</span><b>{s.mic_muted ? "Muted" : "Live"}</b></div>
+          <div>
+            <span>Volume</span>
+            <b>{s.volume_percent ?? "–"}%</b>
+          </div>
+          <div>
+            <span>Wireless</span>
+            <b className={s.wireless_paired ? "good" : "bad"}>
+              {s.wireless_paired ? "Paired" : "Unpaired"}
+            </b>
+          </div>
+          <div>
+            <span>Bluetooth</span>
+            <b className={s.bluetooth_connected ? "good" : ""}>
+              {bluetoothLabel(s.bluetooth_connected, s.bluetooth_powered)}
+            </b>
+          </div>
+          <div>
+            <span>Mic</span>
+            <b className={s.mic_muted ? "warn" : "good"}>
+              {s.mic_muted ? "Muted" : "Live"}
+            </b>
+          </div>
         </div>
       </Card>
 
@@ -330,45 +379,74 @@ export function HeadsetScreen() {
       <Card
         title="Hardware equalizer"
         icon="equalizer"
-        right={
-          <select
-            className="hs-select"
-            value={eqCategory}
-            onChange={(e) => setEqCategory(e.target.value)}
-          >
-            {eqCategories.map((c) => (
-              <option key={c} value={c}>
-                {c}
-              </option>
-            ))}
-          </select>
-        }
       >
-        <div className="hs-eq-presets">
-          {h.eqPresets
-            .filter((p) => eqCategory === "All" || p.category === eqCategory)
-            .map((p) => (
-              <button
-                key={p.name}
-                type="button"
-                className={"hs-chip" + (activePreset === p.name ? " primary" : "")}
-                title={p.description}
-                onClick={() => {
-                  setActivePreset(p.name);
-                  // null = the device rejected it (the store shows why).
-                  void h.applyEqPreset(p.name).then((bands) => bands && setEq(bands));
-                }}
-              >
-                {p.name}
-              </button>
-            ))}
+        {/* The category was already a field on every preset but only reachable
+            through a dropdown in the card header, so "All" dropped thirty
+            presets into one unsorted cloud. As a row of switches the split is
+            visible without being opened, and "All" keeps them grouped. */}
+        <div className="hs-seg hs-eq-cats">
+          {eqCategories.map((c) => (
+            <button
+              type="button"
+              key={c}
+              className={"hs-seg-btn" + (eqCategory === c ? " active" : "")}
+              onClick={() => setEqCategory(c)}
+            >
+              {c}
+            </button>
+          ))}
+        </div>
+        {(eqCategory === "All"
+          ? eqCategories.filter((c) => c !== "All")
+          : [eqCategory]
+        ).map((cat) => (
+          <div key={cat}>
+            {eqCategory === "All" && <div className="hs-eq-cat-label">{cat}</div>}
+            <div className="hs-eq-presets">
+              {h.eqPresets
+                .filter((p) => p.category === cat)
+                .map((p) => (
+                  <button
+                    key={p.name}
+                    type="button"
+                    className={"hs-chip" + (activePreset === p.name ? " primary" : "")}
+                    title={p.description}
+                    onClick={() => {
+                      setActivePreset(p.name);
+                      // null = the device rejected it (the store shows why).
+                      void h.applyEqPreset(p.name).then((bands) => bands && setEq(bands));
+                    }}
+                  >
+                    {p.name}
+                  </button>
+                ))}
+            </div>
+          </div>
+        ))}
+        {/* The value runs -10..+10 dB in half-steps and used to appear
+            nowhere: a setting you could neither read off nor reproduce, on the
+            EQ that actually lives in the headset. */}
+        <div className="hs-eq-axis" aria-hidden="true">
+          <span>+10</span>
+          <span>0</span>
+          <span>−10</span>
         </div>
         <div className="hs-eq">
+          <div className="hs-eq-lines" aria-hidden="true">
+            <i style={{ top: "25%" }} />
+            <i className="zero" style={{ top: "50%" }} />
+            <i style={{ top: "75%" }} />
+          </div>
           {eq.map((v, i) => (
             <div className="hs-eq-band" key={EQ_FREQS[i]}>
+              <span className={"hs-eq-val" + (v === 0 ? " zero" : "")}>
+                {v > 0 ? `+${v.toFixed(1)}` : v.toFixed(1)}
+              </span>
               <input
                 type="range"
                 className="hs-eq-fader"
+                aria-label={`${EQ_FREQS[i]} band`}
+                aria-valuetext={`${v > 0 ? "+" : ""}${v.toFixed(1)} dB`}
                 min={-10}
                 max={10}
                 step={0.5}
