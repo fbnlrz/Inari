@@ -4,6 +4,7 @@ use log::warn;
 
 use crate::audio::backend::AudioBackend;
 use crate::headset::HeadsetManager;
+use crate::keyboard::KeyboardManager;
 use crate::mixer::state::MixerState;
 use crate::mouse::MouseManager;
 
@@ -17,6 +18,8 @@ pub struct AppState {
     pub headset: Arc<HeadsetManager>,
     /// SteelSeries mouse (Aerox 9 Wireless).
     pub mouse: Arc<MouseManager>,
+    /// SteelSeries Apex keyboard (per-key RGB, OLED).
+    pub keyboard: Arc<KeyboardManager>,
 }
 
 impl AppState {
@@ -67,6 +70,7 @@ impl AppState {
             mixer: Mutex::new(mixer),
             headset: HeadsetManager::new(),
             mouse: MouseManager::new(),
+            keyboard: KeyboardManager::new(),
         }
     }
 

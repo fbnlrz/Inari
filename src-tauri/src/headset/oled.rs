@@ -11,7 +11,7 @@ use super::protocol::REPORT_ID;
 
 pub const WIDTH: usize = 128;
 pub const HEIGHT: usize = 64;
-const STRIDE: usize = WIDTH / 8;
+pub const STRIDE: usize = WIDTH / 8;
 
 const CMD_SCREEN: u8 = 0x93;
 const CMD_BRIGHTNESS: u8 = 0x85;
@@ -21,13 +21,19 @@ const STRIP_WIDTH: usize = 64;
 /// Character advance (5 px glyph + 1 px gap) at scale 1.
 pub const CHAR_ADVANCE: usize = GLYPH_W + 1;
 
-/// A 1bpp row-major (MSB-first) 128x64 framebuffer.
+/// A 1bpp row-major (MSB-first) 128-px-wide framebuffer.
 ///
-/// `PartialEq` is a plain 1 KB compare, which the draw loop uses to skip
-/// re-encoding a frame that hasn't changed since the last tick.
+/// The height is carried at runtime because Inari drives two different panels:
+/// the base station's 128x64 and the Apex keyboards' 128x40. Every draw
+/// primitive clips against [`Self::height`], so a renderer written for one
+/// panel never writes past the end of the other.
+///
+/// `PartialEq` is a plain memcmp, which the draw loops use to skip re-encoding
+/// a frame that hasn't changed since the last tick.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Framebuffer {
-    buf: [u8; STRIDE * HEIGHT],
+    buf: Vec<u8>,
+    height: usize,
 }
 
 impl Default for Framebuffer {
@@ -37,10 +43,23 @@ impl Default for Framebuffer {
 }
 
 impl Framebuffer {
+    /// A base-station-sized (128x64) framebuffer.
     pub fn new() -> Self {
+        Self::with_height(HEIGHT)
+    }
+
+    /// A framebuffer of an arbitrary height — 40 for the Apex OLED.
+    pub fn with_height(height: usize) -> Self {
         Self {
-            buf: [0u8; STRIDE * HEIGHT],
+            buf: vec![0u8; STRIDE * height],
+            height,
         }
+    }
+
+    /// Rows this framebuffer holds.
+    #[inline]
+    pub fn height(&self) -> usize {
+        self.height
     }
 
     #[allow(dead_code)]
@@ -50,7 +69,7 @@ impl Framebuffer {
 
     #[inline]
     pub fn set(&mut self, x: isize, y: isize, on: bool) {
-        if x < 0 || y < 0 || x as usize >= WIDTH || y as usize >= HEIGHT {
+        if x < 0 || y < 0 || x as usize >= WIDTH || y as usize >= self.height {
             return;
         }
         let (x, y) = (x as usize, y as usize);
@@ -65,6 +84,9 @@ impl Framebuffer {
 
     #[inline]
     pub(crate) fn get(&self, x: usize, y: usize) -> bool {
+        if x >= WIDTH || y >= self.height {
+            return false;
+        }
         (self.buf[y * STRIDE + (x >> 3)] >> (7 - (x & 7))) & 1 != 0
     }
 
@@ -195,14 +217,15 @@ impl Framebuffer {
         }
     }
 
-    /// Set pixels from a 128x64 grayscale buffer using Floyd–Steinberg
-    /// dithering (0 = black, 255 = white). Buffer must be WIDTH*HEIGHT long.
+    /// Set pixels from a grayscale buffer using Floyd–Steinberg dithering
+    /// (0 = black, 255 = white). Buffer must be WIDTH * [`Self::height`] long.
     pub fn blit_gray_dithered(&mut self, gray: &[u8]) {
-        if gray.len() < WIDTH * HEIGHT {
+        let height = self.height;
+        if gray.len() < WIDTH * height {
             return;
         }
-        let mut err = vec![0i16; WIDTH * HEIGHT];
-        for y in 0..HEIGHT {
+        let mut err = vec![0i16; WIDTH * height];
+        for y in 0..height {
             for x in 0..WIDTH {
                 let i = y * WIDTH + x;
                 let val = gray[i] as i16 + err[i];
@@ -211,14 +234,14 @@ impl Framebuffer {
                 let quant_err = val - if on { 255 } else { 0 };
                 // Distribute the quantisation error to neighbours (FS weights).
                 let mut spread = |xx: usize, yy: usize, num: i16| {
-                    if xx < WIDTH && yy < HEIGHT {
+                    if xx < WIDTH && yy < height {
                         err[yy * WIDTH + xx] += quant_err * num / 16;
                     }
                 };
                 if x + 1 < WIDTH {
                     spread(x + 1, y, 7);
                 }
-                if y + 1 < HEIGHT {
+                if y + 1 < height {
                     if x > 0 {
                         spread(x - 1, y + 1, 3);
                     }
@@ -232,7 +255,7 @@ impl Framebuffer {
     /// Encode the framebuffer into HID feature-report packets (one per 64px
     /// strip). Each is exactly 1024 bytes, ready for `send_feature`.
     pub fn frame_packets(&self) -> Vec<Vec<u8>> {
-        let padded_h = HEIGHT; // already a multiple of 8
+        let padded_h = self.height.div_ceil(8) * 8;
         let pages = padded_h / 8;
         let mut packets = Vec::new();
         let mut src_x = 0;
@@ -245,7 +268,7 @@ impl Framebuffer {
             pkt[3] = 0;
             pkt[4] = strip_w as u8;
             pkt[5] = padded_h as u8;
-            for row in 0..HEIGHT {
+            for row in 0..self.height {
                 let page = row / 8;
                 let bit = row % 8;
                 for local_col in 0..strip_w {

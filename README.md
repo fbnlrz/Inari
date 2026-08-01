@@ -5,8 +5,8 @@
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-FFDD00?logo=buymeacoffee&logoColor=black)](https://www.buymeacoffee.com/fbnlrz)
 
 > **This is a fork of [NC1107/sink](https://github.com/NC1107/sink)** that adds
-> control for SteelSeries headsets, the base-station OLED, and the Aerox mouse,
-> plus a Tokyo Night theme. All the original Sink audio-mixing work is by
+> control for SteelSeries headsets, the base-station OLED, the Aerox mouse and
+> the Apex keyboards, plus a Tokyo Night theme. All the original Sink audio-mixing work is by
 > [@NC1107](https://github.com/NC1107) — please support the upstream project
 > (see [Credits](#credits)). Hardware support here is Linux-only and specific to
 > the author's devices; upstream deliberately keeps it out of the main app.
@@ -52,6 +52,13 @@ processed virtual microphone for voice chat.
   dithered on the fly.
 - **Mouse** - SteelSeries **Aerox 9 Wireless**: DPI presets, polling rate,
   per-zone RGB, reactive lighting, sleep and dim timeouts, battery.
+- **Keyboard** - SteelSeries **Apex** (Pro / 7 / 5 / 9, Gen 1-3, wired or
+  wireless): per-key RGB you paint on a to-scale key map, host-rendered effects
+  (wave, gradient, breathing, audio-reactive) plus the firmware's own reactive
+  and colour-shift modes, and the 128x40 OLED with clock, system monitor, now
+  playing and your own text. Verified on an Apex Pro TKL Wireless (2023) - see
+  [the keyboard page](https://fbnlrz.github.io/Inari/features/keyboard) for what
+  is measured and what is not.
 - **Themes** - ships the original look plus a **Tokyo Night** palette,
   switchable in Settings.
 
@@ -183,12 +190,18 @@ channels/mixes/EQ/mic work, and the app itself — is by
 support the upstream project.
 
 The SteelSeries hardware protocols used by this fork were learned from these
-projects, whose reverse-engineering made the headset, OLED and mouse support
-possible:
+projects, whose reverse-engineering made the headset, OLED, mouse and keyboard
+support possible:
 
 - [Sapd/HeadsetControl](https://github.com/Sapd/HeadsetControl)
 - [elegos/Linux-Arctis-Manager](https://github.com/elegos/Linux-Arctis-Manager)
 - [loteran/Arctis-Sound-Manager](https://github.com/loteran/Arctis-Sound-Manager)
+- [flozz/rivalcfg](https://github.com/flozz/rivalcfg) - the Aerox commands
+- [OpenRGB](https://gitlab.com/CalcProgrammer1/OpenRGB) - the Apex per-key
+  lighting report and its 112-entry key order
+- [not-jan/apex-tux](https://github.com/not-jan/apex-tux) and
+  [llMBQll/OmniLED](https://github.com/llMBQll/OmniLED) - the Apex OLED
+  transports
 
 Not affiliated with or endorsed by SteelSeries.
 

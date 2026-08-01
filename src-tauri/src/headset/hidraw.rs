@@ -249,10 +249,18 @@ mod tests {
 
     /// A pipe stands in for the hidraw node: same poll semantics on the read
     /// end (data queued -> POLLIN, writer gone -> POLLHUP), no hardware.
+    ///
+    /// `O_CLOEXEC` is not decoration. Other tests in this binary shell out
+    /// (`nvidia-smi`, `playerctl`, `sensors`), and a plain `pipe(2)` leaks its
+    /// write end into every process forked while this test runs. That extra
+    /// reference keeps the pipe alive after the test closes its own end, so
+    /// the hangup this test is about never arrives and it fails — but only
+    /// when run alongside the tests that fork, which is exactly the sort of
+    /// failure that gets written off as flaky.
     fn pipe() -> (RawFd, RawFd) {
         let mut fds = [0 as RawFd; 2];
-        // SAFETY: `fds` is a two-element array, exactly what pipe(2) fills.
-        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+        // SAFETY: `fds` is a two-element array, exactly what pipe2(2) fills.
+        assert_eq!(unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) }, 0);
         (fds[0], fds[1])
     }
 

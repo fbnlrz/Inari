@@ -3063,3 +3063,192 @@ input[type="range"]::-webkit-slider-thumb:hover { background: var(--accent-hover
   outline: 2px solid var(--accent-hover);
   outline-offset: 4px;
 }
+
+/* ============================================================
+   Keyboard screen (.kb-*)
+   The key map is absolutely positioned from key units the backend
+   computes, so the picture and the effect engine agree on where every
+   key sits — a wave that sweeps right here sweeps right on the board.
+   ============================================================ */
+
+.kb-map-wrap {
+  width: 100%;
+  overflow-x: auto;
+  padding: var(--sp-3) 0;
+  display: flex;
+  justify-content: center;
+}
+/* The plate the caps sit on. Dark and slightly inset so the lit caps read as
+   light coming out of a keyboard rather than as coloured tiles. */
+.kb-deck {
+  position: relative;
+  flex: none;
+  background:
+    radial-gradient(120% 160% at 50% -20%, rgba(255, 255, 255, 0.05), transparent 60%),
+    #0a0a0e;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 0;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 10px 30px rgba(0, 0, 0, 0.45);
+}
+.kb-key {
+  position: absolute;
+  border: 1px solid rgba(0, 0, 0, 0.55);
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.2px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  transition: transform 90ms ease, filter 90ms ease;
+  outline: 2px solid transparent;
+  outline-offset: 1px;
+}
+.kb-key:hover {
+  filter: brightness(1.3) saturate(1.15);
+  transform: translateY(-1px);
+  z-index: 2;
+}
+.kb-key:active {
+  transform: translateY(1px);
+}
+.kb-key:focus-visible {
+  outline-color: #fff;
+}
+.kb-key.tuned {
+  border-color: var(--accent);
+}
+.kb-key-label {
+  pointer-events: none;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.65);
+  white-space: nowrap;
+}
+
+/* Scene picker: each chip previews its own palette. */
+.kb-scenes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: var(--sp-2);
+}
+.kb-scene {
+  position: relative;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg-main);
+  color: var(--fg-primary);
+  padding: 8px 10px 9px;
+  cursor: pointer;
+  overflow: hidden;
+  transition: border-color 90ms ease, transform 90ms ease;
+}
+.kb-scene:hover {
+  transform: translateY(-1px);
+}
+.kb-scene.active {
+  border-color: var(--accent);
+}
+.kb-scene-name {
+  display: block;
+  font-weight: 600;
+  font-size: var(--fs-small);
+}
+.kb-scene-hint {
+  display: block;
+  font-size: 10px;
+  color: var(--fg-secondary);
+  margin-top: 2px;
+}
+/* A strip of the scene's own colours, so the list is scannable by eye. */
+.kb-scene-strip {
+  display: flex;
+  height: 4px;
+  margin: -8px -10px 7px;
+}
+.kb-scene-strip span {
+  flex: 1;
+}
+
+.kb-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--sp-3);
+}
+.kb-color,
+.kb-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--fs-small);
+  color: var(--fg-secondary);
+}
+.kb-color input[type="color"] {
+  width: 46px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: transparent;
+  cursor: pointer;
+}
+.kb-field input {
+  width: 130px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg-main);
+  color: var(--fg-primary);
+  font-family: var(--font-mono, monospace);
+  font-size: var(--fs-small);
+}
+.kb-text {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg-main);
+  color: var(--fg-primary);
+  font-family: var(--font-mono, monospace);
+  font-size: var(--fs-small);
+  resize: vertical;
+}
+
+.kb-chip-tag {
+  margin-left: 5px;
+  font-size: 9px;
+  opacity: 0.65;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  padding: 0 3px;
+}
+
+.kb-wires {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.kb-wire-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.kb-wire-row .hs-chip {
+  flex: 1;
+  text-align: left;
+}
+
+/* Experimental notes: visibly not a normal hint. */
+.kb-warn {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  border-left: 2px solid var(--warn, #e0a030);
+  padding-left: var(--sp-3);
+}

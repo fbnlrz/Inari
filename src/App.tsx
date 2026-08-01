@@ -8,6 +8,7 @@ import { MediaScreen } from "./components/Media/MediaScreen";
 import { MicScreen } from "./components/Mic/MicScreen";
 import { HeadsetScreen } from "./components/Headset/HeadsetScreen";
 import { OledScreen } from "./components/Oled/OledScreen";
+import { KeyboardScreen } from "./components/Keyboard/KeyboardScreen";
 import { MouseScreen } from "./components/Mouse/MouseScreen";
 import { OnboardingModal } from "./components/Onboarding/OnboardingModal";
 import { SettingsScreen } from "./components/Settings/SettingsScreen";
@@ -30,14 +31,17 @@ const NAV = [
   { id: "headset", icon: "headphones", label: "Headset" },
   { id: "oled", icon: "tv_gen", label: "OLED" },
   { id: "mouse", icon: "mouse", label: "Mouse" },
+  { id: "keyboard", icon: "keyboard", label: "Keyboard" },
 ] as const;
 
 type NavId = (typeof NAV)[number]["id"] | "settings";
 
-// Every mouse command is off the remote by choice - a tablet mixes audio, it
-// does not reconfigure the DPI of a mouse plugged into the PC. So the rail
-// drops the entry rather than offering one that answers with a rejection.
-const RAIL = NAV.filter((n) => n.id !== "mouse" || isTauri);
+// Every mouse and keyboard command is off the remote by choice - a tablet
+// mixes audio, it does not reconfigure the DPI of a mouse or repaint the keys
+// of a keyboard plugged into the PC. So the rail drops those entries rather
+// than offering ones that answer with a rejection.
+const DESKTOP_ONLY: readonly string[] = ["mouse", "keyboard"];
+const RAIL = NAV.filter((n) => !DESKTOP_ONLY.includes(n.id) || isTauri);
 
 /** The app-wide failure banner; every store surfaces its errors through it. */
 function ErrorBanner({
@@ -84,7 +88,8 @@ export default function App() {
 
   // "mouse" has no screen behind it in the browser, so a nav id that arrives
   // there anyway lands on the mixer instead of on nothing.
-  const active: NavId = nav === "mouse" && !isTauri ? "mixer" : nav;
+  const active: NavId =
+    DESKTOP_ONLY.includes(nav) && !isTauri ? "mixer" : nav;
 
   const current =
     active === "settings"
@@ -98,6 +103,7 @@ export default function App() {
   else if (active === "headset") screen = <HeadsetScreen />;
   else if (active === "oled") screen = <OledScreen />;
   else if (active === "mouse") screen = <MouseScreen />;
+  else if (active === "keyboard") screen = <KeyboardScreen />;
   else if (active === "settings") screen = <SettingsScreen />;
   else screen = <MixerBoard />;
 

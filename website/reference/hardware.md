@@ -16,6 +16,13 @@ only.
 | **Aerox 9 Wireless** (mouse, cable) | `1038:185a` · `1876` (WOW Edition) | ✅ DPI, polling, RGB, power saving, battery (write paths verified for lighting/DPI) |
 | **Aerox 9 Wireless** (mouse, 2.4 GHz dongle) | `1038:1858` · `1874` (WOW Edition) | ✅ Same, over the dongle |
 | **Arctis Pro Wireless** (older, 2019) | `1038:1290` · `1294` | ⚠️ Partial — different protocol; display not reverse-engineered |
+| **Apex Pro TKL Wireless (2023)** (keyboard) | `1038:1632` (cable) · `1630` (dongle) | ✅ Per-key RGB, OLED, brightness, battery, firmware — all verified on hardware |
+| **Apex Pro Gen 3** / **Pro TKL Gen 3** (keyboard) | `1038:1640` · `1642` | ✅ Per-key RGB, OLED — from OpenRGB/apex-tux/OmniLED, not yet measured |
+| **Apex Pro TKL Wireless Gen 3** (keyboard) | `1038:1646` (cable) · `1644` (dongle) | ✅ Same, over either transport |
+| **Apex Pro / Pro TKL / 7 / 7 TKL / 5** (2019 keyboards) | `1038:1610` · `1614` · `1612` · `1618` · `161c` | ✅ Per-key RGB, OLED — legacy dialect, not measured |
+| **Apex Pro TKL (2023)** (keyboard, wired) | `1038:1628` | ✅ Per-key RGB, OLED transport is a guess — the picker finds it |
+| **Apex 9 TKL** / **9 Mini** (keyboard) | `1038:1634` · `1620` | ✅ Per-key RGB (shorter report); no display |
+| Adjustable **actuation** on any Apex Pro | — | ❌ The known command is accepted and does nothing; Rapid Trigger and Protection Mode have never been captured |
 
 ## How a device is picked
 
@@ -30,7 +37,12 @@ is not enough on devices that expose several HID interfaces:
 - the **Aerox 9** is identified by USB interface number **3**, the only one that
   accepts configuration commands;
 - the older **Arctis Pro Wireless** has a single control interface, so the
-  product id settles it.
+  product id settles it;
+- the **wireless Apex keyboards** are identified by the same vendor usage page
+  `06 c0 ff`, which is what separates their configuration collection from the
+  plain keyboard, the media keys and the mouse-emulation collection they also
+  expose — six HID interfaces on the board that was measured. The wired Apex
+  boards are identified by USB interface number **1**.
 
 When more than one node still matches, the highest-priority entry wins: the Nova
 Pro beats the older Arctis Pro, and the Aerox's **cable beats its dongle** — with
