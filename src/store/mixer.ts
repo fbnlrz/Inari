@@ -424,6 +424,7 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
   },
 
   routeApp: async (streamIndex, sinkName) => {
+    const serial = get().appStreams.find((a) => a.index === streamIndex)?.serial ?? null;
     set((s) => ({
       appStreams: s.appStreams.map((a) =>
         a.index === streamIndex
@@ -432,7 +433,7 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
       ),
     }));
     try {
-      await call("route_app_to_channel", { streamIndex, sinkName });
+      await call("route_app_to_channel", { streamIndex, serial, sinkName });
     } catch (e) {
       set({ error: String(e) });
     } finally {
@@ -441,6 +442,9 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
   },
 
   setAppVolume: async (streamIndex, volume) => {
+    // Captured now, sent when the debounce fires: the index may belong to a
+    // different stream by then, the serial cannot.
+    const serial = get().appStreams.find((a) => a.index === streamIndex)?.serial ?? null;
     set((s) => ({
       appStreams: s.appStreams.map((a) =>
         a.index === streamIndex ? { ...a, volume_percent: volume } : a,
@@ -449,7 +453,7 @@ export const useMixerStore = create<MixerStore>((set, get) => ({
     debouncedInvoke(
       `appvol:${streamIndex}`,
       "set_app_volume",
-      { streamIndex, volume },
+      { streamIndex, serial, volume },
       (e) => set({ error: String(e) }),
     );
   },

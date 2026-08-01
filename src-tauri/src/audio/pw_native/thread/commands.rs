@@ -119,6 +119,7 @@ pub(super) fn handle_cmd(state: &Rc<RefCell<State>>, registry: &RegistryRc, cmd:
                         crate::audio::types::resolve_identity(|key| n.props.get(key).cloned());
                     AppStream {
                         index: n.id,
+                        serial: n.serial,
                         app_name,
                         match_prop,
                         match_value,
@@ -198,7 +199,22 @@ pub(super) fn handle_cmd(state: &Rc<RefCell<State>>, registry: &RegistryRc, cmd:
         }
         Cmd::SetNodeVolumeById { id, percent, reply } => {
             let s = state.borrow();
-            let _ = reply.send(set_props(s.nodes.get(&id), Some(percent), None));
+            // Only ever an application stream. If the id has been recycled
+            // onto a sink or a device in the meantime, refusing is the whole
+            // point — writing an app's fader value onto the headset's output
+            // node is the failure this guards against.
+            let node = s
+                .nodes
+                .get(&id)
+                .filter(|n| n.media_class == STREAM_CLASS);
+            match node {
+                Some(_) => {
+                    let _ = reply.send(set_props(node, Some(percent), None));
+                }
+                None => {
+                    let _ = reply.send(Err(SinkError::UnknownSink(format!("stream {id}"))));
+                }
+            }
         }
         Cmd::CreateBus { name, label, reply } => {
             let mut s = state.borrow_mut();

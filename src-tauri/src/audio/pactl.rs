@@ -246,6 +246,8 @@ impl AudioBackend for PactlBackend {
                     .cloned();
 
                 AppStream {
+                    // The fallback backend has no serial to offer.
+                    serial: None,
                     index: input.index,
                     app_name,
                     match_prop,

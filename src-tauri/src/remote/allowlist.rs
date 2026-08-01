@@ -51,6 +51,13 @@ impl Args {
             .ok_or_else(|| format!("missing argument `{name}`"))?;
         serde_json::from_value(value.clone()).map_err(|e| format!("argument `{name}`: {e}"))
     }
+
+    /// An argument the caller may leave out, for fields added after a client
+    /// shipped. Absent and unparseable both read as "not given".
+    fn opt<T: DeserializeOwned>(&self, name: &str) -> Option<T> {
+        let value = self.0.get(name).or_else(|| self.0.get(&camel_case(name)))?;
+        serde_json::from_value(value.clone()).ok()
+    }
 }
 
 /// `sink_name` -> `sinkName`.
@@ -149,9 +156,9 @@ sync_table! {
     toggle_channel_mute => |app, a| ok(commands::routing::toggle_channel_mute(
         app.state(), a.get("sink_name")?, a.get("muted")?)?),
     set_app_volume => |app, a| ok(commands::routing::set_app_volume(
-        app.state(), a.get("stream_index")?, a.get("volume")?)?),
+        app.state(), a.get("stream_index")?, a.opt("serial"), a.get("volume")?)?),
     route_app_to_channel => |app, a| ok(commands::routing::route_app_to_channel(
-        app.state(), a.get("stream_index")?, a.get("sink_name")?)?),
+        app.state(), a.get("stream_index")?, a.opt("serial"), a.get("sink_name")?)?),
     set_monitor => |app, a| ok(commands::routing::set_monitor(
         app.state(), a.get("sink_name")?, a.get("enabled")?)?),
     set_channel_output => |app, a| ok(commands::devices::set_channel_output(

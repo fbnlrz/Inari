@@ -2,6 +2,7 @@ use log::{error, warn};
 use tauri::State;
 
 use crate::audio::types::{AppStream, OutputDevice, VirtualSink};
+use crate::mixer::state::StreamKey;
 use crate::state::AppState;
 
 /// How often the poll force-saves app history to refresh `last_seen` on disk.
@@ -114,7 +115,7 @@ pub fn get_app_streams(state: State<'_, AppState>) -> Result<Vec<AppStream>, Str
         let mut planned: Vec<(u32, String, String)> = Vec::new();
         if mixer.initialized {
             for stream in &streams {
-                if mixer.auto_routed.contains(&stream.index) {
+                if mixer.auto_routed.contains(&StreamKey::of(stream)) {
                     continue;
                 }
                 if let Some(target) = mixer
@@ -127,13 +128,15 @@ pub fn get_app_streams(state: State<'_, AppState>) -> Result<Vec<AppStream>, Str
                 }
                 // Marked handled once (before the move, so a concurrent poll
                 // can't re-plan it); manual re-routing then isn't fought.
-                mixer.auto_routed.insert(stream.index);
+                mixer.auto_routed.insert(StreamKey::of(stream));
             }
             // Forget streams that have gone away, so the ledger can't grow
-            // without bound and a recycled PipeWire index isn't mistaken for one
-            // we already handled (which would skip auto-routing a new stream).
-            let live: std::collections::HashSet<u32> = streams.iter().map(|s| s.index).collect();
-            mixer.auto_routed.retain(|i| live.contains(i));
+            // without bound. Keyed by serial this is now sound: an id that has
+            // been handed to a different stream carries a different serial, so
+            // the new stream is not mistaken for the old one.
+            let live: std::collections::HashSet<StreamKey> =
+                streams.iter().map(StreamKey::of).collect();
+            mixer.auto_routed.retain(|k| live.contains(k));
         }
 
         // User-chosen display names (in-memory read, cheap enough to keep here).
