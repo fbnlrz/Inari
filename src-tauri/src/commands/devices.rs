@@ -7,10 +7,42 @@ use crate::state::AppState;
 /// How often the poll force-saves app history to refresh `last_seen` on disk.
 const SEEN_FLUSH_SECS: u64 = 15 * 60;
 
-/// Current channel state (volume/mute as tracked by MixerState).
+/// Current channel state, refreshed from the sinks themselves.
+///
+/// The strips used to be a pure cache that `adopt_live_channel_state` filled
+/// once during `init_virtual_devices` and nothing ever refreshed. Anything that
+/// changed a volume outside Inari — pavucontrol, `wpctl`, or WirePlumber
+/// restoring a remembered level when a device reappears — left the fader
+/// showing a number the sink had stopped using. On this machine that meant a
+/// channel sitting at 0% behind a fader reading 100%: silent, with nothing on
+/// screen to explain it. The same one-shot also lost the reading when the
+/// first Props event had not arrived yet at init, and there was no second try.
+///
+/// `sink_state` is an in-memory read of what the loop thread already mirrors,
+/// so this costs a channel round trip and no server traffic. A backend that
+/// cannot answer leaves the cached value alone, as at init.
 #[tauri::command]
 pub fn get_virtual_devices(state: State<'_, AppState>) -> Result<Vec<VirtualSink>, String> {
-    let mixer = state.lock_mixer()?;
+    let names: Vec<String> = {
+        let mixer = state.lock_mixer()?;
+        mixer.channels.iter().map(|c| c.name.clone()).collect()
+    };
+    // Read outside the mixer lock: the backend call can block, and holding the
+    // lock across it would stall every other command.
+    let live: Vec<(String, Option<(u8, bool)>)> = names
+        .into_iter()
+        .map(|name| {
+            let state_of = state.backend.sink_state(&name).unwrap_or(None);
+            (name, state_of)
+        })
+        .collect();
+
+    let mut mixer = state.lock_mixer()?;
+    mixer.adopt_live_channel_state(|name| {
+        live.iter()
+            .find(|(n, _)| n == name)
+            .and_then(|(_, s)| *s)
+    });
     Ok(mixer.channels.clone())
 }
 

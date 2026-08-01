@@ -122,6 +122,10 @@ export const useMedia = create<MediaState>((set, get) => {
    *  and drops its result if that no longer matches, so a reply arriving after
    *  the screen closed cannot write into a store nobody is watching. */
   let epoch = 0;
+  /** Bumped by every optimistic write, so a poll that started earlier knows
+   *  its answer is stale and steps aside. `epoch` only counts subscriber
+   *  restarts and cannot serve for this. */
+  let localEdits = 0;
   /** Generation currently being fetched; keeps a slow art read from being
    *  issued again by the next poll. */
   let artInFlight = 0;
@@ -229,10 +233,17 @@ export const useMedia = create<MediaState>((set, get) => {
 
     poll: async () => {
       const mine = epoch;
+      const mineLocal = localEdits;
       const player = target();
       try {
         const status = await call<MediaStatus>("media_status", { player });
         if (mine !== epoch || !status) return;
+        // A read that was already in flight when the user tapped pause or
+        // dragged the bar carries the state from before the tap. The backend
+        // shells out to playerctl, so that read can easily be the slower of
+        // the two — and writing it back flipped the button straight back to
+        // "pause" and threw the handle back to where it started.
+        if (mineLocal !== localEdits) return;
         set({ status, statusAt: Date.now(), loaded: true });
         await syncArt(status, player, mine);
       } catch (e) {
@@ -254,6 +265,7 @@ export const useMedia = create<MediaState>((set, get) => {
       const at = Date.now();
       // Answer the tap now. Freeze the interpolated position first, or a
       // pause would keep the bar creeping until the next poll corrects it.
+      localEdits++;
       set({
         status: {
           ...status,
@@ -276,6 +288,7 @@ export const useMedia = create<MediaState>((set, get) => {
     },
 
     seek: async (positionUs) => {
+      localEdits++;
       set({ status: { ...get().status, position_us: positionUs }, statusAt: Date.now() });
       try {
         await call("media_seek", { player: target(), positionUs });

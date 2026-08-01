@@ -207,6 +207,16 @@ export function HeadsetScreen() {
     setEqSeeded(true);
   }, [eqSeeded, s.eq_bands]);
 
+  // Unplugging the base station has to arm both seeds again. They are one-shot
+  // by design, so without this the next station — or the same one after a
+  // reconnect — keeps the previous station's mix and EQ on screen while its
+  // own values sit unread in the status.
+  useEffect(() => {
+    if (h.connected) return;
+    setMixSeeded(false);
+    setEqSeeded(false);
+  }, [h.connected]);
+
   const autoOffIdx = useMemo(() => {
     const i = AUTO_OFF_STEPS.indexOf((s.auto_off_minutes ?? 30) as never);
     return i < 0 ? 5 : i;
