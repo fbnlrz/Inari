@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::SinkError;
 use crate::persistence::json;
+use crate::persistence::json::{Extra, Version};
 
 const FILE: &str = "channels.json";
 
@@ -24,6 +25,10 @@ pub struct ChannelDef {
     /// Whether the channel feeds the Stream Mix source (default: yes).
     #[serde(default = "default_true")]
     pub stream_mix: bool,
+    /// Per-channel fields a newer Inari added, kept so this one's saves don't
+    /// strip them back off.
+    #[serde(default, flatten)]
+    pub extra: Extra,
 }
 
 fn default_true() -> bool {
@@ -34,7 +39,11 @@ fn default_true() -> bool {
 /// `$XDG_CONFIG_HOME/inari/channels.json`. Defaults to the classic four.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Channels {
+    #[serde(default)]
+    pub version: Version,
     pub channels: Vec<ChannelDef>,
+    #[serde(default, flatten)]
+    pub extra: Extra,
 }
 
 impl Default for Channels {
@@ -44,8 +53,11 @@ impl Default for Channels {
             label: label.to_string(),
             icon: Some(icon.to_string()),
             stream_mix: true,
+            extra: Extra::new(),
         };
         Self {
+            version: Version::default(),
+            extra: Extra::new(),
             channels: vec![
                 def("sink_game", "Game", "sports_esports"),
                 def("sink_chat", "Chat", "forum"),
@@ -110,7 +122,11 @@ impl Channels {
                 warn!("dropping invalid channel '{}' from channels.json", def.name);
             }
         }
-        Self { channels }
+        Self {
+            version: self.version,
+            extra: self.extra.clone(),
+            channels,
+        }
     }
 
     pub fn save(&self) -> Result<(), SinkError> {
@@ -155,6 +171,7 @@ impl Channels {
             label: label.to_string(),
             icon,
             stream_mix: true,
+            extra: Extra::new(),
         };
         self.channels.push(def.clone());
         Ok(def)
@@ -190,15 +207,24 @@ impl Channels {
         Ok(())
     }
 
-    pub fn remove(&mut self, name: &str) -> Result<(), SinkError> {
+    /// Can this channel be removed? Answers without changing anything.
+    ///
+    /// Split out from [`Self::remove`] so the caller can validate before it
+    /// starts touching the audio graph, and only commit once the parts that
+    /// can fail have succeeded.
+    pub fn can_remove(&self, name: &str) -> Result<(), SinkError> {
         if self.channels.len() <= 1 {
             return Err(SinkError::Config("at least one channel is required".into()));
         }
-        let before = self.channels.len();
-        self.channels.retain(|c| c.name != name);
-        if self.channels.len() == before {
+        if !self.channels.iter().any(|c| c.name == name) {
             return Err(SinkError::UnknownSink(name.to_string()));
         }
+        Ok(())
+    }
+
+    pub fn remove(&mut self, name: &str) -> Result<(), SinkError> {
+        self.can_remove(name)?;
+        self.channels.retain(|c| c.name != name);
         Ok(())
     }
 }
@@ -206,6 +232,38 @@ impl Channels {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_field_from_a_newer_version_survives_a_load_and_save() {
+        // The doctrine in json.rs: every store carries a version and a
+        // catch-all, so an older Inari that loads a newer file and then
+        // autosaves does not delete what it did not understand. Eight stores
+        // followed it; channels.json and the profiles did not, and they are
+        // the ones holding the channel set itself.
+        let json = r##"{
+            "version": 7,
+            "channels": [
+                {"name":"sink_game","label":"Game","icon":"sports_esports",
+                 "stream_mix":true,"colour":"#ff5200"}
+            ],
+            "layout": "vertical"
+        }"##;
+        let loaded: Channels = serde_json::from_str(json).expect("loads");
+        assert_eq!(loaded.version.0, 7, "a newer version is kept, not relabelled");
+        assert_eq!(
+            loaded.extra.get("layout").and_then(|v| v.as_str()),
+            Some("vertical")
+        );
+        assert_eq!(
+            loaded.channels[0].extra.get("colour").and_then(|v| v.as_str()),
+            Some("#ff5200")
+        );
+
+        let written = serde_json::to_value(&loaded).expect("serialises");
+        assert_eq!(written["layout"], "vertical");
+        assert_eq!(written["version"], 7);
+        assert_eq!(written["channels"][0]["colour"], "#ff5200");
+    }
 
     #[test]
     fn defaults_to_classic_four() {

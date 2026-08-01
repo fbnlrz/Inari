@@ -123,18 +123,47 @@ fn slugify(label: &str) -> String {
 }
 
 impl Buses {
-    /// Load from disk. On first run (no file), the default Stream Mix bus
-    /// inherits membership from the legacy per-channel `stream_mix` flags.
+    /// The first-run set, carrying over the old per-channel `stream_mix` flag.
+    ///
+    /// Split out from [`Self::load`] so it can be tested without a
+    /// `buses.json` on the machine deciding the answer.
+    fn from_legacy(legacy_channels: &crate::persistence::channels::Channels) -> Self {
+        let mut buses = Self::default();
+        let carried: Vec<String> = legacy_channels
+            .channels
+            .iter()
+            .filter(|c| c.stream_mix)
+            .map(|c| c.name.clone())
+            .collect();
+        // Only worth a mix of its own if something was actually left out;
+        // otherwise the master already is that mix.
+        if carried.len() < legacy_channels.channels.len() && !carried.is_empty() {
+            buses.buses.push(BusDef {
+                name: format!("{BUS_PREFIX}stream"),
+                label: "Stream Mix".to_string(),
+                channels: carried,
+                exclude: false,
+                volume_percent: 100,
+                muted: false,
+                extra: Extra::new(),
+            });
+        }
+        buses
+    }
+
+    /// Load from disk. On first run (no file), a user who had excluded some
+    /// channels from the old per-channel `stream_mix` flag gets that intent
+    /// carried over as a mix of its own.
+    ///
+    /// It used to be written into the *master* mix, which is dead on arrival:
+    /// the master carries every channel by definition, and `sync_master` at
+    /// init overwrites its membership from the live channel set. So a user who
+    /// had deliberately kept music out of the recorded stream silently got it
+    /// back on the first start after upgrading. A separate mix is both what
+    /// the old flag meant and something `sync_master` will not touch.
     pub fn load(legacy_channels: &crate::persistence::channels::Channels) -> Self {
         let Some(raw) = json::read(FILE) else {
-            let mut buses = Self::default();
-            buses.buses[0].channels = legacy_channels
-                .channels
-                .iter()
-                .filter(|c| c.stream_mix)
-                .map(|c| c.name.clone())
-                .collect();
-            return buses;
+            return Self::from_legacy(legacy_channels);
         };
         // A corrupt file (logged by the shared loader), or one where nothing
         // survived sanitization, falls back to the master mix alone -
@@ -435,6 +464,42 @@ mod tests {
         assert_eq!(def.effective_members(&all), vec!["sink_game"]);
         // Master can't leave auto-everything.
         assert!(b.set_exclude("sink_stream", true, &all).is_err());
+    }
+
+    #[test]
+    fn the_legacy_stream_mix_flag_survives_sync_master() {
+        use crate::persistence::channels::{ChannelDef, Channels};
+        let ch = |name: &str, stream_mix: bool| ChannelDef {
+            name: name.into(),
+            label: name.into(),
+            icon: None,
+            stream_mix,
+            extra: Default::default(),
+        };
+        let legacy = Channels {
+            version: Default::default(),
+            extra: Default::default(),
+            channels: vec![
+                ch("sink_game", true),
+                ch("sink_chat", true),
+                ch("sink_music", false),
+            ],
+        };
+
+        let mut buses = Buses::from_legacy(&legacy);
+        // Init and every profile load run this; it used to wipe the migration.
+        buses.sync_master(&[
+            "sink_game".into(),
+            "sink_chat".into(),
+            "sink_music".into(),
+        ]);
+
+        let carried = buses
+            .buses
+            .iter()
+            .find(|b| !is_master(&b.name))
+            .expect("the excluded-music intent survived as its own mix");
+        assert_eq!(carried.channels, vec!["sink_game", "sink_chat"]);
     }
 
     #[test]

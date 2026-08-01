@@ -311,6 +311,8 @@ pub fn init_virtual_devices(
     if matches!(crate::persistence::profiles::list(), Ok(list) if list.is_empty()) {
         let mut mixer = state.lock_mixer()?;
         let default = crate::persistence::profiles::Profile {
+            version: Default::default(),
+            extra: Default::default(),
             name: "Default".to_string(),
             channels: mixer.channels.clone(),
             assignments: mixer.assignments.clone(),

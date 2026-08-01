@@ -47,13 +47,24 @@ pub fn list() -> Result<Vec<EqPreset>, SinkError> {
     Ok(presets)
 }
 
+/// Write a user preset, refusing to replace one that already exists.
+///
+/// The only caller is "save a copy as a new preset", so overwriting was never
+/// the intent — and a file that has become unreadable is exactly the one you
+/// least want to clobber, which is the same mistake `create_blank_profile`
+/// made by asking the parser instead of the filesystem.
 pub fn save(preset: &EqPreset) -> Result<(), SinkError> {
     let name = sanitize_name(&preset.name)?;
     if preset.bands.is_empty() {
         return Err(SinkError::Config("a preset needs at least one band".into()));
     }
-    let dir = presets_dir()?;
-    crate::persistence::json::save_at(&dir.join(format!("{name}.json")), preset)
+    let path = presets_dir()?.join(format!("{name}.json"));
+    if path.exists() {
+        return Err(SinkError::Config(format!(
+            "a preset called \"{name}\" already exists"
+        )));
+    }
+    crate::persistence::json::save_at(&path, preset)
 }
 
 pub fn delete(name: &str) -> Result<(), SinkError> {

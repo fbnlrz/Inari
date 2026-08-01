@@ -16,9 +16,41 @@ use crate::state::AppState;
 /// the 2s stream poll and the tray rebuild - behind each volume-slider tick
 /// (TD-004). Snapshotting is only clones, so it is cheap enough to run under
 /// the guard; the write must not.
-pub fn build_autosave(mixer: &crate::mixer::state::MixerState) -> Option<Profile> {
+/// A profile snapshot together with the order it was taken in.
+///
+/// The order is the whole point. Snapshotting happens under the mixer guard
+/// and writing happens outside it, which is deliberate — an fsync under the
+/// guard stalls every other command (TD-004) — but it also removed the only
+/// thing that used to make the writes happen in the same order as the
+/// snapshots. Two writers then race on `rename`, and the last one to finish
+/// wins regardless of how old its contents are. Two writers is not
+/// hypothetical: the remote runs commands on its own multi-threaded runtime,
+/// and so do the global-hotkey callback and the CLI's D-Bus thread.
+pub struct Autosave {
+    seq: u64,
+    profile: Profile,
+}
+
+impl Autosave {
+    /// The snapshot itself, for tests that assert on what was captured.
+    #[cfg(test)]
+    pub fn profile(&self) -> &Profile {
+        &self.profile
+    }
+}
+
+/// Handed out under the mixer guard, so it orders snapshots, not writes.
+static AUTOSAVE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// Held across the write, so writers serialise against each other and the
+/// newest snapshot is the one that ends up on disk.
+static AUTOSAVE_WRITE: std::sync::Mutex<u64> = std::sync::Mutex::new(0);
+
+pub fn build_autosave(mixer: &crate::mixer::state::MixerState) -> Option<Autosave> {
     let name = mixer.active_profile.clone()?;
-    Some(Profile {
+    let seq = AUTOSAVE_SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+    Some(Autosave { seq, profile: Profile {
+        version: Default::default(),
+        extra: Default::default(),
         name,
         channels: mixer.channels.clone(),
         assignments: mixer.assignments.clone(),
@@ -27,17 +59,32 @@ pub fn build_autosave(mixer: &crate::mixer::state::MixerState) -> Option<Profile
         // Preserved from the cache rather than re-read from disk each mutation.
         trigger_device: mixer.active_trigger.clone(),
         buses: mixer.buses.clone(),
-    })
+    }})
 }
 
 /// Persist a snapshot from [`build_autosave`]. Blocks on an fsync, so it must
 /// only ever run with the mixer guard released.
-pub fn write_autosave(profile: Option<Profile>) {
-    let Some(profile) = profile else {
+///
+/// A snapshot older than what is already on disk is dropped rather than
+/// written: that is the difference between last-writer-wins by fsync time,
+/// which loses whichever change the slower thread did not know about, and
+/// last-writer-wins by snapshot time, which is what the user did last. The
+/// dropped write is not lost work — the newer snapshot on disk already
+/// contains it, because every snapshot is the whole profile.
+pub fn write_autosave(snapshot: Option<Autosave>) {
+    let Some(Autosave { seq, profile }) = snapshot else {
         return;
     };
-    if let Err(e) = profiles::save(&profile) {
-        error!("autosave of profile {} failed: {e}", profile.name);
+    let Ok(mut last) = AUTOSAVE_WRITE.lock() else {
+        error!("autosave lock poisoned; skipping");
+        return;
+    };
+    if seq <= *last {
+        return;
+    }
+    match profiles::save(&profile) {
+        Ok(()) => *last = seq,
+        Err(e) => error!("autosave of profile {} failed: {e}", profile.name),
     }
 }
 
@@ -198,6 +245,8 @@ pub fn load_profile(
         let mut mixer = state.lock_mixer()?;
         mixer.buses = target_buses.clone();
         mixer.channel_defs = crate::persistence::channels::Channels {
+            version: Default::default(),
+            extra: Default::default(),
             channels: profile
                 .channels
                 .iter()
@@ -206,6 +255,7 @@ pub fn load_profile(
                     label: c.label.clone(),
                     icon: c.icon.clone(),
                     stream_mix: c.stream_mix,
+                    extra: Default::default(),
                 })
                 .collect(),
         };
@@ -241,7 +291,7 @@ pub fn load_profile(
 #[tauri::command]
 pub fn create_blank_profile(app: tauri::AppHandle, name: String) -> Result<(), String> {
     let name = profiles::sanitize_name(&name).map_err(|e| e.to_string())?;
-    if profiles::load(&name).is_ok() {
+    if profiles::exists(&name) {
         return Err(format!("profile \"{name}\" already exists"));
     }
     let channels = crate::persistence::channels::Channels::default()
@@ -257,6 +307,8 @@ pub fn create_blank_profile(app: tauri::AppHandle, name: String) -> Result<(), S
         })
         .collect();
     let profile = Profile {
+        version: Default::default(),
+        extra: Default::default(),
         name,
         channels,
         assignments: Default::default(),
@@ -311,6 +363,7 @@ mod tests {
             .set("application.name", "Firefox", "sink_browser");
 
         let profile = build_autosave(&mixer).expect("a profile is bound");
+        let profile = profile.profile();
         assert_eq!(profile.name, "Gaming");
         let taken: Vec<&str> = profile.channels.iter().map(|c| c.name.as_str()).collect();
         let live: Vec<&str> = mixer.channels.iter().map(|c| c.name.as_str()).collect();
