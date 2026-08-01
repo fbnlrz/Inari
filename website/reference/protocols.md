@@ -38,6 +38,12 @@ The protocols were learned and cross-checked from
   power and wireless fields at fixed byte offsets.
 - Commands set sidetone, mic volume/LED, ANC/transparency, auto-off, gain,
   wireless mode, line-out and a 10-band EQ. `06 09` saves to the device.
+- `06 20` reads the audio settings back, and it carries more than the volume
+  Inari originally took from it: `device_gain` at offset 4 (1 = low, 2 = high),
+  the selected `eq_preset` at 6, the ten custom EQ bands at 7–16 (0–40, one
+  unit per 0.5 dB around a 0x14 centre), and the stream mix at 22/24/25. Not
+  reading the bands is what let the UI start its faders at zero and flatten the
+  stored curve.
 - **OLED** is a *Feature* report (needs the `HIDIOCSFEATURE` ioctl, not
   `write()`): a 1024-byte frame `[0x06, 0x93, dst_x, 0, strip_w, padded_h, …]`,
   128 px sent as two 64 px strips, body column-major LSB-first. The firmware

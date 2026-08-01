@@ -9,6 +9,13 @@ Per-key RGB, the OLED and the settings the firmware exposes, for the Apex Pro,
 Apex 7, Apex 5 and Apex 9 families — Gen 1 through Gen 3, wired or over the
 2.4 GHz dongle. The tab shows a "not connected" state when no board is present.
 
+The screen is split into four sections — **Lighting**, **Keys**, **Display**
+and **System** — switched at the top. *Display* and *Keys* only appear for
+boards that have a panel and adjustable switches. The key map sits above
+*Lighting* and *Keys*, because it is the only place you can see what the board
+is actually doing: pick an effect or a scene and the result is right there,
+rather than four cards further down.
+
 ## Lighting
 
 Ten effects. Six of them Inari renders itself and streams to the board about 30

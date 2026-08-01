@@ -37,12 +37,31 @@ Each band has a shape, a frequency, a gain and a Q:
 | Gain | ±24 dB | Ignored by low pass / high pass |
 | Q | 0.1 – 10 | Filter Q; on shelves this is the shelf slope |
 
+::: warning Shelf slope is capped by the gain
+On a shelf, slope and gain are not independent: past a certain combination the
+filter design has no stable answer, and the band would turn into an oscillator
+that keeps sounding after the audio stops. Inari clamps the slope to the
+steepest one the chosen gain supports — at ±8 dB that is around slope 10, at
+±12 dB around 5, at ±24 dB around 2. Set a steeper slope than that and it is
+quietly limited; the curve you see is the curve you hear either way.
+
+Before v1.0.13 this was not clamped, and a steep bass boost could produce a
+continuous tone above full scale until the setting was changed.
+:::
+
 Above the band list sits a **preamp** (±24 dB) applied before the bands. Turn it
 negative when you boost a lot, so the channel does not clip.
 
 On the response curve you can drag a point to move it, scroll over it to widen
 or narrow the band, and double-click it to flatten it. The reset button returns
 the channel to the flat five-band layout without touching the on/off switch.
+
+Each band also draws its own thin curve underneath the summed response, so
+changing Q is something you can see rather than only hear, and the point you
+are dragging carries its frequency, gain and Q as a label. The dB axis spans
+±12 dB and only opens up to ±24 when a curve actually needs the room — the
+loudest bundled preset stays under 9 dB, so a fixed ±24 scale drew most
+presets almost flat.
 
 ## Presets
 

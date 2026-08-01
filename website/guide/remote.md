@@ -136,6 +136,27 @@ rather than lingering until they happen to reconnect. Every paired device has
 to scan the new code before it works again. That is the point of the button
 when a tablet is lost or lent out.
 
+::: info Fixed in v1.0.13
+This used to be able to fail with *"Address already in use"* and leave the
+remote switched off: the old server was told to stop and the new one bound the
+same port immediately, without waiting for the listener to actually close. On
+an idle machine the teardown almost always won the race; under load it lost
+between a quarter and two thirds of the time — which is exactly when you reach
+for the tablet. Changing the bind address and the enable toggle went through
+the same path. Stopping now waits for the server to be gone.
+:::
+
+### One tablet cannot stall the others
+
+Answers to remote commands are bounded by a small pool of slots shared by every
+connected device. Before **v1.0.13** a slot was held not just while the command
+ran but while its answer was handed to the socket — so a tablet that kept
+sending and stopped reading (a wedged page, a browser tab suspended mid-drag)
+could occupy every slot waiting on its own connection, and other devices stopped
+getting answers entirely. A client that will not read its replies is now
+dropped, and the idle timeout applies to a connection stuck in a write as well
+as one stuck in a read.
+
 ## On the tablet
 
 The remote page is a normal web page, so the browser's own **Add to Home

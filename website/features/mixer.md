@@ -26,7 +26,8 @@ own.
   an icon. You can have up to **10 channels**; at least one must remain.
 - **Rename** — double-click the strip name. The PipeWire node name stays the
   same, so app assignments, output choices and profiles keep working.
-- **Reorder** — drag a strip by its grip handle. Cosmetic only; no audio
+- **Reorder** — drag a strip by its grip handle, top-left of the strip.
+  Cosmetic only; no audio
   plumbing changes.
 - **Icon** — click the strip icon to pick another one.
 - **Delete** — the `×` on the strip. Apps routed there fall back to the system
@@ -38,10 +39,24 @@ button and a live VU meter. The `tune` button opens the channel's
 
 ### Volume and mute survive a restart
 
-Inari **reads** each channel's volume and mute off the sink at startup instead
-of setting them. WirePlumber remembers a level per PipeWire node name and
-restores it the moment the sink reappears, so a channel you left at 40 % — or
-muted — comes back that way, and the strip shows it.
+Inari **reads** each channel's volume and mute off the sink instead of setting
+them. WirePlumber remembers a level per PipeWire node name and restores it the
+moment the sink reappears, so a channel you left at 40 % — or muted — comes back
+that way, and the strip shows it.
+
+Since v1.0.13 this is a continuous reading rather than a single one at startup:
+change a channel's volume in `pavucontrol` or with `wpctl` and the strip
+follows. Before that it was read once during initialisation and never again, so
+anything that moved a level afterwards left the fader showing a number the sink
+had stopped using — including the case where the reading simply had not arrived
+yet when Inari looked, which left the channel on the 100 % placeholder for the
+rest of the session.
+
+One deliberate exception: a **newly created** channel is put back to 100 % if
+WirePlumber restores an old level for its name. Channel names are derived from
+the label, so recreating a channel you once deleted inherits whatever that name
+was last set to — and a new channel that is silent from birth is a puzzle, not
+a memory.
 
 Where the backend can't report a channel's state (the `pactl` fallback, or a
 node whose properties haven't arrived yet) the strip falls back to 100 %,
