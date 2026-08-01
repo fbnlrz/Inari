@@ -124,7 +124,7 @@ function RemoteControls() {
   return (
     <>
       <div className="section-label">Remote</div>
-      <div className="card" style={{ padding: "var(--sp-2)" }}>
+      <div className="card">
         {error && (
           <div className="error-banner" style={{ borderRadius: 8, margin: "var(--sp-1)" }}>
             {error}

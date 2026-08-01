@@ -937,10 +937,19 @@ body,
 .section-label:first-child {
   margin-top: 0;
 }
-.card {
+/* Cards.
+   Two systems grew here: `.card` (settings, mic, app list) and `.hs-card`
+   (device screens). Both wrap the same `.row`, but with different padding and
+   different corners, so the same row began 22px from the card edge on one
+   screen and 30px on another and the corners differed by 2px. The shared
+   look now lives in one place; `.hs-card` keeps only what genuinely differs,
+   which is that it stacks its children with a gap rather than relying on
+   `.row + .row`. */
+.card,
+.hs-card {
   background: var(--bg-surface);
   border: 1px solid var(--border);
-  border-radius: var(--r-xl);
+  border-radius: var(--r-lg);
   padding: var(--sp-2);
 }
 .row {
@@ -1121,19 +1130,29 @@ body,
   align-items: center;
   gap: var(--sp-3);
 }
-.hs-track {
+.hs-track,
+.media-seek-track {
   /* Without this a touch drag becomes a scroll gesture: the browser
      cancels the pointer stream, so the tablet could only tap a value,
-     never slide to one. */
+     never slide to one. Same reason as .fader-track and .bal-track. */
   touch-action: none;
   position: relative;
-  flex: 1;
   height: 6px;
   border-radius: var(--r-pill);
   background: var(--bg-active);
   cursor: pointer;
 }
-.hs-fill {
+/* The one genuine difference between the two: the headset's tracks sit in a
+   row next to a label and a value and have to take the space that is left;
+   the seek bar owns its whole line. */
+.hs-track {
+  flex: 1;
+}
+/* The media seek bar was a second, byte-for-byte identical copy of these
+   three rules — the kind of duplicate that stays identical right up until
+   someone fixes one of them. */
+.hs-fill,
+.media-seek-fill {
   position: absolute;
   left: 0;
   top: 0;
@@ -1141,7 +1160,8 @@ body,
   background: var(--accent);
   border-radius: var(--r-pill);
 }
-.hs-cap {
+.hs-cap,
+.media-seek-cap {
   position: absolute;
   top: 50%;
   width: 14px;
@@ -2498,9 +2518,8 @@ body,
    ============================================================ */
 .hs { gap: var(--sp-4); }
 .hs-card {
-  background: var(--bg-surface);
-  border: 1px solid var(--border);
-  border-radius: var(--r-lg);
+  /* Device cards hold sliders, chips and pictures rather than a stack of
+     rows, so they carry their own padding and lay their children out. */
   padding: var(--sp-4) var(--sp-5);
   display: flex;
   flex-direction: column;
@@ -2818,36 +2837,6 @@ input[type="range"]::-webkit-slider-thumb:hover { background: var(--accent-hover
 }
 
 .media-seek { display: flex; flex-direction: column; gap: 6px; }
-.media-seek-track {
-  /* Without this a touch drag becomes a scroll gesture: the browser cancels
-     the pointer stream, so the tablet could only tap a position, never
-     scrub to one. Same reason as .hs-track and .fader-track. */
-  touch-action: none;
-  position: relative;
-  height: 6px;
-  border-radius: var(--r-pill);
-  background: var(--bg-active);
-  cursor: pointer;
-}
-.media-seek-fill {
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  background: var(--accent);
-  border-radius: var(--r-pill);
-}
-.media-seek-cap {
-  position: absolute;
-  top: 50%;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: var(--fg-primary);
-  transform: translate(-50%, -50%);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
-  cursor: grab;
-}
 .media-times {
   display: flex;
   justify-content: space-between;
