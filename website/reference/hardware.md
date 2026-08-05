@@ -17,7 +17,7 @@ only.
 | **Aerox 9 Wireless** (mouse, 2.4 GHz dongle) | `1038:1858` · `1874` (WOW Edition) | ✅ Same, over the dongle |
 | **Arctis Pro Wireless** (older, 2019) | `1038:1290` · `1294` | ⚠️ Partial — different protocol; display not reverse-engineered |
 | **Apex Pro TKL Wireless (2023)** (keyboard) | `1038:1632` (cable) · `1630` (dongle) | ✅ Per-key RGB, OLED, brightness, battery, firmware — all verified on hardware |
-| **Apex Pro Gen 3** / **Pro TKL Gen 3** (keyboard) | `1038:1640` · `1642` | ✅ Per-key RGB, OLED — from OpenRGB/apex-tux/OmniLED, not yet measured |
+| **Apex Pro Gen 3** / **Pro TKL Gen 3** (keyboard) | `1038:1640` · `1642` | ⚠️ OLED and the firmware's own effects. **No per-key RGB:** measured on a `1640`, the published opcode stops the board reporting keypresses, so Inari will not send it |
 | **Apex Pro TKL Wireless Gen 3** (keyboard) | `1038:1646` (cable) · `1644` (dongle) | ✅ Same, over either transport |
 | **Apex Pro / Pro TKL / 7 / 7 TKL / 5** (2019 keyboards) | `1038:1610` · `1614` · `1612` · `1618` · `161c` | ✅ Per-key RGB, OLED — legacy dialect, not measured |
 | **Apex Pro TKL (2023)** (keyboard, wired) | `1038:1628` | ✅ Per-key RGB, OLED transport is a guess — the picker finds it |

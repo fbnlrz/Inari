@@ -114,6 +114,12 @@ export interface KeyboardStatus {
   region: number | null;
   has_oled: boolean;
   has_actuation: boolean;
+  /**
+   * Inari knows how to paint this board key by key. False means it does not,
+   * so every effect Inari renders itself is unavailable — the firmware's own
+   * effects still are.
+   */
+  has_per_key: boolean;
   oled_wire: OledWire | null;
   /** What the keyboard itself reports, so the sliders start on reality. */
   lighting: { brightness: number; idle_brightness: number; idle_timeout_ms: number } | null;
@@ -176,6 +182,7 @@ const emptyStatus: KeyboardStatus = {
   region: null,
   has_oled: false,
   has_actuation: false,
+  has_per_key: true,
   oled_wire: null,
   lighting: null,
   power: null,

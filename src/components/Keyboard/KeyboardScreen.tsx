@@ -232,6 +232,7 @@ export function KeyboardScreen() {
               <div className="hs-seg">
                 <button
                   type="button"
+                  hidden={!kb.status.has_per_key}
                   className={"hs-seg-btn" + (mode === "color" ? " active" : "")}
                   onClick={() => setMode("color")}
                 >
@@ -249,7 +250,13 @@ export function KeyboardScreen() {
                 </button>
               </div>
 
-              {mode === "color" ? (
+              {!kb.status.has_per_key && !kb.status.has_actuation ? (
+                <p className="hs-hint">
+                  The map above is this board's layout. Inari cannot paint its
+                  keys or move its switches — neither dialect is known for this
+                  model — so there is nothing to brush on here.
+                </p>
+              ) : mode === "color" && kb.status.has_per_key ? (
                 <>
                   <div className="kb-controls">
                     <label className="kb-color">
@@ -376,7 +383,14 @@ export function KeyboardScreen() {
                     scene gets chosen, and it says which one is playing. The
                     EFFECTS entry itself has to stay: the colour picker and the
                     speed slider read `colors` and `speed` from it. */}
-                {EFFECTS.filter((e) => e.kind !== "scene").map((e) => (
+                {EFFECTS.filter(
+                  (e) =>
+                    e.kind !== "scene" &&
+                    // On a board whose per-key dialect Inari does not know,
+                    // everything Inari renders itself would paint nothing at
+                    // all. Only what the firmware draws is offered.
+                    (kb.status.has_per_key || e.onboard),
+                ).map((e) => (
                   <button
                     type="button"
                     key={e.kind}
@@ -390,7 +404,7 @@ export function KeyboardScreen() {
                     {e.onboard && <span className="kb-chip-tag">HW</span>}
                   </button>
                 ))}
-                {light.kind === "scene" && (
+                {light.kind === "scene" && kb.status.has_per_key && (
                   <span className="hs-chip active" aria-current="true">
                     Scene:{" "}
                     {kb.scenes.find((x) => x.scene === light.scene)?.label ??
@@ -398,7 +412,11 @@ export function KeyboardScreen() {
                   </span>
                 )}
               </div>
-              <p className="hs-hint">{effect.hint}</p>
+              <p className="hs-hint">
+                {kb.status.has_per_key
+                  ? effect.hint
+                  : "Inari does not know how to light this board key by key, so it leaves the LEDs to the keyboard's own profile. Driving them with the opcode published for these boards stops it reporting keypresses, so Inari will not send it."}
+              </p>
 
               <div className="kb-controls">
                 {(effect.colors ?? 0) >= 1 && (
@@ -475,10 +493,13 @@ export function KeyboardScreen() {
 
             {/* ---- scenes ----
                Their own card, always on screen. Hiding them behind the "Scenes"
-               effect chip meant nobody found them. */}
+               effect chip meant nobody found them. The exception is a board
+               Inari cannot paint at all: there every scene is a button that
+               would do nothing. */}
             <section
               className={inert(!cfg.enabled)}
               aria-disabled={!cfg.enabled}
+              hidden={!kb.status.has_per_key}
             >
               <div className="hs-card-head">
                 <Ms name="auto_awesome" style={{ fontSize: 18 }} />
