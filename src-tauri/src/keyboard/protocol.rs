@@ -25,9 +25,29 @@
 //! working: the actuation command `0x2D` — the keyboard accepts it and nothing
 //! changes, so Inari offers it as experimental and says so.
 //!
-//! The wired boards (Apex Pro Gen 3 among them) were not available. Their
-//! entries follow OpenRGB's `SteelSeriesApexController` and `apex-tux`, and the
-//! manager falls back to [`alt_envelope`] if the primary shape is refused.
+//! The wired boards were not available then. Their entries follow OpenRGB's
+//! `SteelSeriesApexController` and `apex-tux`, and the manager falls back to
+//! [`alt_envelope`] if the primary shape is refused.
+//!
+//! ## The wired Gen 3, measured 2026-08-05
+//!
+//! An **Apex Pro Gen 3** (`1038:1640`, firmware 4.15.3) has since been on the
+//! bench, and it shows what those inherited entries are worth. Two things were
+//! confirmed and one was refuted:
+//!
+//! * Its vendor collection is interface 1 (usage page `0xFFC0`) and its report
+//!   descriptor declares the feature report as **642 bytes** — exactly
+//!   [`FEATURE_LEN_WIRED`], so the envelope guess was right. Writes are ACKed
+//!   at a flat 1.2 ms even at 30 Hz.
+//! * The OLED opcode is accepted and does not disturb the board.
+//! * The direct-lighting opcode `0x40` is **wrong, and destructively so**: it
+//!   silences key reporting for as long as frames keep arriving. Full detail
+//!   and the numbers are on [`Model::direct_dialect`], which is the flag that
+//!   now keeps those frames off boards whose dialect is a guess.
+//!
+//! The lesson generalises past this one board: a SteelSeries device ACKing a
+//! write says nothing about whether the write meant what you thought. Only an
+//! observed effect counts as verification.
 
 use serde::{Deserialize, Serialize};
 
@@ -230,6 +250,41 @@ pub struct Model {
     /// Only the 2023 wireless family is set here, because that is the board the
     /// dialect was read off and verified against.
     pub switch_dialect: bool,
+    /// Inari knows how to drive this board's LEDs key by key.
+    ///
+    /// The same distinction `switch_dialect` draws, for lighting: every Apex
+    /// has per-key LEDs, but that says nothing about whether the opcode Inari
+    /// would use is the right one. Where it is not, the frames must not be
+    /// sent at all — and this is not a cosmetic failure.
+    ///
+    /// **Measured on an Apex Pro Gen 3 (`1038:1640`, firmware 4.15.3) on
+    /// 2026-08-05.** `0x40`, the direct-lighting opcode this table inherited
+    /// from OpenRGB and `apex-tux` for the wired boards, does something else
+    /// entirely on that board: it suspends key reporting. Counting real input
+    /// events off the board's own event nodes while writing frames:
+    ///
+    /// | what was sent            | keys/s |
+    /// |--------------------------|--------|
+    /// | nothing                  |    4.9 |
+    /// | OLED `0x61` @ 2 Hz       |    4.4 |
+    /// | direct `0x40` @ 5 Hz     |    0.2 |
+    /// | direct `0x40` @ 30 Hz    |    0.1 |
+    ///
+    /// It is the opcode, not the load and not the payload: a bare `0x40` with
+    /// an explicit zero key count and 641 zero bytes behind it takes the board
+    /// to 0.0 keys/s just as reliably, and it recovers within a tick of the
+    /// frames stopping. Every write is ACKed throughout — the board answers
+    /// endpoint 0 from an interrupt while whatever `0x40` started starves the
+    /// matrix scan, so nothing upstream of the USB layer ever sees an error.
+    /// That is why this shipped: the failure is invisible to the writer and
+    /// only shows up as "my keyboard is dead while Inari runs".
+    ///
+    /// `0x61` was tried as a replacement on the same board. It is harmless to
+    /// key reporting but paints something other than what it is told, so the
+    /// wired Gen 3 dialect stays unknown rather than swapping one guess for
+    /// another. Firmware effects ([`EffectKind::Reactive`] and friends) go
+    /// through the control endpoint and are unaffected by this flag.
+    pub direct_dialect: bool,
 }
 
 /// Every Apex keyboard Inari speaks to.
@@ -254,6 +309,7 @@ pub static MODELS: &[Model] = &[
         actuation: true,
         raw_actuation: false,
         switch_dialect: false,
+        direct_dialect: true,
     },
     Model {
         product_id: PID_APEX_PRO_TKL,
@@ -271,6 +327,7 @@ pub static MODELS: &[Model] = &[
         actuation: true,
         raw_actuation: false,
         switch_dialect: false,
+        direct_dialect: true,
     },
     Model {
         product_id: PID_APEX_7,
@@ -288,6 +345,7 @@ pub static MODELS: &[Model] = &[
         actuation: false,
         raw_actuation: false,
         switch_dialect: false,
+        direct_dialect: true,
     },
     Model {
         product_id: PID_APEX_7_TKL,
@@ -305,6 +363,7 @@ pub static MODELS: &[Model] = &[
         actuation: false,
         raw_actuation: false,
         switch_dialect: false,
+        direct_dialect: true,
     },
     Model {
         product_id: PID_APEX_5,
@@ -322,6 +381,7 @@ pub static MODELS: &[Model] = &[
         actuation: false,
         raw_actuation: false,
         switch_dialect: false,
+        direct_dialect: true,
     },
     Model {
         product_id: PID_APEX_9_MINI,
@@ -336,6 +396,7 @@ pub static MODELS: &[Model] = &[
         actuation: false,
         raw_actuation: false,
         switch_dialect: false,
+        direct_dialect: true,
     },
     Model {
         product_id: PID_APEX_9_TKL,
@@ -350,6 +411,7 @@ pub static MODELS: &[Model] = &[
         actuation: false,
         raw_actuation: false,
         switch_dialect: false,
+        direct_dialect: true,
     },
     Model {
         product_id: PID_APEX_PRO_TKL_2023,
@@ -369,6 +431,7 @@ pub static MODELS: &[Model] = &[
         actuation: true,
         raw_actuation: false,
         switch_dialect: false,
+        direct_dialect: true,
     },
     Model {
         product_id: PID_APEX_PRO_TKL_2023_WL_DONGLE,
@@ -386,6 +449,7 @@ pub static MODELS: &[Model] = &[
         actuation: true,
         raw_actuation: false,
         switch_dialect: true,
+        direct_dialect: true,
     },
     Model {
         product_id: PID_APEX_PRO_TKL_2023_WL_WIRED,
@@ -404,6 +468,7 @@ pub static MODELS: &[Model] = &[
         actuation: true,
         raw_actuation: false,
         switch_dialect: true,
+        direct_dialect: true,
     },
     Model {
         product_id: PID_APEX_PRO_GEN3,
@@ -422,6 +487,7 @@ pub static MODELS: &[Model] = &[
         actuation: true,
         raw_actuation: true,
         switch_dialect: false,
+        direct_dialect: false,
     },
     Model {
         product_id: PID_APEX_PRO_TKL_GEN3,
@@ -437,6 +503,7 @@ pub static MODELS: &[Model] = &[
         actuation: true,
         raw_actuation: true,
         switch_dialect: false,
+        direct_dialect: false,
     },
     Model {
         product_id: PID_APEX_PRO_TKL_GEN3_WL_DONGLE,
@@ -455,6 +522,7 @@ pub static MODELS: &[Model] = &[
         actuation: true,
         raw_actuation: false,
         switch_dialect: false,
+        direct_dialect: true,
     },
     Model {
         product_id: PID_APEX_PRO_TKL_GEN3_WL_WIRED,
@@ -472,6 +540,7 @@ pub static MODELS: &[Model] = &[
         actuation: true,
         raw_actuation: false,
         switch_dialect: false,
+        direct_dialect: true,
     },
 ];
 
@@ -617,17 +686,28 @@ pub fn oled_release(model: &Model) -> Option<Vec<u8>> {
 }
 
 /// The direct-lighting command byte for this model.
-fn direct_cmd(model: &Model) -> u8 {
-    match (model.gen, model.wireless) {
+/// The per-key opcode this board speaks, or `None` if Inari does not know it.
+///
+/// The `None` is the whole point: see [`Model::direct_dialect`] for what the
+/// wired Gen 3 boards do when sent the opcode this would otherwise guess.
+fn direct_cmd(model: &Model) -> Option<u8> {
+    if !model.direct_dialect {
+        return None;
+    }
+    Some(match (model.gen, model.wireless) {
         (Gen::Gen1, _) => CMD_DIRECT_GEN1,
         (_, true) => CMD_DIRECT_WIRELESS,
         (_, false) => CMD_DIRECT_NEW,
-    }
+    })
 }
 
 /// Build the per-key lighting feature report. `colors` is indexed by
 /// [`KEY_ORDER`]; shorter slices simply address fewer keys.
-pub fn direct_packet(model: &Model, colors: &[[u8; 3]]) -> Vec<u8> {
+///
+/// `None` on a board whose per-key dialect Inari does not know — the caller
+/// must leave those LEDs to the firmware rather than send a guess.
+pub fn direct_packet(model: &Model, colors: &[[u8; 3]]) -> Option<Vec<u8>> {
+    let cmd = direct_cmd(model)?;
     // [cmd][count][hid R G B]… — never past the report or past the colours.
     let capacity = model.feature_len.saturating_sub(2) / 4;
     let count = colors.len().min(KEY_ORDER.len()).min(capacity);
@@ -637,7 +717,7 @@ pub fn direct_packet(model: &Model, colors: &[[u8; 3]]) -> Vec<u8> {
         payload.push(KEY_ORDER[i]);
         payload.extend_from_slice(color);
     }
-    feature(model, direct_cmd(model), &payload)
+    Some(feature(model, cmd, &payload))
 }
 
 /// Solid colour for one lighting zone, or every zone at [`ZONE_ALL`].
@@ -844,7 +924,7 @@ mod tests {
     fn a_firmware_upgrade_can_move_a_board_to_the_gen3_dialect() {
         let board = *model(PID_APEX_PRO_TKL_2023).unwrap();
         assert_eq!(board.gen, Gen::Gen2);
-        assert_eq!(direct_packet(&board, &[[1, 2, 3]])[0], 0x40);
+        assert_eq!(direct_packet(&board, &[[1, 2, 3]]).unwrap()[0], 0x40);
         let upgraded = board.at_gen(Gen::Gen3);
         assert_eq!(upgraded.gen, Gen::Gen3);
         assert_eq!(
@@ -966,7 +1046,7 @@ mod tests {
     #[test]
     fn direct_packet_is_addressed_per_key_and_sized_per_model() {
         let colors = vec![[0x11, 0x22, 0x33]; KEY_ORDER.len()];
-        let packet = direct_packet(verified(), &colors);
+        let packet = direct_packet(verified(), &colors).expect("the verified board is known");
         assert_eq!(packet.len(), 641);
         assert_eq!(packet[0], 0x61, "the wireless boards use their own opcode");
         assert_eq!(packet[1], 112);
@@ -980,12 +1060,42 @@ mod tests {
     #[test]
     fn wired_and_legacy_models_use_their_own_direct_opcodes() {
         assert_eq!(
-            direct_packet(model(PID_APEX_PRO_GEN3).unwrap(), &[[1, 2, 3]])[0],
-            0x40
+            direct_packet(model(PID_APEX_PRO_TKL).unwrap(), &[[1, 2, 3]])
+                .unwrap()[0],
+            0x3a
         );
         assert_eq!(
-            direct_packet(model(PID_APEX_PRO_TKL).unwrap(), &[[1, 2, 3]])[0],
-            0x3a
+            direct_packet(model(PID_APEX_PRO_TKL_2023_WL_WIRED).unwrap(), &[[1, 2, 3]])
+                .unwrap()[0],
+            0x61
+        );
+    }
+
+    /// The regression this flag exists for.
+    ///
+    /// `0x40` was measured on an Apex Pro Gen 3 (`1038:1640`, firmware 4.15.3)
+    /// to suspend key reporting for as long as frames arrive — a bare one with
+    /// a zero key count is enough. Building *any* per-key packet for those
+    /// boards is therefore the bug, so the guard is asserted at the point
+    /// where the packet would be born rather than at the writer.
+    #[test]
+    fn the_wired_gen3_boards_are_never_sent_a_guessed_per_key_frame() {
+        for pid in [PID_APEX_PRO_GEN3, PID_APEX_PRO_TKL_GEN3] {
+            let board = model(pid).unwrap();
+            assert!(!board.direct_dialect, "{:#06x} dialect is a guess", pid);
+            assert_eq!(
+                direct_packet(board, &[[1, 2, 3]; 8]),
+                None,
+                "{pid:#06x} must not be painted key by key"
+            );
+        }
+        // The panel and the firmware effects are a separate question, and both
+        // were fine on the measured board — losing them too would be a
+        // needless regression.
+        assert!(model(PID_APEX_PRO_GEN3).unwrap().oled.is_some());
+        assert_eq!(
+            release_to_onboard(model(PID_APEX_PRO_GEN3).unwrap())[1],
+            0x41
         );
     }
 
@@ -993,7 +1103,7 @@ mod tests {
     fn the_apex_9_short_report_cannot_overflow() {
         let apex9 = model(PID_APEX_9_TKL).unwrap();
         let colors = vec![[9, 9, 9]; KEY_ORDER.len()];
-        let packet = direct_packet(apex9, &colors);
+        let packet = direct_packet(apex9, &colors).expect("the Apex 9 dialect is known");
         assert_eq!(packet.len(), FEATURE_LEN_APEX9);
         // (512 - 2) / 4 = 127 slots, but only 112 keys exist.
         assert_eq!(packet[1], 112);

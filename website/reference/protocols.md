@@ -96,7 +96,15 @@ page `0xFFC0`) declares exactly three reports, and probing confirmed each:
 ### Per-key lighting
 
 `[cmd][count][hid R G B]…` in a feature report. The command is `0x3A` on the
-2019 boards, `0x40` on wired 2023/Gen 3 ones and `0x61` on the wireless ones.
+2019 boards, `0x40` on the wired 2023 ones and `0x61` on the wireless ones.
+
+::: danger Not on the wired Gen 3 boards
+`0x40` was measured on an Apex Pro Gen 3 (`1038:1640`) and it is **not** a
+lighting command there: it suspends key reporting for as long as frames arrive,
+while acknowledging every write. Inari sends those boards no per-key frames —
+see [the keyboard page](/features/keyboard) for the numbers. The right opcode
+is still unknown.
+:::
 One packet carries all **112 HID usage ids** in a fixed order (OpenRGB's
 `SteelSeriesApexController`); the firmware picks the ones its board has and
 ignores the rest, which is why the same packet drives full-size, TKL and mini

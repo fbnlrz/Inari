@@ -69,6 +69,10 @@ pub struct KeyboardStatus {
     /// The switches are adjustable — which is not the same as Inari being able
     /// to adjust them; see [`protocol::actuation`].
     pub has_actuation: bool,
+    /// Inari can paint this board key by key. False means the per-key opcode
+    /// for it is unknown, so Inari renders nothing and leaves the LEDs to the
+    /// firmware; see [`Model::direct_dialect`].
+    pub has_per_key: bool,
     /// Which OLED transport ended up being used, for the UI to show.
     pub oled_wire: Option<OledWire>,
     /// The keyboard's own lighting timers, as it reports them. The UI shows
@@ -455,6 +459,10 @@ impl KeyboardManager {
                 // whose command dialect is unknown gets no switches tab, rather
                 // than one whose controls quietly do nothing.
                 has_actuation: model.actuation && model.switch_dialect,
+                // Same reasoning as `has_actuation`: a board whose per-key
+                // dialect is unknown gets no per-key controls, rather than
+                // controls that quietly paint nothing — or worse.
+                has_per_key: model.direct_dialect,
                 oled_wire: self.wire_for(&model),
                 lighting,
                 power,
@@ -624,6 +632,16 @@ impl KeyboardManager {
                     last_onboard = Some(config.lighting.kind);
                     wrote = true;
                 }
+            } else if !model.direct_dialect {
+                // Inari does not know how to paint this board key by key, and
+                // guessing is not a cosmetic risk: on the wired Gen 3 the
+                // inherited opcode stops the keyboard reporting keys at all.
+                // Leave the LEDs to the firmware and say so in the UI.
+                if last_onboard != Some(EffectKind::Off) {
+                    let _ = dev.write_command(&protocol::release_to_onboard(&model));
+                    last_onboard = Some(EffectKind::Off);
+                    wrote = true;
+                }
             } else if config.lighting.kind.animated() || last_frame.is_none() {
                 // A still effect is rendered once and then left alone; only the
                 // animated ones need a frame per tick.
@@ -636,7 +654,11 @@ impl KeyboardManager {
                     level,
                 );
                 if last_frame.as_ref() != Some(&frame) {
-                    match self.feature(dev, &protocol::direct_packet(&model, &frame)) {
+                    // `direct_dialect` was checked above, so this is Some.
+                    let Some(packet) = protocol::direct_packet(&model, &frame) else {
+                        continue;
+                    };
+                    match self.feature(dev, &packet) {
                         Ok(()) => {
                             last_frame = Some(frame);
                             light_failures = 0;

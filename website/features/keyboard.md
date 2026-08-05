@@ -193,6 +193,26 @@ Everything below was measured on an **Apex Pro TKL Wireless (2023)**,
   matching the keyboard's own indicator).
 - ❌ Actuation — accepted, no effect.
 
-The wired boards, including the Apex Pro Gen 3, follow OpenRGB, `apex-tux` and
-OmniLED rather than measurement. See the
-[Protocols reference](/reference/protocols) for the wire format.
+The wired boards follow OpenRGB, `apex-tux` and OmniLED rather than
+measurement. See the [Protocols reference](/reference/protocols) for the wire
+format.
+
+### The Apex Pro Gen 3, and why it has no per-key lighting
+
+An **Apex Pro Gen 3** (`1038:1640`, firmware 4.15.3) has since been measured,
+and it shows what an inherited opcode is worth. Its interface, report sizes and
+OLED behaved as the table predicted. Its direct-lighting opcode did not:
+
+`0x40` is not per-key lighting on that board — it **stops the keyboard
+reporting keypresses** for as long as frames keep arriving. Counting real input
+events while writing frames gave 4.9 keys/s with nothing sent, and 0.1 keys/s
+at either 5 Hz or 30 Hz. A single frame carrying no colours at all is enough,
+and the board recovers as soon as the frames stop. Every write is acknowledged
+throughout, so nothing in the software ever sees an error — the symptom is only
+"my keyboard is dead while Inari is running".
+
+Inari therefore sends those boards no per-key frames at all and leaves their
+LEDs to the keyboard's own profile. The OLED and the firmware-rendered effects
+(Reactive, Colour shift) are unaffected and still work. The correct opcode
+remains unknown; `0x61` is harmless but paints the wrong thing, and swapping one
+guess for another is what caused this.
